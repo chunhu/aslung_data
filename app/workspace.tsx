@@ -3,7 +3,7 @@ import {useState,useEffect,useCallback,useRef,useMemo} from "react";
 import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
 import LanguageSwitcher from "@/components/LanguageSwitcher";
 import FontSizeAdjuster from "@/components/FontSizeAdjuster";
-import {Activity,Database,Users,ShieldCheck,Download,Plus,RefreshCw,Code2,Server,LockKeyhole,FileJson,LogOut,CheckCircle2,Unplug,Search,Trash2, MapPin, Key, RadioTower, Upload, Pencil, Check, ChevronsUpDown, ArrowRightLeft} from "lucide-react";
+import {Activity,Database,Users,ShieldCheck,Download,Plus,RefreshCw,Code2,Server,LockKeyhole,FileJson,LogOut,CheckCircle2,Unplug,Search,Trash2, MapPin, Key, RadioTower, Upload, Pencil, Check, ChevronsUpDown, ArrowRightLeft, QrCode} from "lucide-react";
 import {Button} from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -21,7 +21,7 @@ import {Empty,EmptyHeader,EmptyTitle,EmptyDescription,EmptyMedia} from "@/compon
 import {Skeleton} from "@/components/ui/skeleton";
 import {Toaster,toast} from "sonner";
 
-type Device={id:string;name:string;location:string;description:string;start?:string;end?:string};
+type Device={id:string;name:string;location:string;description:string;status:string;start?:string;end?:string};
 type Member={email:string;name:string;nickname?:string|null;role:string;active:number};
 type Grant={id:number;device_id:string;email:string;start:string;end:string|null};
 type DeviceLocation={id:number;lab_id:string;aslung_id:string;start_time:string;end_time:string|null;active:number};
@@ -74,8 +74,11 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
   const [tz, setTz] = useState<string>("Asia/Taipei");
   const [tzOpen, setTzOpen] = useState(false);
   const [editDevice, setEditDevice] = useState<any>(null);
+  const [editLocation, setEditLocation] = useState<any>(null);
   const [editMember, setEditMember] = useState<any>(null);
   const [transferDevice, setTransferDevice] = useState<any>(null);
+  const [selectedDevices, setSelectedDevices] = useState<Set<string>>(new Set());
+  const [qrScanning, setQrScanning] = useState(false);
   const allTimeZones = useMemo(() => {
     if (typeof Intl === 'undefined' || !Intl.supportedValuesOf) {
       return [{ tz: "Asia/Taipei", label: "(UTC+08:00) Asia / Taipei" }];
@@ -148,8 +151,8 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
  function parameters(){if(!id||!start||!end)throw new Error("請選擇 ASLUNG ID 和完整查詢期間。");const s=zoned(start),e=zoned(end);if(s>e)throw new Error("結束時間必須晚於開始時間。");return {id,start:s,end:e};}
  async function download(format:string){setBusy(true);try{const p=parameters(),q=new URLSearchParams({aslung_id:p.id,start:p.start,end:p.end,format,download:"1"}),r=await fetch("/api/data?"+q);if(!r.ok)throw new Error((await r.json() as any).error);const href=URL.createObjectURL(await r.blob()),a=document.createElement("a");a.href=href;a.download=p.id+"_"+start.slice(0,10)+"_"+end.slice(0,10)+"."+format;a.click();setTimeout(()=>URL.revokeObjectURL(href),1000);toast.success("下載完成");}catch(e){toast.error((e as Error).message)}finally{setBusy(false)}}
  useEffect(()=>{const context=(document as any).modelContext;if(!context?.registerTool)return;const lifecycle=new AbortController();void Promise.resolve(context.registerTool({name:"query_aslung_data",title:"查詢 ASLUNG 量測資料",description:"依授權設備與 UTC 期間查詢一頁量測資料，並更新頁面結果。",inputSchema:{type:"object",properties:{aslung_id:{type:"string"},start:{type:"string"},end:{type:"string"}},required:["aslung_id","start","end"],additionalProperties:false},annotations:{readOnlyHint:true,untrustedContentHint:true},execute:async(input:any)=>{if(!input||typeof input.aslung_id!=="string"||!Number.isFinite(Date.parse(input.start))||!Number.isFinite(Date.parse(input.end))||Date.parse(input.start)>Date.parse(input.end))throw new Error("無效查詢參數");if(!devices.some(d=>d.id===input.aslung_id))throw new Error("未授權的設備");setSection("data");setId(input.aslung_id);const local=(v:string)=>formatInTimeZone(new Date(v), tz, "yyyy-MM-dd'T'HH:mm");setStart(local(input.start));setEnd(local(input.end));return query({id:input.aslung_id,start:new Date(input.start).toISOString(),end:new Date(input.end).toISOString()});}},{signal:lifecycle.signal})).catch(()=>{});return()=>lifecycle.abort();},[devices]);
- const labels:Record<string,string>={realtime:"即時線上狀態",data:"資料查詢",devices:"ASLUNG ID 管理",members:"會員管理",permissions:"資料授權",locations:"位置追蹤",connection:"系統連線狀態"};
- const nav=[{id:"realtime",name:"即時線上狀態",icon:RadioTower},{id:"data",name:"資料查詢",icon:Activity},{id:"devices",name:"ASLUNG ID 管理",icon:Database},{id:"members",name:"會員管理",icon:Users},{id:"permissions",name:"資料授權",icon:ShieldCheck},{id:"locations",name:"位置追蹤",icon:MapPin},{id:"connection",name:"系統連線狀態",icon:Code2}];
+ const labels:Record<string,string>={realtime:"即時線上狀態",data:"資料查詢",devices:"ASLUNG ID 管理",members:"會員管理",permissions:"資料授權",locations:"設備追蹤",connection:"系統連線狀態"};
+ const nav=[{id:"realtime",name:"即時線上狀態",icon:RadioTower},{id:"data",name:"資料查詢",icon:Activity},{id:"devices",name:"ASLUNG ID 管理",icon:Database},{id:"members",name:"會員管理",icon:Users},{id:"permissions",name:"資料授權",icon:ShieldCheck},{id:"locations",name:"設備追蹤",icon:MapPin},{id:"connection",name:"系統連線狀態",icon:Code2}];
  const filtered=devices.filter(d=>{const loc=locations.find(l=>l.aslung_id===d.id&&l.active)?.lab_id||"";return (d.id+" "+(d.description||"")+" "+loc).toLowerCase().includes(search.toLowerCase())});
  const chosen=devices.find(d=>d.id===id); let columns=Array.from(new Set((page?.data??[]).flatMap(Object.keys)));if(columns.includes("timestamp"))columns=["timestamp",...columns.filter(c=>c!=="timestamp")];
  
@@ -180,6 +183,27 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
       }
     }
  };
+ 
+  useEffect(() => {
+    if (modal === "qrScanner" && qrScanning) {
+      let scanner: any;
+      import("html5-qrcode").then((m) => {
+        scanner = new m.Html5QrcodeScanner("reader", { fps: 10, qrbox: {width: 250, height: 250} }, false);
+        scanner.render((text: string) => {
+          scanner.clear();
+          setQrScanning(false);
+          setSearch(text);
+          setSection("devices");
+          setModal("");
+          toast.success("掃描成功：" + text);
+        }, () => {});
+      });
+      return () => {
+        if (scanner) scanner.clear().catch(()=>{});
+      }
+    }
+  }, [modal, qrScanning]);
+
  const handleCsvUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
   const file = e.target.files?.[0];
   if (!file) return;
@@ -210,9 +234,9 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
  <section className="panel results"><div className="results-heading"><div><h2>量測資料 <span>{page?.data.length??0} 筆／本頁</span></h2><p>{queried?queried.id+" · "+localTime(queried.start)+" ～ "+localTime(queried.end):"查詢後顯示所選期間的量測紀錄"}</p></div><div className="flex gap-2"><Button variant="outline" disabled={busy||!page||!queried} onClick={()=>void download("csv")}><Download size={15}/>CSV</Button><Button variant="outline" disabled={busy||!page||!queried} onClick={()=>void download("json")}><FileJson size={15}/>JSON</Button></div></div>
  <Tabs defaultValue="table"><TabsList variant="line" className="mx-6"><TabsTrigger value="table">資料表</TabsTrigger><TabsTrigger value="json">JSON 預覽</TabsTrigger></TabsList><TabsContent value="table">{!page?<Blank title={devices.length?"尚未查詢資料":"尚無可存取設備"} description={devices.length?"選擇 ASLUNG ID 與期間，按下「查詢資料」。":admin?"先在 ASLUNG ID 管理建立設備，再設定資料來源。":"請聯絡管理員指派 ASLUNG ID 與資料期間。"} icon={Search}/>:page.data.length===0?<Blank title="此期間沒有量測資料" description="請調整日期範圍後重新查詢。"/>:<div className="table-scroll"><Table><TableHeader><TableRow>{columns.map(k=><TableHead key={k}>{k}</TableHead>)}</TableRow></TableHeader><TableBody>{page.data.map((r,i)=><TableRow key={i}>{columns.map(k=><TableCell key={k} className={k==="timestamp"?"mono":""}>{k==="timestamp"?localTime(String(r[k])):typeof r[k]==="object"?JSON.stringify(r[k]):String(r[k]??"—")}</TableCell>)}</TableRow>)}</TableBody></Table></div>}</TabsContent><TabsContent value="json"><pre className="json-box">{page?JSON.stringify({aslung_id:queried?.id,start:queried?.start,end:queried?.end,...page},null,2):"// 查詢完成後，將在此顯示實際 JSON 資料。"}</pre></TabsContent></Tabs>{page?.has_more&&queried&&<div className="table-footer"><span>尚有更多資料；下載會自動合併所有分頁。</span><Button variant="outline" disabled={busy} onClick={()=>void query(queried,page.next_cursor!).catch(()=>{})}>下一頁</Button></div>}</section>
  <div className="source-note"><Server size={18}/><div><strong>{state.connected?"EC2 MySQL 資料庫已連線":"AWS EC2 尚未串接"}</strong><p>{state.connected?"查詢結果直接來自既有資料來源；連線是否正常將於查詢時確認。":"會員、設備與授權可以先行設定。完成 API 串接後，即可查詢與下載實際資料。"}</p></div><Button variant="ghost" onClick={()=>setSection("connection")}>查看串接方式</Button></div></>}
- {section==="devices"&&admin&&<section className="panel"><div className="list-heading"><Input className="max-w-sm" placeholder="搜尋 ID、位置或備註" aria-label="搜尋設備" value={search} onChange={e=>setSearch(e.target.value)}/><div className="flex gap-2"><input id="csv-upload" type="file" accept=".csv" className="hidden" onChange={handleCsvUpload} /><Button variant="outline" onClick={()=>setModal("importCsv")}><Upload size={16} className="mr-1"/>大量匯入 CSV</Button><Button onClick={()=>{setEditDevice(null); setModal("device")}}><Plus size={16}/>建立 ASLUNG ID</Button></div></div>{!filtered.length?<Blank title={search?"沒有符合的設備":"建立第一個 ASLUNG ID"} description={search?"請嘗試其他關鍵字。":"建立設備 ID，並為會員指定資料權限。"}/>:<Table><TableHeader><TableRow><TableHead>ASLUNG ID</TableHead><TableHead>目前位置</TableHead><TableHead>備註</TableHead><TableHead>授權會員</TableHead><TableHead>操作</TableHead></TableRow></TableHeader><TableBody>{filtered.map(d=><TableRow key={d.id}><TableCell className="mono font-semibold">{d.id}</TableCell><TableCell>{locations.find(l=>l.aslung_id===d.id&&l.active)?.lab_id||<span className="text-slate-400">無</span>}</TableCell><TableCell className="text-slate-500">{d.description||"—"}</TableCell><TableCell>{grants.filter(g=>g.device_id===d.id).length} 位</TableCell><TableCell><div className="flex gap-2"><Button variant="ghost" size="icon-xs" title="編輯" onClick={()=>{setEditDevice(d); setModal("device")}}><Pencil size={15}/></Button><Button variant="outline" size="sm" onClick={()=>{setTransferDevice(d);setModal("transfer")}}><ArrowRightLeft size={14} className="mr-1"/>移轉位置</Button><Button variant="outline" size="sm" onClick={()=>{setGrantDevice(d.id);setModal("grant")}}><ShieldCheck size={14} className="mr-1"/>設定授權</Button><Button variant="ghost" size="icon-xs" title="刪除" className="text-red-500 hover:text-red-600 hover:bg-red-50 ml-1" onClick={()=>setConfirmation({action:"deviceDelete",id:d.id,title:"刪除此設備？",description:"將一併刪除此設備所有的「資料授權紀錄」與「位置追蹤紀錄」，且無法復原。確認刪除？"})}><Trash2 size={15}/></Button></div></TableCell></TableRow>)}</TableBody></Table>}</section>}
+ {section==="devices"&&admin&&<section className="panel"><div className="list-heading"><Input className="max-w-sm" placeholder="搜尋 ID、位置或備註" aria-label="搜尋設備" value={search} onChange={e=>setSearch(e.target.value)}/><div className="flex gap-2"><input id="csv-upload" type="file" accept=".csv" className="hidden" onChange={handleCsvUpload} />{selectedDevices.size > 0 && <Button variant="secondary" onClick={()=>{setTransferDevice(null);setModal("transferBulk")}}><ArrowRightLeft size={16} className="mr-1"/>大量移轉 ({selectedDevices.size})</Button>}<Button variant="outline" onClick={()=>{setQrScanning(true);setModal("qrScanner")}}><QrCode size={16} className="mr-1"/>掃描</Button><Button variant="outline" onClick={()=>setModal("importCsv")}><Upload size={16} className="mr-1"/>匯入 CSV</Button><Button onClick={()=>{setEditDevice(null); setModal("device")}}><Plus size={16}/>建立 ID</Button></div></div>{!filtered.length?<Blank title={search?"沒有符合的設備":"建立第一個 ASLUNG ID"} description={search?"請嘗試其他關鍵字。":"建立設備 ID，並為會員指定資料權限。"}/>:<Table><TableHeader><TableRow><TableHead><input type="checkbox" checked={selectedDevices.size === filtered.length && filtered.length > 0} onChange={e => { if(e.target.checked) setSelectedDevices(new Set(filtered.map(d=>d.id))); else setSelectedDevices(new Set()); }} /></TableHead><TableHead>ASLUNG ID</TableHead><TableHead>狀態</TableHead><TableHead>最後上線</TableHead><TableHead>目前位置</TableHead><TableHead>備註</TableHead><TableHead>授權會員</TableHead><TableHead>操作</TableHead></TableRow></TableHeader><TableBody>{filtered.map(d=><TableRow key={d.id}><TableCell><input type="checkbox" checked={selectedDevices.has(d.id)} onChange={e => { const s = new Set(selectedDevices); if(e.target.checked) s.add(d.id); else s.delete(d.id); setSelectedDevices(s); }} /></TableCell><TableCell className="mono font-semibold">{d.id}</TableCell><TableCell><span className={`status ${d.status==="MAINTENANCE"?"pending":d.status==="RETIRED"?"text-slate-400 bg-slate-100":d.status==="LOST"?"text-red-600 bg-red-100":"ok"}`}>{d.status==="MAINTENANCE"?"維修中":d.status==="RETIRED"?"已報廢":d.status==="LOST"?"遺失":"服役中"}</span></TableCell><TableCell>{(() => { const r = (realtimeData||[]).find(x => x.aslung_id === d.id); if(!r) return <span className="text-slate-400">無資料</span>; const isOffline = Date.now()-new Date(r.timestamp).getTime()>86400000; return <span className={isOffline?"text-red-500":"text-green-600"}>{isOffline?"已離線":"連線中"}</span>; })()}</TableCell><TableCell>{locations.find(l=>l.aslung_id===d.id&&l.active)?.lab_id||<span className="text-slate-400">無</span>}</TableCell><TableCell className="text-slate-500">{d.description||"—"}</TableCell><TableCell>{grants.filter(g=>g.device_id===d.id).length} 位</TableCell><TableCell><div className="flex gap-2"><Button variant="ghost" size="icon-xs" title="編輯" onClick={()=>{setEditDevice(d); setModal("device")}}><Pencil size={15}/></Button><Button variant="outline" size="sm" onClick={()=>{setTransferDevice(d);setModal("transfer")}}><ArrowRightLeft size={14} className="mr-1"/>移轉位置</Button><Button variant="outline" size="sm" onClick={()=>{setGrantDevice(d.id);setModal("grant")}}><ShieldCheck size={14} className="mr-1"/>設定授權</Button><Button variant="ghost" size="icon-xs" title="刪除" className="text-red-500 hover:text-red-600 hover:bg-red-50 ml-1" onClick={()=>setConfirmation({action:"deviceDelete",id:d.id,title:"刪除此設備？",description:"將一併刪除此設備所有的「資料授權紀錄」與「位置追蹤紀錄」，且無法復原。確認刪除？"})}><Trash2 size={15}/></Button></div></TableCell></TableRow>)}</TableBody></Table>}</section>}
  {section==="members"&&admin&&<section className="panel"><div className="list-heading"><h2>會員帳號 <span className="count">{members.length}</span></h2><Button onClick={()=>{setEditMember(null);setModal("member")}}><Plus size={16}/>新增會員</Button></div><Table><TableHeader><TableRow><TableHead>會員</TableHead><TableHead>帳號 (暱稱)</TableHead><TableHead>Email</TableHead><TableHead>角色</TableHead><TableHead>狀態</TableHead><TableHead>操作</TableHead></TableRow></TableHeader><TableBody>{members.map(m=><TableRow key={m.email}><TableCell className="font-semibold">{m.name}</TableCell><TableCell className="font-medium">{m.nickname || <span className="text-slate-400">-</span>}</TableCell><TableCell>{m.email.endsWith("@local.aslung")?<span className="text-slate-400">無</span>:m.email}</TableCell><TableCell>{m.role==="admin"?"管理員":"會員"}</TableCell><TableCell><span className={m.active?"status ok":"status pending"}>{m.active?"已開通":"已停用"}</span></TableCell><TableCell><div className="flex gap-2"><Button variant="ghost" size="icon-xs" title="編輯" onClick={()=>{setEditMember(m); setModal("member")}}><Pencil size={15}/></Button>{m.email !== state?.me.email && <Button variant="outline" size="sm" onClick={()=>setConfirmation({action:"memberRole",email:m.email,role:m.role==="admin"?"member":"admin",title:m.role==="admin"?"降為一般會員？":"升級為管理員？",description:m.role==="admin"?"此帳號將無法再管理系統。":"此帳號將能管理系統設定與其他帳號。"})}>{m.role==="admin"?"降為會員":"設為管理員"}</Button>}{m.role==="member"&&<Button variant="outline" size="sm" onClick={()=>setConfirmation({action:"memberStatus",email:m.email,active:!m.active,title:m.active?"停用會員？":"恢復會員？",description:m.active?"此會員將無法查詢或下載資料，既有授權仍保留。":"此會員可重新使用已指派的設備授權。"})}>{m.active?"停用":"恢復"}</Button>}</div></TableCell></TableRow>)}</TableBody></Table><p className="panel-footnote">管理員建立帳號後，請自行將帳號暱稱與初始密碼交給會員；此操作不會寄送邀請信。會員可於登入後變更密碼。</p></section>}
- {section==="locations"&&admin&&<section className="panel"><div className="list-heading"><h2>設備位置追蹤 <span className="count">{locations.length}</span></h2><Button onClick={()=>{setModal("location")}}><Plus size={16}/>新增位置紀錄</Button></div>{!locations.length?<Blank title="尚無位置追蹤紀錄" description="新增第一筆設備擺放位置。" icon={MapPin}/>:<Table><TableHeader><TableRow><TableHead>Lab ID (地點)</TableHead><TableHead>ASLUNG ID</TableHead><TableHead>開始時間</TableHead><TableHead>結束時間</TableHead><TableHead>狀態</TableHead><TableHead>操作</TableHead></TableRow></TableHeader><TableBody>{locations.map(l=><TableRow key={l.id}><TableCell className="font-semibold">{l.lab_id}</TableCell><TableCell className="mono">{l.aslung_id}</TableCell><TableCell>{localTime(l.start_time)}</TableCell><TableCell>{l.end_time?localTime(l.end_time):"—"}</TableCell><TableCell><span className={l.active?"status ok":"status pending"}>{l.active?"使用中":"已移出"}</span></TableCell><TableCell><div className="flex gap-2"><Button size="sm" variant="outline" onClick={()=>{setConfirmation({action:"locationDelete",id:l.id,title:"刪除此紀錄？",description:"確認後將無法復原。"})}}>刪除</Button></div></TableCell></TableRow>)}</TableBody></Table>}</section>}
+ {section==="locations"&&admin&&<section className="panel"><div className="list-heading"><div className="flex items-center gap-4"><h2>設備追蹤 <span className="count">{locations.length}</span></h2><Input className="w-64 h-9 bg-white" placeholder="搜尋 ASLUNG ID 或地點..." value={search} onChange={e=>setSearch(e.target.value)} /></div><Button onClick={()=>{setEditLocation(null);setModal("location")}}><Plus size={16}/>新增紀錄</Button></div>{!locations.length?<Blank title="尚無位置追蹤紀錄" description="新增第一筆設備擺放位置。" icon={MapPin}/>:<Table><TableHeader><TableRow><TableHead>Lab ID (地點)</TableHead><TableHead>ASLUNG ID</TableHead><TableHead>開始時間</TableHead><TableHead>結束時間</TableHead><TableHead>狀態</TableHead><TableHead>操作</TableHead></TableRow></TableHeader><TableBody>{locations.filter(l=>(l.aslung_id+" "+l.lab_id).toLowerCase().includes(search.toLowerCase())).map(l=><TableRow key={l.id}><TableCell className="font-semibold">{l.lab_id}</TableCell><TableCell className="mono">{l.aslung_id}</TableCell><TableCell>{localTime(l.start_time)}</TableCell><TableCell>{l.end_time?localTime(l.end_time):"—"}</TableCell><TableCell><span className={l.active?"status ok":"status pending"}>{l.active?"使用中":"已移出"}</span></TableCell><TableCell><div className="flex gap-2"><Button size="sm" variant="outline" onClick={()=>{setEditLocation(l); setModal("location")}}>編輯</Button><Button size="sm" variant="outline" onClick={()=>{setConfirmation({action:"locationDelete",id:l.id,title:"刪除此紀錄？",description:"確認後將無法復原。"})}}>刪除</Button></div></TableCell></TableRow>)}</TableBody></Table>}</section>}
  {section==="permissions"&&admin&&<section className="panel"><div className="list-heading"><h2>設備資料授權 <span className="count">{grants.length}</span></h2><Button disabled={!devices.length||!members.some(m=>m.role==="member"&&m.active)} onClick={()=>{setGrantDevice("");setGrantEmail("");setGrantId(null);setModal("grant")}}><Plus size={16}/>新增授權</Button></div>{!grants.length?<Blank title="尚未指派資料權限" description="先建立 ASLUNG ID 與會員，再指定可查詢的資料期間。" icon={ShieldCheck}/>:<Table><TableHeader><TableRow><TableHead>ASLUNG ID</TableHead><TableHead>會員</TableHead><TableHead>可存取資料期間（UTC+8）</TableHead><TableHead>操作</TableHead></TableRow></TableHeader><TableBody>{grants.map(g=><TableRow key={g.id}><TableCell className="mono">{g.device_id}</TableCell><TableCell>{members.find(m=>m.email===g.email)?.name}<p className="cell-note">{members.find(m=>m.email===g.email)?.nickname||(g.email.endsWith("@local.aslung")?"":g.email)}</p></TableCell><TableCell>{localTime(g.start)}<br/>{g.end ? localTime(g.end) : "無限制"}</TableCell><TableCell><div className="flex gap-2"><Button size="sm" variant="outline" onClick={()=>{setGrantDevice(g.device_id);setGrantEmail(g.email);setGrantId(g.id);setModal("grant")}}>編輯</Button><Button size="sm" variant="ghost" aria-label="撤銷授權" onClick={()=>setConfirmation({action:"revoke",id:g.id,title:"刪除此筆授權紀錄？",description:"確認後該會員將失去此紀錄區間的存取權限。"})}><Trash2 size={15}/></Button></div></TableCell></TableRow>)}</TableBody></Table>}</section>}
  {section==="connection"&&<div className="connection-grid">{admin&&<section className="panel p-7"><div className="section-icon"><Server/></div><h2>MySQL 資料庫直連狀態</h2><p className="text-muted-foreground mt-2">本系統已設定為直接連線至 EC2 的 rcec_lung 資料庫。</p><div className="connection-state"><CheckCircle2 size={20} style={{color:"#10b981"}}/><div><strong>已成功設定直連</strong><p>系統直接對 rawdata 表格進行高效能分頁查詢。</p></div></div><h3 className="mt-6 mb-3 font-semibold text-sm">目前的對應設定</h3><ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground"><li>主機：35.160.61.178</li><li>資料表：rcec_lung.rawdata</li><li>時間基準：以 UTC+0 讀取並轉換</li><li>權限控制：強制套用本系統的會員授權區間</li></ul></section>}<section className="panel p-7"><div className="section-icon"><Code2/></div><h2>內部 JSON API 規格</h2><p className="text-muted-foreground mt-2">前端介面與資料下載所使用的內部 API。</p><div className="api-path mono">GET /api/data</div><Table><TableHeader><TableRow><TableHead>參數</TableHead><TableHead>用途</TableHead></TableRow></TableHeader><TableBody>{[["aslung_id","設備識別碼"],["start / end","含時區的 ISO 8601 時間"],["cursor","下一頁游標（選填）"],["download=1","下載完整期間"],["format=json / csv","下載格式"]].map(([a,b])=><TableRow key={a}><TableCell className="mono">{a}</TableCell><TableCell>{b}</TableCell></TableRow>)}</TableBody></Table><p className="panel-footnote mt-4">💡 <strong>自動化串接注意：</strong>API 依賴「瀏覽器 Cookie」或「API Token」。下方可產生您專屬的 Token 來供外部程式使用。</p></section><section className="panel p-7"><div className="section-icon"><Key/></div><div className="flex items-center justify-between"><div><h2>我的 API 存取權杖</h2><p className="text-muted-foreground mt-2">在您的外部程式 HTTP Request 標頭加入 `Authorization: Bearer &lt;TOKEN&gt;` 即可認證身分並下載資料。</p></div><Button onClick={()=>setConfirmation({action:"tokenCreate",title:"產生新權杖？",description:"將產生一組隨機的新權杖供您的應用程式使用。"})}>產生權杖</Button></div><div className="mt-6"><Table><TableHeader><TableRow><TableHead>Token 字串</TableHead><TableHead>建立時間</TableHead><TableHead>操作</TableHead></TableRow></TableHeader><TableBody>{tokens.map(t=><TableRow key={t.id}><TableCell className="mono font-semibold">{t.id}</TableCell><TableCell>{localTime(t.created_at)}</TableCell><TableCell><Button variant="ghost" size="sm" onClick={()=>setConfirmation({action:"tokenDelete",id:t.id,title:"刪除此權杖？",description:"所有正在使用此權杖的程式將立即無法連線。確認？"})}><Trash2 size={15}/></Button></TableCell></TableRow>)}{!tokens.length&&<TableRow><TableCell colSpan={3} className="text-center text-muted-foreground h-20">尚未產生任何 API 權杖</TableCell></TableRow>}</TableBody></Table></div></section></div>}
  </>}
@@ -222,10 +246,10 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
     <DialogHeader>
       <DialogTitle>
         {modal==="device" ? (editDevice?"編輯 ASLUNG ID":"建立 ASLUNG ID")
-        : modal==="transfer" ? "移轉設備位置"
+        : modal==="transfer" ? "移轉設備位置" : modal==="transferBulk" ? "大量移轉設備位置" : modal==="qrScanner" ? "掃描 ASLUNG ID QR Code"
         : modal==="importCsv" ? "大量匯入 CSV"
         : modal==="member" ? (editMember ? "編輯會員" : "新增會員")
-        : modal==="location" ? "新增位置紀錄"
+        : modal==="location" ? (editLocation ? "編輯位置紀錄" : "新增位置紀錄")
         : modal==="password" ? "變更密碼"
         : grantId ? "編輯資料授權紀錄" : "新增資料授權紀錄"}
       </DialogTitle>
@@ -249,12 +273,12 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
         }else if(modal==="grant"){
           void mutate({action:"grant",id:grantId,deviceId:grantDevice,email:grantEmail,start:zoned(String(p.start)),end:p.end?zoned(String(p.end)):null});
         }else if(modal==="location"){
-          void mutate({action:"locationAdd",...p,startTime:zoned(String(p.startTime)),endTime:p.endTime?zoned(String(p.endTime)):null});
+          void mutate({action: editLocation ? "locationUpdate" : "locationAdd", id: editLocation?.id, ...p, startTime:zoned(String(p.startTime)), endTime:p.endTime?zoned(String(p.endTime)):null});
         }else if(modal==="importCsv"){
           const text=String(p.csvText||"").trim();
           if(!text)throw new Error("請貼上資料");
           void parseAndImportCsv(text);
-        }else if (modal==="transfer"){
+        }else if (modal==="transferBulk"){ void mutate({action:"transferBulk", aslungIds: Array.from(selectedDevices), labId: String(p.labId)}).then(() => setSelectedDevices(new Set())); }else if (modal==="transfer"){
           void (async()=>{
             if(await mutate({action:"transfer",...p})){
               if(confirm("移轉成功！\n\n是否結束該設備先前的資料授權？\n(若點選「確定」，原授權將結算至現在，並會引導您設定新授權。若點選「取消」則繼續沿用原授權)")){
@@ -276,7 +300,7 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
       {modal==="device"?<>
         <Label htmlFor="device-id">ASLUNG ID</Label>
         <Input id="device-id" name="id" required maxLength={80} placeholder="例如 ASLUNG_001" pattern="[A-Za-z0-9_-]+" defaultValue={editDevice?.id||""} readOnly={!!editDevice}/>
-        <Label htmlFor="lab-id-device">目前位置 / 實驗室</Label>
+        <Label htmlFor="status">設備狀態</Label><select id="status" name="status" className="w-full h-11 border px-3 rounded-md bg-white" defaultValue={editDevice?.status||"DEPLOYED"}><option value="DEPLOYED">服役中 (Deployed)</option><option value="MAINTENANCE">維修中 (Maintenance)</option><option value="RETIRED">已報廢 (Retired)</option><option value="LOST">遺失 (Lost)</option></select><Label htmlFor="lab-id-device">目前位置 / 實驗室</Label>
         <Input id="lab-id-device" name="labId" maxLength={160} placeholder="例如：國外實驗室 A" defaultValue={editDevice ? (locations.find(l=>l.aslung_id===editDevice.id&&l.active)?.lab_id || "") : ""}/>
         <Label htmlFor="description">備註</Label>
         <Textarea id="description" name="description" maxLength={1000} placeholder="選填" defaultValue={editDevice?.description||""}/>
@@ -285,7 +309,16 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
         <input type="hidden" name="aslungId" value={transferDevice?.id||""} />
         <Label htmlFor="lab-id">新位置 / 實驗室名稱</Label>
         <Input id="lab-id" name="labId" required maxLength={160} placeholder="例如：國外實驗室 A" />
+      
+      </> : modal==="transferBulk"?<>
+        <div className="mb-4 text-sm text-slate-600">將 <strong>{selectedDevices.size}</strong> 台設備移轉至新位置。</div>
+        <Label htmlFor="lab-id-bulk">新位置 / 實驗室名稱</Label>
+        <Input id="lab-id-bulk" name="labId" required maxLength={160} placeholder="例如：國外實驗室 A" />
+      </> : modal==="qrScanner"?<>
+        <div id="reader" className="w-full overflow-hidden rounded-md bg-slate-100 min-h-[300px]"></div>
+        <p className="text-center text-sm text-slate-500 mt-4">請將相機對準設備的 QR Code</p>
       </> : modal==="member"?<>
+
         {editMember && <input type="hidden" name="originalEmail" value={editMember.email} />}
         <Label htmlFor="member-name">會員姓名</Label>
         <Input id="member-name" name="name" required maxLength={160} defaultValue={editMember?.name||""}/>
@@ -310,15 +343,16 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
         </div>
         <Textarea id="csv-paste" name="csvText" rows={8} className="font-mono text-sm" placeholder={`範例：\nAL-0805, 泰國實驗室\nAL-0806, 蒙古\nAL-0886`} />
       </> : modal==="location"?<>
+        {editLocation && <input type="hidden" name="id" value={editLocation.id}/>}
         <Label htmlFor="lab-id">Lab ID / 擺放地點</Label>
-        <Input id="lab-id" name="labId" required maxLength={160} placeholder="例如 國外實驗室 A"/>
+        <Input id="lab-id" name="labId" required maxLength={160} placeholder="例如 國外實驗室 A" defaultValue={editLocation?.lab_id||""}/>
         <Label htmlFor="aslung-id-sel">ASLUNG ID</Label>
-        <select id="aslung-id-sel" name="aslungId" className="w-full h-11 border px-3 rounded-md bg-white" required><option value="">選擇設備</option>{devices.map(d=><option key={d.id} value={d.id}>{d.id} · {d.name}</option>)}</select>
+        <select id="aslung-id-sel" name="aslungId" className="w-full h-11 border px-3 rounded-md bg-white" required defaultValue={editLocation?.aslung_id||""}><option value="">選擇設備</option>{devices.map(d=><option key={d.id} value={d.id}>{d.id} · {d.name}</option>)}</select>
         <Label htmlFor="loc-start">開始時間 ({tz})</Label>
-        <Input id="loc-start" name="startTime" type="datetime-local" defaultValue={today()+"T00:00"} required/>
+        <Input id="loc-start" name="startTime" type="datetime-local" defaultValue={editLocation?.start_time ? formatInTimeZone(new Date(editLocation.start_time), tz, "yyyy-MM-dd'T'HH:mm") : today()+"T00:00"} required/>
         <Label htmlFor="loc-end">結束時間 ({tz})</Label>
-        <Input id="loc-end" name="endTime" type="datetime-local" />
-        <Label className="flex items-center gap-2 mt-4"><input type="checkbox" name="active" value="1" defaultChecked /> 目前在此位置 (Active)</Label>
+        <Input id="loc-end" name="endTime" type="datetime-local" defaultValue={editLocation?.end_time ? formatInTimeZone(new Date(editLocation.end_time), tz, "yyyy-MM-dd'T'HH:mm") : ""} />
+        <Label className="flex items-center gap-2 mt-4"><input type="checkbox" name="active" value="1" defaultChecked={editLocation ? !!editLocation.active : true} /> 目前在此位置 (Active)</Label>
       </> : <>
         <Label>ASLUNG ID</Label>
         {pick(grantDevice,setGrantDevice,devices.map(d=>({value:d.id,label:d.id+(d.description?" · "+d.description:d.name?" · "+d.name:"")})),"選擇設備")}
