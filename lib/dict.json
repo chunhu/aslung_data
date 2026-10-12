@@ -88,7 +88,7 @@
   "授權會員": "Authorized Members",
   "操作": "Actions",
   "位": "members",
-  "設定授權": "Set Grants",
+  "設定授權": "Set Permissions",
   "會員帳號": "Member Accounts",
   "新增會員": "Add Member",
   "角色": "Role",
@@ -192,5 +192,13 @@
   "儲存": "Save",
   "確認": "Confirm",
   "ASLUNG ID 管理": "ASLUNG ID Management",
-  "JSON 與資料來源": "JSON & Data Source"
+  "JSON 與資料來源": "JSON & Data Source",
+  "檔案專區": "Files",
+  "檔案管理與授權": "File Management & Permissions",
+  "上傳檔案": "Upload File",
+  "檔案大小": "File Size",
+  "尚未授權": "Not Granted",
+  "授權檔案專區": "Authorized Files",
+  "上傳新檔案並指定授權": "Upload File & Assign Permissions",
+  "設定檔案授權成員": "Set File Member Permissions"
 }
