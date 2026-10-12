@@ -29,7 +29,7 @@ export default function LoginForm(){
         const r=await fetch("/api/auth/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(p)});
         const data=await r.json();
         if(!r.ok)throw new Error(data.error);
-        window.location.assign("/");
+        window.location.assign("/" + (window.location.search || ""));
       }catch(e){
         setError((e as Error).message);
         setBusy(false);
