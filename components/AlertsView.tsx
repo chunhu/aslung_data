@@ -1,6 +1,6 @@
 "use client";
 import React, { useState } from "react";
-import { BellRing, Send, Settings, AlertTriangle, CheckCircle2, Clock, Mail, RefreshCw, ShieldAlert } from "lucide-react";
+import { BellRing, Send, Settings, AlertTriangle, CheckCircle2, Clock, Mail, RefreshCw, ShieldAlert, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table";
 import { toast } from "sonner";
@@ -43,6 +43,9 @@ interface AlertsViewProps {
   setModal: (m: string) => void;
   load: () => Promise<void>;
   localTime: (iso: string) => string;
+  selectedAlertLogs?: Set<number>;
+  setSelectedAlertLogs?: React.Dispatch<React.SetStateAction<Set<number>>>;
+  setConfirmation?: (c: any) => void;
 }
 
 export default function AlertsView({
@@ -55,8 +58,14 @@ export default function AlertsView({
   setModal,
   load,
   localTime,
+  selectedAlertLogs,
+  setSelectedAlertLogs,
+  setConfirmation,
 }: AlertsViewProps) {
   const [checking, setChecking] = useState(false);
+  const [localSelectedLogs, setLocalSelectedLogs] = useState<Set<number>>(new Set());
+  const selectedLogs = selectedAlertLogs || localSelectedLogs;
+  const setSelectedLogs = setSelectedAlertLogs || setLocalSelectedLogs;
 
   const thresholdMins = alertSettings?.offline_threshold_mins || 60;
   const now = Date.now();
@@ -241,9 +250,45 @@ export default function AlertsView({
           <div>
             <h3 className="font-bold text-slate-800 flex items-center gap-2">
               <Clock size={16} />
-              最近告警通知發送日誌 (最近 50 筆)
+              最近告警通知發送日誌 <span className="text-xs font-normal text-slate-500 font-mono">({alertLogs.length} 筆)</span>
             </h3>
             <p className="text-xs text-slate-500 mt-0.5">顯示各設備斷線時觸發的郵件發送紀錄與狀態。</p>
+          </div>
+          <div className="flex gap-2">
+            {selectedLogs.size > 0 && setConfirmation && (
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => {
+                  setConfirmation({
+                    action: "alertLogDeleteBulk",
+                    ids: Array.from(selectedLogs),
+                    title: `刪除所選 ${selectedLogs.size} 筆告警日誌？`,
+                    description: `確認刪除所選的 ${selectedLogs.size} 筆告警發送紀錄？此操作無法復原。`,
+                  });
+                }}
+              >
+                <Trash2 size={15} className="mr-1" />
+                大量刪除 ({selectedLogs.size})
+              </Button>
+            )}
+            {alertLogs.length > 0 && setConfirmation && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-red-600 hover:bg-red-50 hover:text-red-700"
+                onClick={() => {
+                  setConfirmation({
+                    action: "alertLogClearAll",
+                    title: `清空全部告警日誌？`,
+                    description: `確認清空目前所有的 ${alertLogs.length} 筆告警發送紀錄？此操作無法復原。`,
+                  });
+                }}
+              >
+                <Trash2 size={15} className="mr-1" />
+                清空全部日誌
+              </Button>
+            )}
           </div>
         </div>
 
@@ -254,7 +299,18 @@ export default function AlertsView({
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>發送時間 (UTC+8)</TableHead>
+                  <TableHead className="w-12 text-center font-semibold">序號</TableHead>
+                  <TableHead className="w-10">
+                    <input
+                      type="checkbox"
+                      checked={selectedLogs.size === alertLogs.length && alertLogs.length > 0}
+                      onChange={(e) => {
+                        if (e.target.checked) setSelectedLogs(new Set(alertLogs.map((l) => l.id)));
+                        else setSelectedLogs(new Set());
+                      }}
+                    />
+                  </TableHead>
+                  <TableHead>發送時間</TableHead>
                   <TableHead>ASLUNG ID</TableHead>
                   <TableHead>地點 (Lab ID)</TableHead>
                   <TableHead>負責人</TableHead>
@@ -262,11 +318,25 @@ export default function AlertsView({
                   <TableHead>斷線時長</TableHead>
                   <TableHead>狀態</TableHead>
                   <TableHead>詳細說明</TableHead>
+                  <TableHead className="text-center">操作</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {alertLogs.map((log) => (
+                {alertLogs.map((log, idx) => (
                   <TableRow key={log.id}>
+                    <TableCell className="text-center font-mono text-xs text-slate-500">{idx + 1}</TableCell>
+                    <TableCell>
+                      <input
+                        type="checkbox"
+                        checked={selectedLogs.has(log.id)}
+                        onChange={(e) => {
+                          const s = new Set(selectedLogs);
+                          if (e.target.checked) s.add(log.id);
+                          else s.delete(log.id);
+                          setSelectedLogs(s);
+                        }}
+                      />
+                    </TableCell>
                     <TableCell className="font-mono text-xs">{localTime(log.created_at)}</TableCell>
                     <TableCell className="font-mono font-semibold">{log.aslung_id}</TableCell>
                     <TableCell className="text-xs">{log.lab_id || "—"}</TableCell>
@@ -282,6 +352,26 @@ export default function AlertsView({
                     </TableCell>
                     <TableCell className="text-xs text-slate-500 max-w-xs truncate" title={log.error_message || ''}>
                       {log.error_message || "—"}
+                    </TableCell>
+                    <TableCell className="text-center">
+                      {setConfirmation && (
+                        <Button
+                          size="icon-xs"
+                          variant="ghost"
+                          className="text-red-500 hover:text-red-600 hover:bg-red-50"
+                          title="刪除此筆日誌"
+                          onClick={() => {
+                            setConfirmation({
+                              action: "alertLogDelete",
+                              id: log.id,
+                              title: "刪除此筆告警日誌？",
+                              description: `確認刪除此筆 ${log.aslung_id} 的告警發送紀錄？此操作無法復原。`,
+                            });
+                          }}
+                        >
+                          <Trash2 size={14} />
+                        </Button>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}

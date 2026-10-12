@@ -82,7 +82,7 @@ export async function GET(){try{
  const alertSettings=(await db().prepare("SELECT * FROM alert_settings WHERE id=1").first()) || {
    id: 1, enabled: 1, check_interval_mins: 60, offline_threshold_mins: 60, use_test_email: 0, smtp_host: "", smtp_port: 587, smtp_user: "", smtp_pass: "", smtp_from: ""
  };
- const alertLogs=isAdmin?(await db().prepare("SELECT * FROM alert_logs ORDER BY created_at DESC LIMIT 50").all()).results:[];
+ const alertLogs=isAdmin?(await db().prepare("SELECT * FROM alert_logs ORDER BY created_at DESC LIMIT 200").all()).results:[];
 
  return Response.json({
    me:{email:m.email,name:m.name,role:m.role},
@@ -485,6 +485,25 @@ export async function POST(r:Request){try{
     }
     await db().prepare("COMMIT").run();
   }catch(e){await db().prepare("ROLLBACK").run();throw e;}
+} else if(p.action==="alertLogDelete"){
+  requireAdmin();
+  const id=Number(p.id);
+  if(!id)throw new AppError(400,"無效的日誌編號。");
+  await db().prepare("DELETE FROM alert_logs WHERE id=?").bind(id).run();
+} else if(p.action==="alertLogDeleteBulk"){
+  requireAdmin();
+  const ids=((p.ids||p.logIds)??[]) as unknown[];
+  if(!Array.isArray(ids)||ids.length===0)throw new AppError(400,"請選擇要刪除的告警日誌。");
+  await db().prepare("BEGIN").run();
+  try{
+    for(const id of ids){
+      await db().prepare("DELETE FROM alert_logs WHERE id=?").bind(Number(id)).run();
+    }
+    await db().prepare("COMMIT").run();
+  }catch(e){await db().prepare("ROLLBACK").run();throw e;}
+} else if(p.action==="alertLogClearAll"){
+  requireAdmin();
+  await db().prepare("DELETE FROM alert_logs").run();
 } else throw new AppError(400,"不支援此操作。");
  return Response.json({ok:true});
 }catch(e){if(e instanceof Error&&e.message.includes("UNIQUE constraint"))return Response.json({error:"此 ID 或名稱已存在。"},{status:409});return fail(e)}}
