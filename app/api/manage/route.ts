@@ -72,12 +72,17 @@ export async function GET(){try{
  const m=await identity();const isAdmin=m.role==="admin";
  await syncDeviceStatusesAndLocations();
  let devices: any[] = [];
+ let alertChecks: any[] = [];
  let alertLogs: any[] = [];
+ let grantRequests: any[] = [];
 
  if (isAdmin) {
    devices = (await db().prepare("SELECT * FROM devices ORDER BY id").all()).results;
-   alertLogs = (await db().prepare("SELECT * FROM alert_logs ORDER BY created_at DESC LIMIT 200").all()).results;
+   alertChecks = (await db().prepare("SELECT * FROM alert_checks ORDER BY created_at DESC LIMIT 100").all()).results;
+   alertLogs = (await db().prepare("SELECT * FROM alert_logs ORDER BY created_at DESC LIMIT 500").all()).results;
+   grantRequests = (await db().prepare("SELECT gr.*, m.name as member_name, m.nickname as member_nickname FROM grant_requests gr LEFT JOIN members m ON m.email = gr.email ORDER BY CASE WHEN gr.status='PENDING' THEN 0 ELSE 1 END, gr.created_at DESC LIMIT 200").all()).results;
  } else {
+   grantRequests = (await db().prepare("SELECT * FROM grant_requests WHERE email=? ORDER BY created_at DESC LIMIT 50").bind(m.email).all()).results;
    // 1. Authorized devices by grants
    const grantedDevs = (await db().prepare("SELECT d.*, g.start, g.end FROM devices d JOIN grants g ON g.device_id=d.id WHERE g.email=? ORDER BY d.id").bind(m.email).all()).results as any[];
 
@@ -125,6 +130,15 @@ export async function GET(){try{
           OR TRIM(maintainer) IN (${namePlaceholders})
        ORDER BY created_at DESC LIMIT 200
      `).bind(...bindParams).all()).results;
+     const checkIds = Array.from(new Set(alertLogs.map((l: any) => l.check_id).filter(Boolean)));
+     if (checkIds.length > 0) {
+       const checkPh = checkIds.map(() => "?").join(",");
+       alertChecks = (await db().prepare(`
+         SELECT * FROM alert_checks
+         WHERE id IN (${checkPh})
+         ORDER BY created_at DESC LIMIT 100
+       `).bind(...checkIds).all()).results;
+     }
    }
  }
  const members=isAdmin?(await db().prepare("SELECT email,name,nickname,role,active FROM members ORDER BY role,email").all()).results:[];
@@ -148,7 +162,7 @@ export async function GET(){try{
  return Response.json({
    me:{email:m.email,name:m.name,role:m.role},
    devices,members,grants,locations,tokens,files,fileGrants,
-   labs,maintainers,alertSettings,alertLogs,
+   labs,maintainers,alertSettings,alertChecks,alertLogs,grantRequests,
    connected:!!(config().url&&config().token)
  },{headers:{"Cache-Control":"no-store"}});
 }catch(e){return fail(e)}}
@@ -569,6 +583,53 @@ export async function POST(r:Request){try{
 } else if(p.action==="alertLogClearAll"){
   requireAdmin();
   await db().prepare("DELETE FROM alert_logs").run();
+} else if(p.action==="alertCheckDelete"){
+  requireAdmin();
+  const checkId=Number(p.id);
+  await db().prepare("DELETE FROM alert_logs WHERE check_id=?").bind(checkId).run();
+  await db().prepare("DELETE FROM alert_checks WHERE id=?").bind(checkId).run();
+} else if(p.action==="alertCheckDeleteBulk"){
+  requireAdmin();
+  const ids=((p.ids||p.checkIds)??[]) as unknown[];
+  if(!Array.isArray(ids)||ids.length===0)throw new AppError(400,"請選擇要刪除的檢查日誌。");
+  const ph=ids.map(()=>"?").join(",");
+  await db().prepare(`DELETE FROM alert_logs WHERE check_id IN (${ph})`).bind(...ids).run();
+  await db().prepare(`DELETE FROM alert_checks WHERE id IN (${ph})`).bind(...ids).run();
+} else if(p.action==="alertCheckClearAll"){
+  requireAdmin();
+  await db().prepare("DELETE FROM alert_logs").run();
+  await db().prepare("DELETE FROM alert_checks").run();
+} else if(p.action==="requestGrant"){
+  const aslungId=required(p.aslungId||p.aslung_id,80).trim().toUpperCase();
+  const reason=String(p.reason||"").trim().slice(0,500);
+  const dev=await db().prepare("SELECT id FROM devices WHERE UPPER(id)=UPPER(?)").bind(aslungId).first();
+  if(!dev)throw new AppError(404,`找不到 ASLUNG ID 為「${aslungId}」的設備，請確認編號是否正確。`);
+  const pending=await db().prepare("SELECT id FROM grant_requests WHERE email=? AND UPPER(aslung_id)=UPPER(?) AND status='PENDING'").bind(me.email,aslungId).first();
+  if(pending)throw new AppError(400,"您已提出過此設備的授權申請，目前正在等待管理員審核中。");
+  const existingGrant=await db().prepare("SELECT id FROM grants WHERE email=? AND UPPER(device_id)=UPPER(?) AND (end IS NULL OR end>=?)").bind(me.email,aslungId,new Date().toISOString()).first();
+  if(existingGrant)throw new AppError(400,"您目前已擁有此設備的有效資料授權，無須重複申請。");
+  await db().prepare("INSERT INTO grant_requests(email,aslung_id,reason,status,created_at) VALUES(?,?,?,'PENDING',?)").bind(me.email,dev.id,reason,new Date().toISOString()).run();
+} else if(p.action==="reviewGrantRequest"){
+  requireAdmin();
+  const reqId=Number(p.id);
+  const decision=String(p.decision||"").toUpperCase();
+  if(decision!=="APPROVED"&&decision!=="REJECTED")throw new AppError(400,"無效的審核結果。");
+  const req:any=await db().prepare("SELECT * FROM grant_requests WHERE id=?").bind(reqId).first();
+  if(!req)throw new AppError(404,"找不到此筆申請紀錄。");
+  const nowIso=new Date().toISOString();
+  if(decision==="APPROVED"){
+    const start=p.start?instant(String(p.start)):new Date(Date.now()-365*86400000).toISOString();
+    const end=p.end?instant(String(p.end)):null;
+    await db().prepare("INSERT INTO grants(device_id,email,start,end) VALUES(?,?,?,?)").bind(req.aslung_id,req.email,start,end).run();
+  }
+  await db().prepare("UPDATE grant_requests SET status=?, reviewed_by=?, reviewed_at=? WHERE id=?").bind(decision,me.email,nowIso,reqId).run();
+} else if(p.action==="grantRequestDelete"){
+  const reqId=Number(p.id);
+  if(isAdmin){
+    await db().prepare("DELETE FROM grant_requests WHERE id=?").bind(reqId).run();
+  }else{
+    await db().prepare("DELETE FROM grant_requests WHERE id=? AND email=?").bind(reqId,me.email).run();
+  }
 } else throw new AppError(400,"不支援此操作。");
  return Response.json({ok:true});
 }catch(e){if(e instanceof Error&&e.message.includes("UNIQUE constraint"))return Response.json({error:"此 ID 或名稱已存在。"},{status:409});return fail(e)}}

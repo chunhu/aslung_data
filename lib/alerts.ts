@@ -3,6 +3,7 @@ import { db, syncDeviceStatusesAndLocations } from "@/lib/server";
 import { getPool } from "@/lib/data";
 
 export interface AlertResult {
+  checkId?: number;
   checkedAt: string;
   totalDevices: number;
   offlineCount: number;
@@ -245,9 +246,22 @@ export async function checkAndSendOfflineAlerts(options: { force?: boolean } = {
   }
 
   const details: AlertResult["details"] = [];
+  const checkType = options.force ? "MANUAL" : "SCHEDULED";
+  const initialStatus = offlineList.length === 0 ? "NORMAL" : "PENDING";
+  const initialSummary = offlineList.length === 0
+    ? `檢測 ${inUseDevices.length} 台使用中設備，全部正常連線`
+    : `檢測 ${inUseDevices.length} 台使用中設備，發現 ${offlineList.length} 台斷線`;
+
+  const checkInsertRes: any = await store.prepare(`
+    INSERT INTO alert_checks (check_type, total_devices, offline_count, notified_maintainers, status, summary, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).bind(checkType, inUseDevices.length, offlineList.length, groupedByMaintainer.size, initialStatus, initialSummary, nowIso).run();
+
+  const checkId = checkInsertRes?.lastInsertRowid ? Number(checkInsertRes.lastInsertRowid) : 0;
+
   const logInsert = store.prepare(`
-    INSERT INTO alert_logs (aslung_id, lab_id, maintainer, email, last_seen, offline_mins, status, error_message, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO alert_logs (check_id, aslung_id, lab_id, maintainer, email, last_seen, offline_mins, status, error_message, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   // 8. Process each maintainer group
@@ -331,6 +345,7 @@ export async function checkAndSendOfflineAlerts(options: { force?: boolean } = {
     for (const it of items) {
       try {
         await logInsert.bind(
+          checkId || null,
           it.aslung_id,
           it.lab_id,
           mName,
@@ -361,6 +376,27 @@ export async function checkAndSendOfflineAlerts(options: { force?: boolean } = {
     });
   }
 
+  // Update check execution record
+  let finalCheckStatus = "NORMAL";
+  if (offlineList.length > 0) {
+    const hasFailed = details.some(d => d.status === "FAILED");
+    const hasSimulated = details.some(d => d.status === "SIMULATED");
+    if (hasFailed) finalCheckStatus = "FAILED";
+    else if (hasSimulated) finalCheckStatus = "SIMULATED";
+    else finalCheckStatus = "SENT";
+  }
+  const finalSummary = offlineList.length === 0
+    ? `檢測 ${inUseDevices.length} 台使用中設備，全部正常連線`
+    : `檢測 ${inUseDevices.length} 台使用中設備，發現 ${offlineList.length} 台斷線，通知 ${groupedByMaintainer.size} 位負責人`;
+
+  if (checkId) {
+    await store.prepare(`
+      UPDATE alert_checks
+      SET status = ?, summary = ?
+      WHERE id = ?
+    `).bind(finalCheckStatus, finalSummary, checkId).run();
+  }
+
   // Update last check & alert times in settings
   await store.prepare(`
     UPDATE alert_settings
@@ -369,6 +405,7 @@ export async function checkAndSendOfflineAlerts(options: { force?: boolean } = {
   `).bind(nowIso, offlineList.length, nowIso).run();
 
   return {
+    checkId,
     checkedAt: nowIso,
     totalDevices: inUseDevices.length,
     offlineCount: offlineList.length,

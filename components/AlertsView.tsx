@@ -1,6 +1,7 @@
 "use client";
 import React, { useState } from "react";
-import { BellRing, Send, Settings, AlertTriangle, CheckCircle2, Clock, Mail, RefreshCw, ShieldAlert, Trash2 } from "lucide-react";
+import { BellRing, Send, Settings, AlertTriangle, CheckCircle2, Clock, Mail, RefreshCw, ShieldAlert, Trash2, Eye } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table";
 import { toast } from "sonner";
@@ -25,8 +26,20 @@ export interface AlertSettings {
   timezone?: string;
 }
 
+export interface AlertCheck {
+  id: number;
+  check_type: string;
+  total_devices: number;
+  offline_count: number;
+  notified_maintainers: number;
+  status: string;
+  summary: string;
+  created_at: string;
+}
+
 export interface AlertLog {
   id: number;
+  check_id?: number | null;
   aslung_id: string;
   lab_id: string;
   maintainer: string;
@@ -40,7 +53,10 @@ export interface AlertLog {
 
 interface AlertsViewProps {
   alertSettings?: AlertSettings;
+  alertChecks?: AlertCheck[];
   alertLogs: AlertLog[];
+  selectedAlertChecks?: Set<number>;
+  setSelectedAlertChecks?: React.Dispatch<React.SetStateAction<Set<number>>>;
   devices: Array<{ id: string; status: string; location: string }>;
   locations: Array<{ id: number; lab_id: string; aslung_id: string; maintainer?: string | null; active: number; end_time?: string | null }>;
   maintainers: Array<{ name: string; email: string; email_test: string }>;
@@ -57,6 +73,7 @@ interface AlertsViewProps {
 
 export default function AlertsView({
   alertSettings,
+  alertChecks = [],
   alertLogs,
   devices,
   locations,
@@ -65,6 +82,8 @@ export default function AlertsView({
   setModal,
   load,
   localTime,
+  selectedAlertChecks,
+  setSelectedAlertChecks,
   selectedAlertLogs,
   setSelectedAlertLogs,
   setConfirmation,
@@ -72,6 +91,10 @@ export default function AlertsView({
   me,
 }: AlertsViewProps) {
   const [checking, setChecking] = useState(false);
+  const [selectedCheckDetail, setSelectedCheckDetail] = useState<AlertCheck | null>(null);
+  const [localSelectedChecks, setLocalSelectedChecks] = useState<Set<number>>(new Set());
+  const selectedChecks = selectedAlertChecks || localSelectedChecks;
+  const setSelectedChecks = setSelectedAlertChecks || setLocalSelectedChecks;
   const [localSelectedLogs, setLocalSelectedLogs] = useState<Set<number>>(new Set());
   const selectedLogs = selectedAlertLogs || localSelectedLogs;
   const setSelectedLogs = setSelectedAlertLogs || setLocalSelectedLogs;
@@ -291,148 +314,305 @@ export default function AlertsView({
         )}
       </section>
 
-      {/* 3. Alert Logs History */}
-      <section className="panel p-6">
-        <div className="flex items-center justify-between mb-3">
-          <div>
-            <h3 className="font-bold text-slate-800 flex items-center gap-2">
-              <Clock size={16} />
-              最近告警通知發送日誌 <span className="text-xs font-normal text-slate-500 font-mono">({alertLogs.length} 筆)</span>
-            </h3>
-            <p className="text-xs text-slate-500 mt-0.5">顯示各設備斷線時觸發的郵件發送紀錄與狀態。</p>
-          </div>
-          <div className="flex gap-2">
-            {admin && selectedLogs.size > 0 && setConfirmation && (
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={() => {
-                  setConfirmation({
-                    action: "alertLogDeleteBulk",
-                    ids: Array.from(selectedLogs),
-                    title: `刪除所選 ${selectedLogs.size} 筆告警日誌？`,
-                    description: `確認刪除所選的 ${selectedLogs.size} 筆告警發送紀錄？此操作無法復原。`,
-                  });
-                }}
-              >
-                <Trash2 size={15} className="mr-1" />
-                大量刪除 ({selectedLogs.size})
-              </Button>
-            )}
-            {admin && alertLogs.length > 0 && setConfirmation && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="text-red-600 hover:bg-red-50 hover:text-red-700"
-                onClick={() => {
-                  setConfirmation({
-                    action: "alertLogClearAll",
-                    title: `清空全部告警日誌？`,
-                    description: `確認清空目前所有的 ${alertLogs.length} 筆告警發送紀錄？此操作無法復原。`,
-                  });
-                }}
-              >
-                <Trash2 size={15} className="mr-1" />
-                清空全部日誌
-              </Button>
-            )}
-          </div>
-        </div>
+      {/* 3. Check Execution Logs History (每次檢查為一筆) */}
+      {(() => {
+        const displayChecks: AlertCheck[] = (alertChecks && alertChecks.length > 0)
+          ? alertChecks
+          : (alertLogs.length > 0
+              ? Array.from(new Set(alertLogs.map(l => l.created_at))).map((created_at, idx) => {
+                  const matching = alertLogs.filter(l => l.created_at === created_at);
+                  return {
+                    id: idx + 1,
+                    check_type: "SCHEDULED",
+                    total_devices: matching.length,
+                    offline_count: matching.length,
+                    notified_maintainers: new Set(matching.map(l => l.maintainer)).size,
+                    status: matching.some(l => l.status === "FAILED") ? "FAILED" : matching.some(l => l.status === "SIMULATED") ? "SIMULATED" : "SENT",
+                    summary: "",
+                    created_at,
+                  };
+                })
+              : []);
 
-        {!alertLogs.length ? (
-          <p className="text-xs text-slate-400 py-6 text-center">尚無任何告警日誌記錄</p>
-        ) : (
-          <div className="table-scroll">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-12 text-center font-semibold">序號</TableHead>
-                  {admin && (
-                    <TableHead className="w-10">
-                      <input
-                        type="checkbox"
-                        checked={selectedLogs.size === alertLogs.length && alertLogs.length > 0}
-                        onChange={(e) => {
-                          if (e.target.checked) setSelectedLogs(new Set(alertLogs.map((l) => l.id)));
-                          else setSelectedLogs(new Set());
-                        }}
-                      />
-                    </TableHead>
-                  )}
-                  <TableHead>發送時間</TableHead>
-                  <TableHead>ASLUNG ID</TableHead>
-                  <TableHead>地點 (Lab ID)</TableHead>
-                  <TableHead>負責人</TableHead>
-                  <TableHead>通知信箱</TableHead>
-                  <TableHead>斷線時長</TableHead>
-                  <TableHead>狀態</TableHead>
-                  <TableHead>詳細說明</TableHead>
-                  {admin && <TableHead className="text-center">操作</TableHead>}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {alertLogs.map((log, idx) => (
-                  <TableRow key={log.id}>
-                    <TableCell className="text-center font-mono text-xs text-slate-500">{idx + 1}</TableCell>
-                    {admin && (
-                      <TableCell>
-                        <input
-                          type="checkbox"
-                          checked={selectedLogs.has(log.id)}
-                          onChange={(e) => {
-                            const s = new Set(selectedLogs);
-                            if (e.target.checked) s.add(log.id);
-                            else s.delete(log.id);
-                            setSelectedLogs(s);
-                          }}
-                        />
-                      </TableCell>
-                    )}
-                    <TableCell className="font-mono text-xs">{localTime(log.created_at)}</TableCell>
-                    <TableCell className="font-mono font-semibold">{log.aslung_id}</TableCell>
-                    <TableCell className="text-xs">{log.lab_id || "—"}</TableCell>
-                    <TableCell className="font-medium">{log.maintainer}</TableCell>
-                    <TableCell className="font-mono text-xs text-slate-600">{log.email}</TableCell>
-                    <TableCell className="text-xs text-red-600 font-semibold font-mono">
-                      {log.offline_mins === 99999 ? '超過7天' : `${log.offline_mins} 分鐘`}
-                    </TableCell>
-                    <TableCell>
-                      <span className={`status ${log.status === 'SENT' ? 'ok' : log.status === 'SIMULATED' ? 'pending' : 'text-red-700 bg-red-100'}`}>
-                        {log.status === 'SENT' ? '已寄出' : log.status === 'SIMULATED' ? '模擬記錄' : '發送失敗'}
-                      </span>
-                    </TableCell>
-                    <TableCell className="text-xs text-slate-500 max-w-xs truncate" title={log.error_message || ''}>
-                      {log.error_message || "—"}
-                    </TableCell>
-                    {admin && (
-                      <TableCell className="text-center">
-                        {setConfirmation && (
-                          <Button
-                            size="icon-xs"
-                            variant="ghost"
-                            className="text-red-500 hover:text-red-600 hover:bg-red-50"
-                            title="刪除此筆日誌"
-                            onClick={() => {
-                              setConfirmation({
-                                action: "alertLogDelete",
-                                id: log.id,
-                                title: "刪除此筆告警日誌？",
-                                description: `確認刪除此筆 ${log.aslung_id} 的告警發送紀錄？此操作無法復原。`,
-                              });
+        return (
+          <section className="panel p-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
+              <div>
+                <h3 className="font-bold text-slate-800 flex items-center gap-2">
+                  <Clock size={16} />
+                  檢查執行日誌 (以每次檢查為單位) <span className="text-xs font-normal text-slate-500 font-mono">({displayChecks.length} 次檢查)</span>
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">每次自動排程或手動檢查皆獨立記錄；點擊任一列日誌可展開查看斷線設備明細與告警信件發送狀況。</p>
+              </div>
+              <div className="flex gap-2">
+                {admin && selectedChecks.size > 0 && setConfirmation && (
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => {
+                      setConfirmation({
+                        action: "alertCheckDeleteBulk",
+                        ids: Array.from(selectedChecks),
+                        title: `刪除所選 ${selectedChecks.size} 筆檢查日誌？`,
+                        description: `確認刪除所選的 ${selectedChecks.size} 筆檢查紀錄與其關聯的詳細設備紀錄？此操作無法復原。`,
+                      });
+                    }}
+                  >
+                    <Trash2 size={15} className="mr-1" />
+                    大量刪除 ({selectedChecks.size})
+                  </Button>
+                )}
+                {admin && displayChecks.length > 0 && setConfirmation && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="text-red-600 hover:bg-red-50 hover:text-red-700"
+                    onClick={() => {
+                      setConfirmation({
+                        action: "alertCheckClearAll",
+                        title: `清空全部檢查日誌？`,
+                        description: `確認清空目前所有的 ${displayChecks.length} 筆檢查日誌與所有關聯明細？此操作無法復原。`,
+                      });
+                    }}
+                  >
+                    <Trash2 size={15} className="mr-1" />
+                    清空全部日誌
+                  </Button>
+                )}
+              </div>
+            </div>
+
+            {!displayChecks.length ? (
+              <p className="text-xs text-slate-400 py-6 text-center">尚無任何檢查日誌記錄</p>
+            ) : (
+              <div className="table-scroll">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-12 text-center font-semibold">序號</TableHead>
+                      {admin && (
+                        <TableHead className="w-10">
+                          <input
+                            type="checkbox"
+                            checked={selectedChecks.size === displayChecks.length && displayChecks.length > 0}
+                            onChange={(e) => {
+                              if (e.target.checked) setSelectedChecks(new Set(displayChecks.map((c) => c.id)));
+                              else setSelectedChecks(new Set());
                             }}
-                          >
-                            <Trash2 size={14} />
-                          </Button>
+                          />
+                        </TableHead>
+                      )}
+                      <TableHead>檢查時間</TableHead>
+                      <TableHead>觸發方式</TableHead>
+                      <TableHead>檢測總數</TableHead>
+                      <TableHead>斷線設備</TableHead>
+                      <TableHead>告警狀態</TableHead>
+                      <TableHead>通知負責人</TableHead>
+                      <TableHead className="text-center">操作</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {displayChecks.map((check, idx) => (
+                      <TableRow
+                        key={check.id}
+                        className="cursor-pointer hover:bg-slate-50 transition-colors"
+                        onClick={() => setSelectedCheckDetail(check)}
+                      >
+                        <TableCell className="text-center font-mono text-xs text-slate-500">{idx + 1}</TableCell>
+                        {admin && (
+                          <TableCell onClick={(e) => e.stopPropagation()}>
+                            <input
+                              type="checkbox"
+                              checked={selectedChecks.has(check.id)}
+                              onChange={(e) => {
+                                const s = new Set(selectedChecks);
+                                if (e.target.checked) s.add(check.id);
+                                else s.delete(check.id);
+                                setSelectedChecks(s);
+                              }}
+                            />
+                          </TableCell>
                         )}
-                      </TableCell>
-                    )}
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        )}
-      </section>
+                        <TableCell className="font-mono text-xs font-medium">{localTime(check.created_at)}</TableCell>
+                        <TableCell>
+                          <span className={`text-[11px] px-2 py-0.5 rounded font-medium border ${check.check_type === "MANUAL" ? "bg-blue-50 text-blue-700 border-blue-200" : "bg-slate-100 text-slate-700 border-slate-200"}`}>
+                            {check.check_type === "MANUAL" ? "手動立即檢查" : "自動定時排程"}
+                          </span>
+                        </TableCell>
+                        <TableCell className="font-mono text-xs text-slate-600">
+                          {check.total_devices > 0 ? `${check.total_devices} 台` : "—"}
+                        </TableCell>
+                        <TableCell>
+                          {check.offline_count === 0 ? (
+                            <span className="text-emerald-700 font-semibold inline-flex items-center gap-1 text-xs">
+                              <CheckCircle2 size={13} /> 全部正常 (0 台)
+                            </span>
+                          ) : (
+                            <span className="text-red-600 font-bold font-mono inline-flex items-center gap-1 text-xs">
+                              <AlertTriangle size={13} /> {check.offline_count} 台斷線
+                            </span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {check.offline_count === 0 ? (
+                            <span className="text-slate-400 text-xs">無須發送</span>
+                          ) : (
+                            <span className={`status ${check.status === 'SENT' ? 'ok' : check.status === 'SIMULATED' ? 'pending' : 'text-red-700 bg-red-100'}`}>
+                              {check.status === 'SENT' ? '已寄出' : check.status === 'SIMULATED' ? '模擬記錄' : '發送失敗'}
+                            </span>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-xs font-mono text-slate-600">
+                          {check.notified_maintainers > 0 ? `${check.notified_maintainers} 位` : "—"}
+                        </TableCell>
+                        <TableCell className="text-center" onClick={(e) => e.stopPropagation()}>
+                          <div className="flex items-center justify-center gap-1.5">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 text-xs px-2"
+                              onClick={() => setSelectedCheckDetail(check)}
+                            >
+                              <Eye size={13} className="mr-1" />
+                              詳細資料
+                            </Button>
+                            {admin && setConfirmation && (
+                              <Button
+                                size="icon-xs"
+                                variant="ghost"
+                                className="text-red-500 hover:text-red-600 hover:bg-red-50"
+                                title="刪除此筆檢查日誌"
+                                onClick={() => {
+                                  setConfirmation({
+                                    action: "alertCheckDelete",
+                                    id: check.id,
+                                    title: "刪除此筆檢查日誌？",
+                                    description: `確認刪除此筆檢查與其關聯的告警紀錄？此操作無法復原。`,
+                                  });
+                                }}
+                              >
+                                <Trash2 size={14} />
+                              </Button>
+                            )}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </section>
+        );
+      })()}
+
+      {/* Detail Dialog: 點擊日誌後查看詳細告警資料 */}
+      <Dialog open={!!selectedCheckDetail} onOpenChange={(v) => !v && setSelectedCheckDetail(null)}>
+        <DialogContent className="bg-white sm:max-w-3xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Clock size={18} className="text-teal-600" />
+              檢查執行詳細資料 #{selectedCheckDetail?.id}
+            </DialogTitle>
+            <DialogDescription>
+              執行時間：{selectedCheckDetail ? localTime(selectedCheckDetail.created_at) : ""} · 觸發方式：{selectedCheckDetail?.check_type === "MANUAL" ? "手動立即檢查" : "自動定時排程"}
+            </DialogDescription>
+          </DialogHeader>
+
+          {selectedCheckDetail && (() => {
+            const checkLogs = alertLogs.filter(
+              (l) => l.check_id === selectedCheckDetail.id || (!l.check_id && Math.abs(new Date(l.created_at).getTime() - new Date(selectedCheckDetail.created_at).getTime()) < 5000)
+            );
+
+            return (
+              <div className="space-y-4 pt-1">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
+                  <div className="bg-slate-50 p-2.5 rounded-lg border">
+                    <span className="text-slate-400 block mb-0.5">檢測設備總數</span>
+                    <span className="font-semibold text-slate-800 text-sm font-mono">{selectedCheckDetail.total_devices} 台</span>
+                  </div>
+                  <div className="bg-slate-50 p-2.5 rounded-lg border">
+                    <span className="text-slate-400 block mb-0.5">斷線設備數</span>
+                    <span className={`font-semibold text-sm font-mono ${selectedCheckDetail.offline_count > 0 ? "text-red-600" : "text-emerald-600"}`}>
+                      {selectedCheckDetail.offline_count} 台
+                    </span>
+                  </div>
+                  <div className="bg-slate-50 p-2.5 rounded-lg border">
+                    <span className="text-slate-400 block mb-0.5">通知負責人</span>
+                    <span className="font-semibold text-slate-800 text-sm font-mono">{selectedCheckDetail.notified_maintainers} 位</span>
+                  </div>
+                  <div className="bg-slate-50 p-2.5 rounded-lg border">
+                    <span className="text-slate-400 block mb-0.5">整體狀態</span>
+                    <span className="font-semibold text-slate-800 text-xs">
+                      {selectedCheckDetail.offline_count === 0
+                        ? "全部正常連線"
+                        : selectedCheckDetail.status === "SENT"
+                        ? "已寄出通知信"
+                        : selectedCheckDetail.status === "SIMULATED"
+                        ? "模擬通知記錄"
+                        : "寄送失敗"}
+                    </span>
+                  </div>
+                </div>
+
+                {checkLogs.length === 0 ? (
+                  <div className="p-8 text-center bg-emerald-50/50 border border-emerald-200 rounded-lg">
+                    <CheckCircle2 size={36} className="mx-auto text-emerald-600 mb-2" />
+                    <h4 className="font-bold text-slate-800 text-sm">該次檢查所有使用中設備均正常連線</h4>
+                    <p className="text-xs text-slate-500 mt-1">未發現超過斷線門檻之設備，未觸發告警通知信。</p>
+                  </div>
+                ) : (
+                  <div>
+                    <h4 className="text-xs font-bold text-slate-700 mb-2">斷線設備清單與告警通知明細 ({checkLogs.length} 筆)</h4>
+                    <div className="border rounded-lg overflow-hidden">
+                      <Table>
+                        <TableHeader>
+                          <TableRow className="bg-slate-50">
+                            <TableHead className="w-12 text-center font-semibold">序號</TableHead>
+                            <TableHead>ASLUNG ID</TableHead>
+                            <TableHead>地點 (Lab ID)</TableHead>
+                            <TableHead>負責人</TableHead>
+                            <TableHead>通知信箱</TableHead>
+                            <TableHead>斷線時間</TableHead>
+                            <TableHead>最後上傳時間</TableHead>
+                            <TableHead>發送狀態</TableHead>
+                            <TableHead>備註說明</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {checkLogs.map((log, idx) => (
+                            <TableRow key={log.id}>
+                              <TableCell className="text-center font-mono text-xs text-slate-500">{idx + 1}</TableCell>
+                              <TableCell className="font-mono font-bold text-slate-800">{log.aslung_id}</TableCell>
+                              <TableCell className="text-xs">{log.lab_id || "—"}</TableCell>
+                              <TableCell className="font-medium">{log.maintainer}</TableCell>
+                              <TableCell className="font-mono text-xs text-slate-600">{log.email}</TableCell>
+                              <TableCell className="text-xs text-red-600 font-semibold font-mono">
+                                {log.offline_mins === 99999 ? '>7天' : `${log.offline_mins} 分鐘`}
+                              </TableCell>
+                              <TableCell className="font-mono text-xs text-slate-500">
+                                {log.last_seen ? localTime(log.last_seen) : "從未上傳"}
+                              </TableCell>
+                              <TableCell>
+                                <span className={`status ${log.status === 'SENT' ? 'ok' : log.status === 'SIMULATED' ? 'pending' : 'text-red-700 bg-red-100'}`}>
+                                  {log.status === 'SENT' ? '已寄出' : log.status === 'SIMULATED' ? '模擬記錄' : '發送失敗'}
+                                </span>
+                              </TableCell>
+                              <TableCell className="text-xs text-slate-500 max-w-[160px] truncate" title={log.error_message || ''}>
+                                {log.error_message || "—"}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
