@@ -15,40 +15,64 @@ export async function GET(r: Request) {
             deviceIds = devs.results.map((d: any) => d.id);
         } else {
             const grants: any = await db().prepare("SELECT device_id FROM grants WHERE email=? AND start <= ? AND (end IS NULL OR end >= ?)").bind(m.email, now, now).all();
-            deviceIds = Array.from(new Set(grants.results.map((g: any) => g.device_id)));
+            const grantedIds: string[] = grants.results.map((g: any) => g.device_id);
+
+            const mName = String(m.name || "").trim();
+            const maintainerRows = (await db().prepare("SELECT name FROM maintainers WHERE LOWER(email)=LOWER(?)").bind(m.email).all()).results as any[];
+            const maintainerNames = Array.from(new Set([mName, ...maintainerRows.map(r => String(r.name || "").trim())].filter(Boolean)));
+
+            let maintainedIds: string[] = [];
+            if (maintainerNames.length > 0) {
+                const placeholders = maintainerNames.map(() => "?").join(",");
+                const maintainedDevs: any = await db().prepare(`
+                    SELECT DISTINCT aslung_id FROM device_locations
+                    WHERE TRIM(maintainer) IN (${placeholders})
+                `).bind(...maintainerNames).all();
+                maintainedIds = maintainedDevs.results.map((r: any) => r.aslung_id);
+            }
+
+            deviceIds = Array.from(new Set([...grantedIds, ...maintainedIds]));
         }
 
         const pool = getPool();
-        const results = [];
+        const results: any[] = [];
+        const sql = `
+            SELECT time, uid AS aslung_id, ch1 AS PM1_G3, ch2 AS \`PM2.5_G3\`, ch3 AS PM10_G3,
+                   ch4 AS temperature, ch5 AS rh, ch6 AS co2,
+                   ch29 AS PM1_GSA, ch30 AS \`PM2.5_GSA\`, ch31 AS PM10_GSA
+            FROM rawdata WHERE uid = ? ORDER BY time DESC LIMIT 1
+        `;
 
-        for (const id of deviceIds) {
-            const sql = `
-                SELECT time, uid AS aslung_id, ch1 AS PM1_G3, ch2 AS \`PM2.5_G3\`, ch3 AS PM10_G3,
-                       ch4 AS temperature, ch5 AS rh, ch6 AS co2,
-                       ch29 AS PM1_GSA, ch30 AS \`PM2.5_GSA\`, ch31 AS PM10_GSA
-                FROM rawdata WHERE uid = ? ORDER BY time DESC LIMIT 1
-            `;
-            try {
-                const [rows]: any = await pool.query(sql, [id]);
-                if (rows.length > 0) {
-                    const r = rows[0];
-                    const t = r.time instanceof Date ? r.time : new Date(r.time + 'Z');
-                    results.push({
-                        timestamp: t.toISOString(),
-                        aslung_id: r.aslung_id,
-                        PM1_G3: r.PM1_G3,
-                        'PM2.5_G3': r['PM2.5_G3'],
-                        PM10_G3: r.PM10_G3,
-                        temperature: r.temperature,
-                        rh: r.rh,
-                        co2: r.co2,
-                        PM1_GSA: r.PM1_GSA,
-                        'PM2.5_GSA': r['PM2.5_GSA'],
-                        PM10_GSA: r.PM10_GSA,
-                    });
+        const BATCH_SIZE = 8;
+        for (let i = 0; i < deviceIds.length; i += BATCH_SIZE) {
+            const batch = deviceIds.slice(i, i + BATCH_SIZE);
+            const batchResults = await Promise.all(batch.map(async (id) => {
+                try {
+                    const [rows]: any = await pool.query(sql, [id]);
+                    if (rows.length > 0) {
+                        const r = rows[0];
+                        const t = r.time instanceof Date ? r.time : new Date(r.time + 'Z');
+                        return {
+                            timestamp: t.toISOString(),
+                            aslung_id: r.aslung_id,
+                            PM1_G3: r.PM1_G3,
+                            'PM2.5_G3': r['PM2.5_G3'],
+                            PM10_G3: r.PM10_G3,
+                            temperature: r.temperature,
+                            rh: r.rh,
+                            co2: r.co2,
+                            PM1_GSA: r.PM1_GSA,
+                            'PM2.5_GSA': r['PM2.5_GSA'],
+                            PM10_GSA: r.PM10_GSA,
+                        };
+                    }
+                } catch (e) {
+                    console.error("Failed to fetch realtime for", id, e);
                 }
-            } catch (e) {
-                console.error("Failed to fetch realtime for", id, e);
+                return null;
+            }));
+            for (const item of batchResults) {
+                if (item) results.push(item);
             }
         }
 

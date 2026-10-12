@@ -37,7 +37,18 @@ export function required(v:unknown,max=160){if(typeof v!=="string"||!v.trim()||v
 export function instant(v:unknown){const s=required(v);if(!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})$/.test(s)||!Number.isFinite(Date.parse(s)))throw new AppError(400,"時間格式不正確。");return new Date(s).toISOString();}
 export async function permitted(m:any,id:string,start:string,end:string){
  const device=await db().prepare("SELECT * FROM devices WHERE id=?").bind(id).first();if(!device)throw new AppError(404,"找不到 ASLUNG ID。");
- if(m.role!=="admin"){const grants:any=await db().prepare("SELECT * FROM grants WHERE device_id=? AND email=?").bind(id,m.email).all();if(!grants.results.some((g:any)=>start>=g.start&&(!g.end||end<=g.end)))throw new AppError(403,"此設備或查詢期間未授權。");}
+ if(m.role!=="admin"){
+   const grants:any=await db().prepare("SELECT * FROM grants WHERE device_id=? AND email=?").bind(id,m.email).all();
+   const hasGrant = grants.results.some((g:any)=>start>=g.start&&(!g.end||end<=g.end));
+   if(!hasGrant){
+     const mName = String(m.name || "").trim();
+     const isMaintainer = await db().prepare(`
+       SELECT 1 FROM device_locations
+       WHERE aslung_id=? AND (TRIM(maintainer)=TRIM(?) OR TRIM(maintainer) IN (SELECT name FROM maintainers WHERE LOWER(email)=LOWER(?)))
+     `).bind(id, mName, m.email).first();
+     if(!isMaintainer) throw new AppError(403,"此設備或查詢期間未授權。");
+   }
+ }
  return device;
 }
 

@@ -71,7 +71,62 @@ function parseCsvRows(text: string): string[][] {
 export async function GET(){try{
  const m=await identity();const isAdmin=m.role==="admin";
  await syncDeviceStatusesAndLocations();
- const devices=(await (isAdmin?db().prepare("SELECT * FROM devices ORDER BY id"):db().prepare("SELECT d.*,g.start,g.end FROM devices d JOIN grants g ON g.device_id=d.id WHERE g.email=? ORDER BY d.id").bind(m.email)).all()).results;
+ let devices: any[] = [];
+ let alertLogs: any[] = [];
+
+ if (isAdmin) {
+   devices = (await db().prepare("SELECT * FROM devices ORDER BY id").all()).results;
+   alertLogs = (await db().prepare("SELECT * FROM alert_logs ORDER BY created_at DESC LIMIT 200").all()).results;
+ } else {
+   // 1. Authorized devices by grants
+   const grantedDevs = (await db().prepare("SELECT d.*, g.start, g.end FROM devices d JOIN grants g ON g.device_id=d.id WHERE g.email=? ORDER BY d.id").bind(m.email).all()).results as any[];
+
+   // 2. Devices maintained by this member (matched by name or maintainer email)
+   const mName = String(m.name || "").trim();
+   const maintainerRows = (await db().prepare("SELECT name FROM maintainers WHERE LOWER(email)=LOWER(?)").bind(m.email).all()).results as any[];
+   const maintainerNames = Array.from(new Set([mName, ...maintainerRows.map(r => String(r.name || "").trim())].filter(Boolean)));
+
+   let maintainedDevs: any[] = [];
+   if (maintainerNames.length > 0) {
+     const placeholders = maintainerNames.map(() => "?").join(",");
+     maintainedDevs = (await db().prepare(`
+       SELECT DISTINCT d.*, NULL as start, NULL as end
+       FROM devices d
+       JOIN device_locations dl ON dl.aslung_id = d.id
+       WHERE TRIM(dl.maintainer) IN (${placeholders})
+       ORDER BY d.id
+     `).bind(...maintainerNames).all()).results as any[];
+   }
+
+   // Merge devices (deduplicate by id, add flags)
+   const devMap = new Map<string, any>();
+   for (const d of grantedDevs) {
+     devMap.set(d.id, { ...d, is_granted: true, is_maintained: false });
+   }
+   for (const d of maintainedDevs) {
+     if (devMap.has(d.id)) {
+       devMap.get(d.id).is_maintained = true;
+     } else {
+       devMap.set(d.id, { ...d, is_granted: false, is_maintained: true });
+     }
+   }
+   devices = Array.from(devMap.values()).sort((a, b) => a.id.localeCompare(b.id));
+
+   // 3. Alert logs for this member's devices or maintainer name
+   const allDeviceIds = devices.map(d => d.id);
+   if (allDeviceIds.length > 0 || maintainerNames.length > 0) {
+     const devPlaceholders = allDeviceIds.length > 0 ? allDeviceIds.map(() => "?").join(",") : "''";
+     const namePlaceholders = maintainerNames.length > 0 ? maintainerNames.map(() => "?").join(",") : "''";
+     const bindParams = [...allDeviceIds, ...maintainerNames];
+     
+     alertLogs = (await db().prepare(`
+       SELECT * FROM alert_logs
+       WHERE aslung_id IN (${devPlaceholders})
+          OR TRIM(maintainer) IN (${namePlaceholders})
+       ORDER BY created_at DESC LIMIT 200
+     `).bind(...bindParams).all()).results;
+   }
+ }
  const members=isAdmin?(await db().prepare("SELECT email,name,nickname,role,active FROM members ORDER BY role,email").all()).results:[];
  const grants=isAdmin?(await db().prepare("SELECT * FROM grants ORDER BY device_id,email,start DESC").all()).results:[];
  const locations=(await db().prepare("SELECT * FROM device_locations ORDER BY start_time DESC").all()).results;
@@ -80,10 +135,15 @@ export async function GET(){try{
  const fileGrants=isAdmin?(await db().prepare("SELECT * FROM file_grants").all()).results:[];
  const labs=(await db().prepare("SELECT * FROM labs ORDER BY id").all()).results;
  const maintainers=(await db().prepare("SELECT * FROM maintainers ORDER BY name").all()).results;
- const alertSettings=(await db().prepare("SELECT * FROM alert_settings WHERE id=1").first()) || {
-   id: 1, enabled: 1, check_interval_mins: 60, offline_threshold_mins: 60, use_test_email: 0, smtp_host: "", smtp_port: 587, smtp_user: "", smtp_pass: "", smtp_from: ""
+ const alertSettingsRaw=(await db().prepare("SELECT * FROM alert_settings WHERE id=1").first()) as any;
+ const alertSettings = {
+   id: 1, enabled: 1, schedule_type: "interval", schedule_time: "09:00", schedule_days: "1,2,3,4,5", timezone: "Asia/Taipei",
+   check_interval_mins: 60, offline_threshold_mins: 60, use_test_email: 0, smtp_host: "", smtp_port: 587, smtp_user: "", smtp_pass: "", smtp_from: "", realtime_interval_secs: 60,
+   ...(alertSettingsRaw || {})
  };
- const alertLogs=isAdmin?(await db().prepare("SELECT * FROM alert_logs ORDER BY created_at DESC LIMIT 200").all()).results:[];
+ if (alertSettings.realtime_interval_secs === undefined || alertSettings.realtime_interval_secs === null) {
+   alertSettings.realtime_interval_secs = 60;
+ }
 
  return Response.json({
    me:{email:m.email,name:m.name,role:m.role},
@@ -420,9 +480,16 @@ export async function POST(r:Request){try{
   const { checkAndSendOfflineAlerts } = await import("@/lib/alerts");
   const result = await checkAndSendOfflineAlerts({ force: true });
   return Response.json({ok:true,result});
-} else if(p.action==="alertSettingsUpdate"){
+} else if(p.action==="cronCheck"){
+  const { checkAndSendOfflineAlerts } = await import("@/lib/alerts");
+  const result = await checkAndSendOfflineAlerts({ force: false });
+  return Response.json({ok:true,result});
+} else if(p.action==="alertSettingsUpdate" || p.action==="alertSettings"){
   requireAdmin();
   const enabled=p.enabled?1:0;
+  const scheduleType=["interval","daily","weekly"].includes(String(p.schedule_type))?String(p.schedule_type):"interval";
+  const scheduleTime=String(p.schedule_time||"09:00").trim()||"09:00";
+  const scheduleDays=String(p.schedule_days||"1,2,3,4,5").trim()||"1,2,3,4,5";
   const checkInterval=Math.max(5,Number(p.check_interval_mins)||60);
   const offlineThreshold=Math.max(5,Number(p.offline_threshold_mins)||60);
   const useTestEmail=p.use_test_email?1:0;
@@ -434,18 +501,29 @@ export async function POST(r:Request){try{
   if(smtpPass){
     await db().prepare(`
       UPDATE alert_settings
-      SET enabled=?, check_interval_mins=?, offline_threshold_mins=?, use_test_email=?,
+      SET enabled=?, schedule_type=?, schedule_time=?, schedule_days=?,
+          check_interval_mins=?, offline_threshold_mins=?, use_test_email=?,
           smtp_host=?, smtp_port=?, smtp_user=?, smtp_pass=?, smtp_from=?
       WHERE id=1
-    `).bind(enabled,checkInterval,offlineThreshold,useTestEmail,smtpHost,smtpPort,smtpUser,smtpPass,smtpFrom).run();
+    `).bind(enabled,scheduleType,scheduleTime,scheduleDays,checkInterval,offlineThreshold,useTestEmail,smtpHost,smtpPort,smtpUser,smtpPass,smtpFrom).run();
   } else {
     await db().prepare(`
       UPDATE alert_settings
-      SET enabled=?, check_interval_mins=?, offline_threshold_mins=?, use_test_email=?,
+      SET enabled=?, schedule_type=?, schedule_time=?, schedule_days=?,
+          check_interval_mins=?, offline_threshold_mins=?, use_test_email=?,
           smtp_host=?, smtp_port=?, smtp_user=?, smtp_from=?
       WHERE id=1
-    `).bind(enabled,checkInterval,offlineThreshold,useTestEmail,smtpHost,smtpPort,smtpUser,smtpFrom).run();
+    `).bind(enabled,scheduleType,scheduleTime,scheduleDays,checkInterval,offlineThreshold,useTestEmail,smtpHost,smtpPort,smtpUser,smtpFrom).run();
   }
+} else if(p.action==="realtimeIntervalUpdate"){
+  requireAdmin();
+  const raw=Number(p.interval);
+  const secs=raw===0?0:Math.max(5,Math.min(86400,isNaN(raw)?60:raw));
+  await db().prepare(`
+    INSERT INTO alert_settings (id, realtime_interval_secs) VALUES (1, ?)
+    ON CONFLICT(id) DO UPDATE SET realtime_interval_secs = excluded.realtime_interval_secs
+  `).bind(secs).run();
+  return Response.json({ok:true,realtime_interval_secs:secs});
 } else if(p.action==="fileDelete"){
   requireAdmin();
   const fileId=required(p.id);

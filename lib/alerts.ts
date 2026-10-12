@@ -7,6 +7,7 @@ export interface AlertResult {
   totalDevices: number;
   offlineCount: number;
   notifiedMaintainers: number;
+  skipped?: boolean;
   details: Array<{
     maintainer: string;
     email: string;
@@ -22,12 +23,84 @@ export interface AlertResult {
   }>;
 }
 
+export function shouldRunScheduledCheck(settings: any, now = new Date()): boolean {
+  if (!settings || !settings.enabled) return false;
+  const lastCheck = settings.last_check_at ? new Date(settings.last_check_at) : null;
+  const nowMs = now.getTime();
+  const scheduleType = settings.schedule_type || "interval";
+
+  if (scheduleType === "interval") {
+    const intervalMins = Math.max(5, Number(settings.check_interval_mins) || 60);
+    if (!lastCheck) return true;
+    return (nowMs - lastCheck.getTime()) >= intervalMins * 60 * 1000;
+  }
+
+  // Daily or Weekly fixed time check in target timezone (default Asia/Taipei)
+  const tz = settings.timezone || "Asia/Taipei";
+  const nowFormatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hour12: false,
+    weekday: "short"
+  });
+
+  const parts = nowFormatter.formatToParts(now);
+  const partMap: Record<string, string> = {};
+  for (const p of parts) partMap[p.type] = p.value;
+
+  const currentHour = parseInt(partMap.hour, 10);
+  const currentMin = parseInt(partMap.minute, 10);
+  const currentTimeMins = currentHour * 60 + currentMin;
+
+  const [schedH, schedM] = (settings.schedule_time || "09:00").split(":").map((v: string) => parseInt(v, 10) || 0);
+  const targetTimeMins = schedH * 60 + schedM;
+
+  // Has current time reached target time today?
+  if (currentTimeMins < targetTimeMins) {
+    return false;
+  }
+
+  // Weekly check: verify if today is one of the active days of the week
+  if (scheduleType === "weekly") {
+    const dayNameMap: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+    const currentDayNum = dayNameMap[partMap.weekday] ?? now.getDay();
+    const activeDays = (settings.schedule_days || "1,2,3,4,5").split(",").map((s: string) => parseInt(s.trim(), 10));
+    if (!activeDays.includes(currentDayNum)) {
+      return false;
+    }
+  }
+
+  // If never checked before, execute now
+  if (!lastCheck) return true;
+
+  // Compare with last check date in target timezone
+  const lastParts = nowFormatter.formatToParts(lastCheck);
+  const lastMap: Record<string, string> = {};
+  for (const p of lastParts) lastMap[p.type] = p.value;
+
+  const isSameDay = lastMap.year === partMap.year && lastMap.month === partMap.month && lastMap.day === partMap.day;
+  if (!isSameDay) {
+    return true;
+  }
+
+  // Same day: check if lastCheck was before targetTimeMins
+  const lastHour = parseInt(lastMap.hour, 10);
+  const lastMin = parseInt(lastMap.minute, 10);
+  const lastCheckTimeMins = lastHour * 60 + lastMin;
+
+  return lastCheckTimeMins < targetTimeMins;
+}
+
 export async function checkAndSendOfflineAlerts(options: { force?: boolean } = {}): Promise<AlertResult> {
   const store = db();
   await syncDeviceStatusesAndLocations(store);
   const settingsRow: any = await store.prepare("SELECT * FROM alert_settings WHERE id=1").first();
   const settings = settingsRow || {
     enabled: 1,
+    schedule_type: "interval",
+    schedule_time: "09:00",
+    schedule_days: "1,2,3,4,5",
+    timezone: "Asia/Taipei",
     check_interval_mins: 60,
     offline_threshold_mins: 60,
     use_test_email: 0,
@@ -38,19 +111,23 @@ export async function checkAndSendOfflineAlerts(options: { force?: boolean } = {
     smtp_from: ""
   };
 
-  if (!options.force && !settings.enabled) {
-    return {
-      checkedAt: new Date().toISOString(),
-      totalDevices: 0,
-      offlineCount: 0,
-      notifiedMaintainers: 0,
-      details: []
-    };
+  const now = new Date();
+  const nowIso = now.toISOString();
+
+  if (!options.force) {
+    if (!settings.enabled || !shouldRunScheduledCheck(settings, now)) {
+      return {
+        checkedAt: nowIso,
+        totalDevices: 0,
+        offlineCount: 0,
+        notifiedMaintainers: 0,
+        skipped: true,
+        details: []
+      };
+    }
   }
 
   const thresholdMins = Number(settings.offline_threshold_mins) || 60;
-  const now = new Date();
-  const nowIso = now.toISOString();
 
   // 1. Load active locations (where active = 1 and end_time is null/empty)
   const locsRes: any = await store.prepare("SELECT * FROM device_locations WHERE active = 1 AND (end_time IS NULL OR end_time = '') ORDER BY start_time DESC").all();
@@ -63,9 +140,6 @@ export async function checkAndSendOfflineAlerts(options: { force?: boolean } = {
   }
 
   // 2. Get all devices, and filter ONLY in-use devices (使用中 DEPLOYED)
-  // 「只有使用中的才要檢查」：
-  // (1) 設備狀態為「使用中」(DEPLOYED)，排除「待命中」(STANDBY)、「維修中」(MAINTENANCE)、「已報廢」(RETIRED)、「遺失」(LOST)
-  // (2) 設備在設備追蹤內必須是有進行中 (active = 1 且未結束) 的位置紀錄
   const devsRes: any = await store.prepare("SELECT id, name, location, status FROM devices").all();
   const allDevices: any[] = devsRes.results || [];
   const inUseDevices = allDevices.filter(d => {
@@ -75,27 +149,31 @@ export async function checkAndSendOfflineAlerts(options: { force?: boolean } = {
   });
   const inUseDevIds = inUseDevices.map(d => d.id);
 
-  // 3. Query realtime timestamps from rawdata (MySQL) - 僅針對使用中設備查詢
+  // 3. Query realtime timestamps from rawdata (MySQL) in parallel chunks
   const pool = getPool();
   const deviceLatest: Record<string, { timestamp: string; PM25?: string; temp?: string; rh?: string }> = {};
 
-  for (const id of inUseDevIds) {
-    try {
-      const sql = `SELECT time, ch2 AS \`PM2.5_G3\`, ch4 AS temperature, ch5 AS rh FROM rawdata WHERE uid = ? ORDER BY time DESC LIMIT 1`;
-      const [rows]: any = await pool.query(sql, [id]);
-      if (rows.length > 0) {
-        const r = rows[0];
-        const t = r.time instanceof Date ? r.time : new Date(r.time + 'Z');
-        deviceLatest[id] = {
-          timestamp: t.toISOString(),
-          PM25: r['PM2.5_G3'] != null ? String(r['PM2.5_G3']) : undefined,
-          temp: r.temperature != null ? String(r.temperature) : undefined,
-          rh: r.rh != null ? String(r.rh) : undefined,
-        };
+  const BATCH_SIZE = 8;
+  for (let i = 0; i < inUseDevIds.length; i += BATCH_SIZE) {
+    const batch = inUseDevIds.slice(i, i + BATCH_SIZE);
+    await Promise.all(batch.map(async (id) => {
+      try {
+        const sql = `SELECT time, ch2 AS \`PM2.5_G3\`, ch4 AS temperature, ch5 AS rh FROM rawdata WHERE uid = ? ORDER BY time DESC LIMIT 1`;
+        const [rows]: any = await pool.query(sql, [id]);
+        if (rows.length > 0) {
+          const r = rows[0];
+          const t = r.time instanceof Date ? r.time : new Date(r.time + 'Z');
+          deviceLatest[id] = {
+            timestamp: t.toISOString(),
+            PM25: r['PM2.5_G3'] != null ? String(r['PM2.5_G3']) : undefined,
+            temp: r.temperature != null ? String(r.temperature) : undefined,
+            rh: r.rh != null ? String(r.rh) : undefined,
+          };
+        }
+      } catch (e) {
+        console.error("Error querying realtime in alert checker for", id, e);
       }
-    } catch (e) {
-      console.error("Error querying realtime in alert checker for", id, e);
-    }
+    }));
   }
 
   // 4. Load maintainers
@@ -108,59 +186,48 @@ export async function checkAndSendOfflineAlerts(options: { force?: boolean } = {
 
   // 5. Find offline devices (> thresholdMins) among in-use devices
   const offlineList: Array<{
-    aslungId: string;
-    labId: string;
-    maintainerName: string;
-    lastSeen: string | null;
-    offlineMins: number;
-    PM25?: string;
-    temp?: string;
-    rh?: string;
+    aslung_id: string;
+    lab_id: string;
+    maintainer: string;
+    offline_mins: number;
+    last_seen: string | null;
   }> = [];
 
+  const nowMs = now.getTime();
   for (const d of inUseDevices) {
     const latest = deviceLatest[d.id];
     let offlineMins = 0;
-    let lastSeenStr: string | null = null;
-
+    let lastSeen: string | null = null;
     if (!latest) {
       offlineMins = 99999;
-      lastSeenStr = null;
     } else {
-      const diffMs = now.getTime() - new Date(latest.timestamp).getTime();
-      offlineMins = Math.floor(diffMs / 60000);
-      lastSeenStr = latest.timestamp;
+      offlineMins = Math.floor((nowMs - new Date(latest.timestamp).getTime()) / 60000);
+      lastSeen = latest.timestamp;
     }
 
     if (offlineMins >= thresholdMins) {
       const activeLoc = activeLocMap.get(d.id);
-      const labId = activeLoc?.lab_id || d.location || "未指定地點";
-      const maintainerName = (activeLoc?.maintainer || "未指定負責人").trim();
-
       offlineList.push({
-        aslungId: d.id,
-        labId,
-        maintainerName,
-        lastSeen: lastSeenStr,
-        offlineMins,
-        PM25: latest?.PM25,
-        temp: latest?.temp,
-        rh: latest?.rh,
+        aslung_id: d.id,
+        lab_id: activeLoc?.lab_id || "未指定地點",
+        maintainer: (activeLoc?.maintainer || "未指定負責人").trim(),
+        offline_mins: offlineMins,
+        last_seen: lastSeen,
       });
     }
   }
 
-  // 5. Group by maintainer
+  // 6. Group offline devices by maintainer
   const groupedByMaintainer = new Map<string, typeof offlineList>();
   for (const item of offlineList) {
-    const list = groupedByMaintainer.get(item.maintainerName) || [];
+    const list = groupedByMaintainer.get(item.maintainer) || [];
     list.push(item);
-    groupedByMaintainer.set(item.maintainerName, list);
+    groupedByMaintainer.set(item.maintainer, list);
   }
 
-  // 6. Setup mail transporter if configured
+  // 7. Setup Mail Transporter if SMTP configured
+  const hasSmtp = !!(settings.smtp_host && settings.smtp_user && settings.smtp_pass);
   let transporter: any = null;
-  const hasSmtp = Boolean(settings.smtp_host && settings.smtp_user && settings.smtp_pass);
   if (hasSmtp) {
     try {
       transporter = nodemailer.createTransport({
@@ -169,73 +236,77 @@ export async function checkAndSendOfflineAlerts(options: { force?: boolean } = {
         secure: Number(settings.smtp_port) === 465,
         auth: {
           user: settings.smtp_user,
-          pass: settings.smtp_pass
-        }
+          pass: settings.smtp_pass,
+        },
       });
     } catch (e) {
-      console.error("Failed to initialize mail transporter:", e);
+      console.error("Failed to create SMTP transporter:", e);
     }
   }
 
-  // 7. Process each maintainer group & send / log alerts
-  const details: AlertResult['details'] = [];
+  const details: AlertResult["details"] = [];
   const logInsert = store.prepare(`
     INSERT INTO alert_logs (aslung_id, lab_id, maintainer, email, last_seen, offline_mins, status, error_message, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
+  // 8. Process each maintainer group
   for (const [mName, items] of groupedByMaintainer.entries()) {
-    const mInfo = maintainerMap.get(mName);
-    const targetEmail = mInfo ? (settings.use_test_email && mInfo.email_test ? mInfo.email_test : mInfo.email) : "";
+    const maintInfo = maintainerMap.get(mName);
+    let targetEmail = "";
+    if (maintInfo) {
+      targetEmail = settings.use_test_email && maintInfo.email_test ? maintInfo.email_test : maintInfo.email;
+    }
 
     let status = "SIMULATED";
     let errorMessage = "";
 
     if (hasSmtp && transporter && targetEmail) {
       try {
-        const rowsHtml = items.map((it, idx) => `
+        const rowsHtml = items.map(it => `
           <tr style="border-bottom: 1px solid #e2e8f0;">
-            <td style="padding: 10px; text-align: center;">${idx + 1}</td>
-            <td style="padding: 10px; font-weight: bold; font-family: monospace;">${it.aslungId}</td>
-            <td style="padding: 10px;">${it.labId}</td>
-            <td style="padding: 10px; color: #dc2626; font-weight: bold;">斷線約 ${it.offlineMins === 99999 ? '超過7天' : it.offlineMins + ' 分鐘'}</td>
-            <td style="padding: 10px; font-size: 12px; color: #64748b;">${it.lastSeen ? new Date(it.lastSeen).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' }) : '尚無紀錄'}</td>
-            <td style="padding: 10px; font-size: 12px;">${it.PM25 ? `PM2.5: ${it.PM25} | 溫: ${it.temp || '-'}°C | 濕: ${it.rh || '-'}%` : '—'}</td>
+            <td style="padding: 8px 12px; font-weight: bold; font-family: monospace;">${it.aslung_id}</td>
+            <td style="padding: 8px 12px;">${it.lab_id}</td>
+            <td style="padding: 8px 12px; color: #dc2626; font-weight: bold;">
+              ${it.offline_mins >= 99999 ? "無資料" : `斷線約 ${it.offline_mins} 分鐘 (${(it.offline_mins/60).toFixed(1)} 小時)`}
+            </td>
+            <td style="padding: 8px 12px; font-family: monospace; font-size: 12px; color: #64748b;">
+              ${it.last_seen ? new Date(it.last_seen).toLocaleString("zh-TW", { timeZone: "Asia/Taipei" }) : "從未上傳"}
+            </td>
           </tr>
         `).join("");
 
         const mailHtml = `
-          <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 680px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px;">
-            <div style="background: #ef4444; color: white; padding: 12px 20px; border-radius: 6px; margin-bottom: 16px;">
-              <h2 style="margin: 0; font-size: 18px;">⚠️ ASLUNG 設備斷線告警通知</h2>
-            </div>
-            <p style="font-size: 15px; color: #334155;">維護人員 <strong>${mName}</strong> 您好：</p>
-            <p style="font-size: 14px; color: #475569; line-height: 1.6;">
-              系統監測到由您負責的下列 <strong>${items.length}</strong> 台設備已斷線超過 <strong>${thresholdMins}</strong> 分鐘未回報量測數據，請協助確認設備電源、網路或現場通訊狀態：
+          <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 650px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px;">
+            <h2 style="color: #0f766e; margin-top: 0;">ASLUNG 設備斷線告警通知</h2>
+            <p style="color: #334155; font-size: 14px;">
+              您好 <strong>${mName}</strong>，<br/>
+              系統於定期監控檢查中發現，由您負責維護的 <strong>使用中 ASLUNG 設備</strong> 共有 <strong>${items.length} 台</strong> 已超過斷線門檻（${thresholdMins} 分鐘）未接收到新上傳數據。
             </p>
-            <table style="width: 100%; border-collapse: collapse; font-size: 13px; margin: 18px 0; border: 1px solid #e2e8f0;">
+            <table style="width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 13px; text-align: left;">
               <thead>
-                <tr style="background: #f8fafc; border-bottom: 2px solid #cbd5e1; color: #475569;">
-                  <th style="padding: 10px; width: 40px;">#</th>
-                  <th style="padding: 10px; text-align: left;">ASLUNG ID</th>
-                  <th style="padding: 10px; text-align: left;">擺放地點 (Lab ID)</th>
-                  <th style="padding: 10px; text-align: left;">斷線狀態</th>
-                  <th style="padding: 10px; text-align: left;">最後上線 (UTC+8)</th>
-                  <th style="padding: 10px; text-align: left;">最後量測數值</th>
+                <tr style="background-color: #f8fafc; border-bottom: 2px solid #cbd5e1;">
+                  <th style="padding: 8px 12px;">ASLUNG ID</th>
+                  <th style="padding: 8px 12px;">目前位置</th>
+                  <th style="padding: 8px 12px;">離線時間</th>
+                  <th style="padding: 8px 12px;">最後上傳時間 (UTC+8)</th>
                 </tr>
               </thead>
               <tbody>
                 ${rowsHtml}
               </tbody>
             </table>
-            <div style="margin-top: 24px; padding-top: 14px; border-top: 1px solid #f1f5f9; font-size: 12px; color: #94a3b8; text-align: right;">
-              ASLUNG 資料管理平台 · 自動監控告警系統<br/>發送時間：${now.toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' })}
+            <div style="background-color: #fef2f2; border-left: 4px solid #ef4444; padding: 12px 16px; margin: 20px 0; font-size: 12px; color: #991b1b;">
+              請儘速確認儀器電源、Wi-Fi 網路訊號連線狀況與現場設置環境。
             </div>
+            <p style="font-size: 11px; color: #94a3b8; border-top: 1px solid #e2e8f0; padding-top: 12px; margin-bottom: 0;">
+              此郵件由 ASLUNG 空氣品質監測系統自動排程發送，請勿直接回覆。
+            </p>
           </div>
         `;
 
         await transporter.sendMail({
-          from: settings.smtp_from || `"ASLUNG 系統監控" <${settings.smtp_user}>`,
+          from: settings.smtp_from || `"ASLUNG 系統告警" <${settings.smtp_user}>`,
           to: targetEmail,
           subject: `[ASLUNG 設備斷線告警] 負責設備共 ${items.length} 台斷線超過 ${thresholdMins} 分鐘提醒 (負責人：${mName})`,
           html: mailHtml,
@@ -260,12 +331,12 @@ export async function checkAndSendOfflineAlerts(options: { force?: boolean } = {
     for (const it of items) {
       try {
         await logInsert.bind(
-          it.aslungId,
-          it.labId,
+          it.aslung_id,
+          it.lab_id,
           mName,
           targetEmail || "無",
-          it.lastSeen,
-          it.offlineMins,
+          it.last_seen,
+          it.offline_mins,
           status,
           errorMessage,
           nowIso
@@ -280,10 +351,10 @@ export async function checkAndSendOfflineAlerts(options: { force?: boolean } = {
       email: targetEmail || "無",
       deviceCount: items.length,
       devices: items.map(x => ({
-        aslungId: x.aslungId,
-        labId: x.labId,
-        lastSeen: x.lastSeen,
-        offlineMins: x.offlineMins
+        aslungId: x.aslung_id,
+        labId: x.lab_id,
+        lastSeen: x.last_seen,
+        offlineMins: x.offline_mins
       })),
       status,
       error: errorMessage || undefined
@@ -304,4 +375,20 @@ export async function checkAndSendOfflineAlerts(options: { force?: boolean } = {
     notifiedMaintainers: groupedByMaintainer.size,
     details
   };
+}
+
+let alertCronTimer: any = null;
+export function initAlertCron() {
+  if (alertCronTimer) return;
+  alertCronTimer = setInterval(async () => {
+    try {
+      const store = db();
+      const settings: any = await store.prepare("SELECT * FROM alert_settings WHERE id=1").first();
+      if (settings && shouldRunScheduledCheck(settings)) {
+        await checkAndSendOfflineAlerts();
+      }
+    } catch (e) {
+      console.error("[AlertCron] Scheduled check error:", e);
+    }
+  }, 30000);
 }

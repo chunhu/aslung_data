@@ -18,6 +18,11 @@ export interface AlertSettings {
   smtp_from: string;
   last_check_at: string | null;
   last_alert_at: string | null;
+  realtime_interval_secs?: number;
+  schedule_type?: "interval" | "daily" | "weekly";
+  schedule_time?: string;
+  schedule_days?: string;
+  timezone?: string;
 }
 
 export interface AlertLog {
@@ -46,6 +51,8 @@ interface AlertsViewProps {
   selectedAlertLogs?: Set<number>;
   setSelectedAlertLogs?: React.Dispatch<React.SetStateAction<Set<number>>>;
   setConfirmation?: (c: any) => void;
+  admin?: boolean;
+  me?: { email: string; name: string; role: string };
 }
 
 export default function AlertsView({
@@ -61,6 +68,8 @@ export default function AlertsView({
   selectedAlertLogs,
   setSelectedAlertLogs,
   setConfirmation,
+  admin = true,
+  me,
 }: AlertsViewProps) {
   const [checking, setChecking] = useState(false);
   const [localSelectedLogs, setLocalSelectedLogs] = useState<Set<number>>(new Set());
@@ -138,27 +147,62 @@ export default function AlertsView({
                 {alertSettings?.enabled ? "自動監控中" : "監控已暫停"}
               </span>
               <span className="text-xs text-slate-500 font-mono">
-                每 {alertSettings?.check_interval_mins || 60} 分鐘自動檢查一次
+                {(() => {
+                  const type = alertSettings?.schedule_type || "interval";
+                  if (type === "daily") return `每天固定 ${alertSettings?.schedule_time || "09:00"} 檢查一次`;
+                  if (type === "weekly") {
+                    const dayLabels = ["週日", "週一", "週二", "週三", "週四", "週五", "週六"];
+                    const days = (alertSettings?.schedule_days || "1,2,3,4,5").split(",").map(s => dayLabels[parseInt(s.trim(), 10)]).filter(Boolean).join("、");
+                    return `每週 (${days}) ${alertSettings?.schedule_time || "09:00"} 固定檢查`;
+                  }
+                  return `每 ${alertSettings?.check_interval_mins || 60} 分鐘自動檢查一次`;
+                })()}
               </span>
             </div>
-            <h2 className="text-lg font-bold text-slate-800 mt-2">設備斷線告警監控中心</h2>
+            <h2 className="text-lg font-bold text-slate-800 mt-2">{admin ? "設備斷線告警監控中心" : "授權與列管設備斷線監控"}</h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              當目前<strong>使用中</strong>的設備超過 <strong>{thresholdMins} 分鐘</strong> 未回報數據時，系統將自動彙整斷線設備清單並寄送通知信給指定負責人（已移出或報廢/維修之設備不納入告警）。
+              {admin
+                ? `當目前使用中的設備超過 ${thresholdMins} 分鐘未回報數據時，系統將自動彙整斷線設備清單並寄送通知信給指定負責人（已移出或報廢/維修之設備不納入告警）。`
+                : `顯示您被授權存取與負責列管之使用中設備連線狀況（共 ${inUseDevices.length} 台）。設備超過 ${thresholdMins} 分鐘未回報即判定為斷線。`}
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="default" disabled={checking} onClick={triggerCheckNow}>
-              <Send size={15} className={`mr-1.5 ${checking ? 'animate-spin' : ''}`} />
-              {checking ? "檢查中…" : "立即檢查並發送告警"}
-            </Button>
-            <Button variant="outline" onClick={() => setModal("alertSettings")}>
-              <Settings size={15} className="mr-1.5" />
-              自訂設定
-            </Button>
+            {admin ? (
+              <>
+                <Button variant="default" disabled={checking} onClick={triggerCheckNow}>
+                  <Send size={15} className={`mr-1.5 ${checking ? 'animate-spin' : ''}`} />
+                  {checking ? "檢查中…" : "立即檢查並發送告警"}
+                </Button>
+                <Button variant="outline" onClick={() => setModal("alertSettings")}>
+                  <Settings size={15} className="mr-1.5" />
+                  自訂設定
+                </Button>
+              </>
+            ) : (
+              <Button variant="outline" disabled={checking} onClick={async () => { setChecking(true); try { await load(); toast.success("已更新監控狀態"); } finally { setChecking(false); } }}>
+                <RefreshCw size={15} className={`mr-1.5 ${checking ? 'animate-spin' : ''}`} />
+                重新整理狀態
+              </Button>
+            )}
           </div>
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3 text-xs">
+          <div className="p-3 bg-slate-50 rounded-lg border">
+            <span className="text-slate-400 block mb-1">檢查排程</span>
+            <span className="font-semibold text-slate-800 text-sm">
+              {(() => {
+                const type = alertSettings?.schedule_type || "interval";
+                if (type === "daily") return `每日 ${alertSettings?.schedule_time || "09:00"}`;
+                if (type === "weekly") {
+                  const dayLabels = ["日", "一", "二", "三", "四", "五", "六"];
+                  const days = (alertSettings?.schedule_days || "1,2,3,4,5").split(",").map(s => dayLabels[parseInt(s.trim(), 10)]).filter(Boolean).join("");
+                  return `每週(${days}) ${alertSettings?.schedule_time || "09:00"}`;
+                }
+                return `每 ${alertSettings?.check_interval_mins || 60} 分鐘`;
+              })()}
+            </span>
+          </div>
           <div className="p-3 bg-slate-50 rounded-lg border">
             <span className="text-slate-400 block mb-1">斷線判定門檻</span>
             <span className="font-semibold text-slate-800 text-sm">超過 {thresholdMins} 分鐘</span>
@@ -216,6 +260,9 @@ export default function AlertsView({
                           {mName.slice(0, 1)}
                         </div>
                         <span className="font-bold text-slate-900 text-sm">{mName}</span>
+                        {mName.trim() === me?.name?.trim() && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 font-medium">您的列管責任</span>
+                        )}
                       </div>
                       <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-red-100 text-red-700">
                         {items.length} 台斷線
@@ -255,7 +302,7 @@ export default function AlertsView({
             <p className="text-xs text-slate-500 mt-0.5">顯示各設備斷線時觸發的郵件發送紀錄與狀態。</p>
           </div>
           <div className="flex gap-2">
-            {selectedLogs.size > 0 && setConfirmation && (
+            {admin && selectedLogs.size > 0 && setConfirmation && (
               <Button
                 variant="destructive"
                 size="sm"
@@ -272,7 +319,7 @@ export default function AlertsView({
                 大量刪除 ({selectedLogs.size})
               </Button>
             )}
-            {alertLogs.length > 0 && setConfirmation && (
+            {admin && alertLogs.length > 0 && setConfirmation && (
               <Button
                 variant="outline"
                 size="sm"
@@ -300,16 +347,18 @@ export default function AlertsView({
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-12 text-center font-semibold">序號</TableHead>
-                  <TableHead className="w-10">
-                    <input
-                      type="checkbox"
-                      checked={selectedLogs.size === alertLogs.length && alertLogs.length > 0}
-                      onChange={(e) => {
-                        if (e.target.checked) setSelectedLogs(new Set(alertLogs.map((l) => l.id)));
-                        else setSelectedLogs(new Set());
-                      }}
-                    />
-                  </TableHead>
+                  {admin && (
+                    <TableHead className="w-10">
+                      <input
+                        type="checkbox"
+                        checked={selectedLogs.size === alertLogs.length && alertLogs.length > 0}
+                        onChange={(e) => {
+                          if (e.target.checked) setSelectedLogs(new Set(alertLogs.map((l) => l.id)));
+                          else setSelectedLogs(new Set());
+                        }}
+                      />
+                    </TableHead>
+                  )}
                   <TableHead>發送時間</TableHead>
                   <TableHead>ASLUNG ID</TableHead>
                   <TableHead>地點 (Lab ID)</TableHead>
@@ -318,25 +367,27 @@ export default function AlertsView({
                   <TableHead>斷線時長</TableHead>
                   <TableHead>狀態</TableHead>
                   <TableHead>詳細說明</TableHead>
-                  <TableHead className="text-center">操作</TableHead>
+                  {admin && <TableHead className="text-center">操作</TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {alertLogs.map((log, idx) => (
                   <TableRow key={log.id}>
                     <TableCell className="text-center font-mono text-xs text-slate-500">{idx + 1}</TableCell>
-                    <TableCell>
-                      <input
-                        type="checkbox"
-                        checked={selectedLogs.has(log.id)}
-                        onChange={(e) => {
-                          const s = new Set(selectedLogs);
-                          if (e.target.checked) s.add(log.id);
-                          else s.delete(log.id);
-                          setSelectedLogs(s);
-                        }}
-                      />
-                    </TableCell>
+                    {admin && (
+                      <TableCell>
+                        <input
+                          type="checkbox"
+                          checked={selectedLogs.has(log.id)}
+                          onChange={(e) => {
+                            const s = new Set(selectedLogs);
+                            if (e.target.checked) s.add(log.id);
+                            else s.delete(log.id);
+                            setSelectedLogs(s);
+                          }}
+                        />
+                      </TableCell>
+                    )}
                     <TableCell className="font-mono text-xs">{localTime(log.created_at)}</TableCell>
                     <TableCell className="font-mono font-semibold">{log.aslung_id}</TableCell>
                     <TableCell className="text-xs">{log.lab_id || "—"}</TableCell>
@@ -353,26 +404,28 @@ export default function AlertsView({
                     <TableCell className="text-xs text-slate-500 max-w-xs truncate" title={log.error_message || ''}>
                       {log.error_message || "—"}
                     </TableCell>
-                    <TableCell className="text-center">
-                      {setConfirmation && (
-                        <Button
-                          size="icon-xs"
-                          variant="ghost"
-                          className="text-red-500 hover:text-red-600 hover:bg-red-50"
-                          title="刪除此筆日誌"
-                          onClick={() => {
-                            setConfirmation({
-                              action: "alertLogDelete",
-                              id: log.id,
-                              title: "刪除此筆告警日誌？",
-                              description: `確認刪除此筆 ${log.aslung_id} 的告警發送紀錄？此操作無法復原。`,
-                            });
-                          }}
-                        >
-                          <Trash2 size={14} />
-                        </Button>
-                      )}
-                    </TableCell>
+                    {admin && (
+                      <TableCell className="text-center">
+                        {setConfirmation && (
+                          <Button
+                            size="icon-xs"
+                            variant="ghost"
+                            className="text-red-500 hover:text-red-600 hover:bg-red-50"
+                            title="刪除此筆日誌"
+                            onClick={() => {
+                              setConfirmation({
+                                action: "alertLogDelete",
+                                id: log.id,
+                                title: "刪除此筆告警日誌？",
+                                description: `確認刪除此筆 ${log.aslung_id} 的告警發送紀錄？此操作無法復原。`,
+                              });
+                            }}
+                          >
+                            <Trash2 size={14} />
+                          </Button>
+                        )}
+                      </TableCell>
+                    )}
                   </TableRow>
                 ))}
               </TableBody>

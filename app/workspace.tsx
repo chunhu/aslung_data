@@ -3,7 +3,7 @@ import {useState,useEffect,useCallback,useRef,useMemo} from "react";
 import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
 import LanguageSwitcher from "@/components/LanguageSwitcher";
 import FontSizeAdjuster from "@/components/FontSizeAdjuster";
-import {Activity,Database,Users,ShieldCheck,Download,Plus,RefreshCw,Code2,Server,LockKeyhole,FileJson,LogOut,CheckCircle2,Unplug,Search,Trash2, MapPin, Key, RadioTower, Upload, Pencil, Check, ChevronsUpDown, ArrowRightLeft, QrCode, FileSpreadsheet, CloudDownload, FolderDown, FileText, Eye, Building2, UserCheck, BellRing, Mail} from "lucide-react";
+import {Activity,Database,Users,ShieldCheck,Download,Plus,RefreshCw,Code2,Server,LockKeyhole,FileJson,LogOut,CheckCircle2,Unplug,Search,Trash2, MapPin, Key, RadioTower, Upload, Pencil, Check, ChevronsUpDown, ArrowRightLeft, QrCode, FileSpreadsheet, CloudDownload, FolderDown, FileText, Eye, Building2, UserCheck, BellRing, Mail, Clock} from "lucide-react";
 import {Button} from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -24,7 +24,7 @@ import LabsView, { Lab } from "@/components/LabsView";
 import MaintainersView, { Maintainer } from "@/components/MaintainersView";
 import AlertsView, { AlertSettings, AlertLog } from "@/components/AlertsView";
 
-type Device={id:string;name:string;location:string;description:string;status:string;start?:string;end?:string};
+type Device={id:string;name:string;location:string;description:string;status:string;start?:string;end?:string;is_granted?:boolean;is_maintained?:boolean};
 type Member={email:string;name:string;nickname?:string|null;role:string;active:number};
 type Grant={id:number;device_id:string;email:string;start:string;end:string|null};
 type DeviceLocation={id:number;lab_id:string;aslung_id:string;maintainer?:string|null;start_time:string;end_time:string|null;active:number};
@@ -78,6 +78,14 @@ function SidebarResizer() {
   );
 }
 
+const formatRealtimeInterval = (s: number) => {
+  if (!s || s <= 0) return "暫停更新";
+  if (s < 60) return `${s} 秒`;
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  return rem ? `${m} 分 ${rem} 秒` : `${m} 分鐘`;
+};
+
 export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInUrl:string}){
  const [state,setState]=useState<State|null>(null),[error,setError]=useState(""),[loading,setLoading]=useState(signedIn),[section,setSection]=useState("data"),[modal,setModal]=useState(""),[busy,setBusy]=useState(false),[confirmation,setConfirmation]=useState<any>(null);
  const [id,setId]=useState(""),[start,setStart]=useState(""),[end,setEnd]=useState(""),[page,setPage]=useState<Page|null>(null),[queried,setQueried]=useState<{id:string;start:string;end:string}|null>(null),[search,setSearch]=useState("");
@@ -104,6 +112,8 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
   const [selectedMaintainers, setSelectedMaintainers] = useState<Set<string>>(new Set());
   const [editMaintainer, setEditMaintainer] = useState<Maintainer | null>(null);
   const [selectedAlertLogs, setSelectedAlertLogs] = useState<Set<number>>(new Set());
+  const [alertScheduleType, setAlertScheduleType] = useState<"interval" | "daily" | "weekly">("interval");
+  const [alertScheduleDays, setAlertScheduleDays] = useState<string>("1,2,3,4,5");
   const allTimeZones = useMemo(() => {
     if (typeof Intl === 'undefined' || !Intl.supportedValuesOf) {
       return [{ tz: "Asia/Taipei", label: "(UTC+08:00) Asia / Taipei" }];
@@ -239,18 +249,31 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
 
  const [realtimeData, setRealtimeData] = useState<any[]|null>(null);
  const [realtimeSearch, setRealtimeSearch] = useState("");
- useEffect(()=>{ if(section==="realtime"){ setBusy(true); request("/api/realtime").then(setRealtimeData).catch(e=>toast.error(e.message)).finally(()=>setBusy(false)); const timer=setInterval(()=>request("/api/realtime").then(setRealtimeData).catch(()=>{}), 60000); return ()=>clearInterval(timer); } }, [section]);
-  const admin=state?.me.role==="admin",devices=state?.devices??[],members=state?.members??[],grants=state?.grants??[],locations=state?.locations??[],tokens=state?.tokens??[],files=state?.files??[],fileGrants=state?.fileGrants??[],labs=state?.labs??[],maintainers=state?.maintainers??[],alertSettings=state?.alertSettings,alertLogs=state?.alertLogs??[];
+ const [realtimeLoading, setRealtimeLoading] = useState(false);
+ const [realtimeRefreshedAt, setRealtimeRefreshedAt] = useState<Date|null>(null);
+ const [realtimeRefreshKey, setRealtimeRefreshKey] = useState(0);
+ const [realtimeInterval, setRealtimeInterval] = useState<number>(60);
+ const admin=state?.me.role==="admin",devices=state?.devices??[],members=state?.members??[],grants=state?.grants??[],locations=state?.locations??[],tokens=state?.tokens??[],files=state?.files??[],fileGrants=state?.fileGrants??[],labs=state?.labs??[],maintainers=state?.maintainers??[],alertSettings=state?.alertSettings,alertLogs=state?.alertLogs??[];
+ useEffect(()=>{if(alertSettings?.realtime_interval_secs!==undefined)setRealtimeInterval(alertSettings.realtime_interval_secs);},[alertSettings?.realtime_interval_secs]);
+ const fetchRealtime=useCallback(async(isManual=false)=>{setRealtimeLoading(true);try{const data=await request("/api/realtime");setRealtimeData(data);setRealtimeRefreshedAt(new Date());if(isManual)toast.success("已更新即時狀態");}catch(e){if(isManual)toast.error((e as Error).message);}finally{setRealtimeLoading(false);}},[]);
+ useEffect(()=>{if(section==="realtime"||section==="alerts"){void fetchRealtime(false);if(realtimeInterval>0&&section==="realtime"){const timer=setInterval(()=>void fetchRealtime(false),realtimeInterval*1000);return()=>clearInterval(timer);}}},[section,realtimeInterval,realtimeRefreshKey,fetchRealtime]);
+ useEffect(() => {
+   if (alertSettings) {
+     if (alertSettings.schedule_type) setAlertScheduleType(alertSettings.schedule_type);
+     if (alertSettings.schedule_days) setAlertScheduleDays(alertSettings.schedule_days);
+   }
+ }, [alertSettings?.schedule_type, alertSettings?.schedule_days]);
  useEffect(() => {
    if (!admin || !alertSettings?.enabled) return;
-   const interval = Math.max(5, alertSettings.check_interval_mins || 60) * 60 * 1000;
-   const timer = setInterval(() => {
-     request("/api/alerts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "checkNow" }) }).catch(() => {});
-   }, interval);
+   const runCronCheck = () => {
+     request("/api/alerts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "cronCheck" }) }).catch(() => {});
+   };
+   runCronCheck();
+   const timer = setInterval(runCronCheck, 30000);
    return () => clearInterval(timer);
- }, [admin, alertSettings?.enabled, alertSettings?.check_interval_mins]);
+ }, [admin, alertSettings?.enabled]);
   // admin loaded
- const load=useCallback(async()=>{setLoading(true);try{const s=await request("/api/manage");setState(s);setError("");}catch(e){setError((e as Error).message);}finally{setLoading(false)}},[]);
+ const load=useCallback(async()=>{setLoading(true);try{const s=await request("/api/manage");setState(s);setError("");void fetchRealtime(false);}catch(e){setError((e as Error).message);}finally{setLoading(false)}},[fetchRealtime]);
  useEffect(()=>{if(signedIn)void load()},[signedIn,load]);
  useEffect(()=>{setPage(null);setQueried(null)},[id,start,end]);
   async function mutate(p:any){setBusy(true);try{await request("/api/manage",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(p)});await load();setModal("");setConfirmation(null);if(p?.action==="deviceDeleteBulk")setSelectedDevices(new Set());if(p?.action==="deviceDelete")setSelectedDevices(prev=>{const s=new Set(prev);s.delete(p.id);return s;});if(p?.action==="locationDeleteBulk")setSelectedLocations(new Set());if(p?.action==="locationDelete")setSelectedLocations(prev=>{const s=new Set(prev);s.delete(Number(p.id));return s;});if(p?.action==="labDeleteBulk")setSelectedLabs(new Set());if(p?.action==="labDelete")setSelectedLabs(prev=>{const s=new Set(prev);s.delete(p.id);return s;});if(p?.action==="maintainerDeleteBulk")setSelectedMaintainers(new Set());if(p?.action==="maintainerDelete")setSelectedMaintainers(prev=>{const s=new Set(prev);s.delete(p.name);return s;});if(p?.action==="alertLogDeleteBulk"||p?.action==="alertLogClearAll")setSelectedAlertLogs(new Set());if(p?.action==="alertLogDelete")setSelectedAlertLogs(prev=>{const s=new Set(prev);s.delete(Number(p.id));return s;});toast.success("已儲存變更");return true;}catch(e){toast.error((e as Error).message);return false;}finally{setBusy(false)}}
@@ -464,7 +487,7 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
 
 
  return <SidebarProvider id="sidebar-provider" style={{"--sidebar-width":"245px"} as React.CSSProperties}><Toaster richColors position="top-center"/>
- {signedIn && <Sidebar className="nav-rail"><SidebarResizer /><SidebarHeader className="brand"><div className="brand-mark"><Activity size={24}/></div><div><strong>ASLUNG</strong><span>DATA MANAGEMENT</span></div></SidebarHeader><SidebarContent><div className="nav-caption">工作空間</div><SidebarMenu className="px-4">{nav.filter(n=>!signedIn||!state||admin||["realtime","data","files","connection"].includes(n.id)).map(n=><SidebarMenuItem key={n.id}><SidebarMenuButton className="nav-button" isActive={section===n.id} onClick={()=>{setSection(n.id);setSearch("")}}><n.icon/><span>{n.name}</span></SidebarMenuButton></SidebarMenuItem>)}</SidebarMenu><div className="rail-note"><LockKeyhole size={18}/><strong>依會員授權存取</strong><p>設備與資料期間由管理員指定。</p></div></SidebarContent><SidebarFooter className="rail-footer"><div className="avatar">{state?.me.name?.slice(0,1)??"A"}</div><div className="identity"><strong>{state?.me.name??"ASLUNG 工作空間"}</strong><span>{state?(admin?"管理員":"會員"):"請登入後使用"}</span>{signedIn&&<button className="block text-xs underline mt-1" onClick={()=>setModal("password")}>變更密碼</button>}</div>{signedIn&&<Button variant="ghost" size="icon" aria-label="登出" onClick={async()=>{try{await request("/api/auth/logout",{method:"POST"});window.location.assign("/login")}catch(e){toast.error((e as Error).message)}}}><LogOut size={17}/></Button>}</SidebarFooter></Sidebar>}
+ {signedIn && <Sidebar className="nav-rail"><SidebarResizer /><SidebarHeader className="brand"><div className="brand-mark"><Activity size={24}/></div><div><strong>ASLUNG</strong><span>DATA MANAGEMENT</span></div></SidebarHeader><SidebarContent><div className="nav-caption">工作空間</div><SidebarMenu className="px-4">{nav.filter(n=>!signedIn||!state||admin||["realtime","data","alerts","files","connection"].includes(n.id)).map(n=><SidebarMenuItem key={n.id}><SidebarMenuButton className="nav-button" isActive={section===n.id} onClick={()=>{setSection(n.id);setSearch("")}}><n.icon/><span>{n.name}</span></SidebarMenuButton></SidebarMenuItem>)}</SidebarMenu><div className="rail-note"><LockKeyhole size={18}/><strong>依會員授權存取</strong><p>設備與資料期間由管理員指定。</p></div></SidebarContent><SidebarFooter className="rail-footer"><div className="avatar">{state?.me.name?.slice(0,1)??"A"}</div><div className="identity"><strong>{state?.me.name??"ASLUNG 工作空間"}</strong><span>{state?(admin?"管理員":"會員"):"請登入後使用"}</span>{signedIn&&<button className="block text-xs underline mt-1" onClick={()=>setModal("password")}>變更密碼</button>}</div>{signedIn&&<Button variant="ghost" size="icon" aria-label="登出" onClick={async()=>{try{await request("/api/auth/logout",{method:"POST"});window.location.assign("/login")}catch(e){toast.error((e as Error).message)}}}><LogOut size={17}/></Button>}</SidebarFooter></Sidebar>}
  <main className="workspace">{signedIn && <header className="topbar"><div className="flex items-center gap-3"><SidebarTrigger title="顯示/隱藏側邊欄"/><span className="breadcrumb">工作空間 <span>/</span> <strong>{labels[section]}</strong></span></div><div className="top-meta flex items-center gap-3"><FontSizeAdjuster /><LanguageSwitcher />
 <Select value={tz} onValueChange={v => { setTz(v); localStorage.setItem("aslung_tz", v); }}>
   <SelectTrigger className="w-56 h-8 text-xs bg-white/50 border-slate-200"><SelectValue/></SelectTrigger>
@@ -473,11 +496,11 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
   </SelectContent>
 </Select>
 </div></header>}
-  <div className="main-inner"><div className="page-heading"><div><p className="eyebrow">ASLUNG DATA HUB</p><h1>{labels[section]}</h1><p className="subheading">{{realtime:"檢視所有授權設備的最後回報狀態與數值。",data:"選擇設備與期間，查詢並下載您有權限的量測資料。",devices:"建立設備識別資料，作為資料查詢與授權的依據。",members:"管理可登入工作空間的會員帳號。",permissions:"指定每位會員可存取的設備與資料期間。",locations:"追蹤設備分配至各實驗室或國外的擺放位置歷史紀錄。",labs:"管理實驗室、國外站點與各監測地點的基本資料與座標。",maintainers:"管理儀器負責人與維護人員聯絡信箱，支援 Google 試算表同步。",alerts:"自訂定時檢查設備狀態，當設備斷線超過門檻時自動發送通知信給維護者。",files:admin?"上傳管理檔案，並指定授權特定成員下載與檢視。":"檢視與下載管理員授權給您的專屬檔案資料。",connection:"透過 JSON 交換資料，連接 AWS EC2 量測資料來源。"}[section]}</p></div>{signedIn&&state&&<Button variant="outline" disabled={loading} onClick={()=>void load()}><RefreshCw size={15} className={loading?"animate-spin":""}/>重新整理</Button>}</div>
+  <div className="main-inner"><div className="page-heading"><div><p className="eyebrow">ASLUNG DATA HUB</p><h1>{labels[section]}</h1><p className="subheading">{{realtime:"檢視所有授權設備的最後回報狀態與數值。",data:"選擇設備與期間，查詢並下載您有權限的量測資料。",devices:"建立設備識別資料，作為資料查詢與授權的依據。",members:"管理可登入工作空間的會員帳號。",permissions:"指定每位會員可存取的設備與資料期間。",locations:"追蹤設備分配至各實驗室或國外的擺放位置歷史紀錄。",labs:"管理實驗室、國外站點與各監測地點的基本資料與座標。",maintainers:"管理儀器負責人與維護人員聯絡信箱，支援 Google 試算表同步。",alerts:admin?"自訂定時檢查設備狀態，當設備斷線超過門檻時自動發送通知信給維護者。":"檢視被授權及您所列管設備的連線監控狀態與斷線告警日誌。",files:admin?"上傳管理檔案，並指定授權特定成員下載與檢視。":"檢視與下載管理員授權給您的專屬檔案資料。",connection:"透過 JSON 交換資料，連接 AWS EC2 量測資料來源。"}[section]}</p></div>{signedIn&&state&&<Button variant="outline" disabled={loading} onClick={()=>void load()}><RefreshCw size={15} className={loading?"animate-spin":""}/>重新整理</Button>}</div>
  {!signedIn?<section className="panel welcome"><div className="welcome-icon"><ShieldCheck size={38}/></div><p className="eyebrow">安全資料存取</p><h2>登入您的 ASLUNG 工作空間</h2><p>使用 Email 與密碼登入，查看您的設備與資料授權。<br/>管理員可建立 ASLUNG ID、開通會員與指定資料期間。</p><Button asChild size="lg"><a href={signInUrl} target="_top">使用 Email 登入</a></Button><div className="welcome-foot"><LockKeyhole size={14}/>帳號由管理員建立；請使用您的 Email 與密碼登入。</div></section>:error?<section className="panel"><Blank title="無法開啟工作空間" description={error} icon={LockKeyhole}/><div className="text-center pb-8"><Button onClick={()=>void load()}>重試</Button></div></section>:!state?<div className="panel p-8 space-y-5"><Skeleton className="h-9 w-48"/><Skeleton className="h-32 w-full"/></div>:<>
- <div className="stats"><div><span>可存取設備</span><strong>{devices.length.toString().padStart(2,"0")}</strong><Database/></div><div><span>{admin?"有效會員":"帳號權限"}</span><strong>{admin?members.filter(m=>m.active&&m.role==="member").length.toString().padStart(2,"0"):"會員"}</strong><Users/></div><div><span>{admin?"資料授權":"授權期間"}</span><strong>{admin?grants.length.toString().padStart(2,"0"):"依設備設定"}</strong><ShieldCheck/></div>{admin&&<div><span>資料來源</span><strong className="source-stat">AWS EC2</strong><span className={state.connected?"status ok":"status pending"}>{state.connected?"已設定連線":"待串接"}</span></div>}</div>
- {section==="realtime"&&<><section className="panel results"><div className="results-heading"><div><h2>設備即時線上狀態</h2><p>顯示授權設備的最新一筆量測紀錄（每分鐘自動更新）。</p></div><div className="flex gap-2 items-center"><Input placeholder="搜尋 ID 或位置" className="w-48 bg-white h-9" value={realtimeSearch} onChange={e=>setRealtimeSearch(e.target.value)} /><Button variant="outline" size="sm" disabled={busy} onClick={()=>{setBusy(true);request("/api/realtime").then(setRealtimeData).catch(e=>toast.error(e.message)).finally(()=>setBusy(false))}}><RefreshCw size={15} className={busy?"animate-spin":""}/>更新</Button></div></div>{!realtimeData?<div className="p-8"><Skeleton className="h-32 w-full"/></div>:realtimeData.length===0?<Blank title="沒有任何設備數據" description="尚無授權設備或設備未上傳過資料。"/>:(()=>{const filtered=(realtimeData||[]).filter(r=>{if(!realtimeSearch)return true;const s=realtimeSearch.toLowerCase();const loc=locations.find(l=>l.aslung_id===r.aslung_id&&l.active)?.lab_id||"";return String(r.aslung_id).toLowerCase().includes(s)||loc.toLowerCase().includes(s);});return <div className="table-scroll"><Table><TableHeader><TableRow><TableHead>狀態</TableHead><TableHead>目前位置</TableHead><TableHead>timestamp</TableHead><TableHead>aslung_id</TableHead><TableHead>PM1_G3</TableHead><TableHead>PM2.5_G3</TableHead><TableHead>PM10_G3</TableHead><TableHead>temperature</TableHead><TableHead>rh</TableHead><TableHead>co2</TableHead><TableHead>PM1_GSA</TableHead><TableHead>PM2.5_GSA</TableHead><TableHead>PM10_GSA</TableHead></TableRow></TableHeader><TableBody>{filtered.length===0?<TableRow><TableCell colSpan={13} className="text-center py-8 text-slate-500">沒有符合搜尋條件的設備</TableCell></TableRow>:filtered.map((r,i)=>{const isOffline=Date.now()-new Date(r.timestamp).getTime()>3600000;const loc=locations.find(l=>l.aslung_id===r.aslung_id&&l.active)?.lab_id||devices.find(d=>d.id===r.aslung_id)?.location||locations.find(l=>l.aslung_id===r.aslung_id)?.lab_id||<span className="text-slate-400">—</span>;return <TableRow key={i}><TableCell><span className={isOffline?"status pending":"status ok"}>{isOffline?"已斷線":"連線中"}</span></TableCell><TableCell>{loc}</TableCell><TableCell className="mono font-medium">{localTime(String(r.timestamp))}</TableCell><TableCell className="mono font-medium">{String(r.aslung_id)}</TableCell><TableCell>{String(r.PM1_G3??"—")}</TableCell><TableCell>{String(r["PM2.5_G3"]??"—")}</TableCell><TableCell>{String(r.PM10_G3??"—")}</TableCell><TableCell>{String(r.temperature??"—")}</TableCell><TableCell>{String(r.rh??"—")}</TableCell><TableCell>{String(r.co2??"—")}</TableCell><TableCell>{String(r.PM1_GSA??"—")}</TableCell><TableCell>{String(r["PM2.5_GSA"]??"—")}</TableCell><TableCell>{String(r.PM10_GSA??"—")}</TableCell></TableRow>})}</TableBody></Table></div>})()}</section></>}
- {section==="data"&&<><section className="panel query-panel"><div className="panel-title"><span><Search size={18}/> 查詢條件</span><small>時間以所選時區 ({tz}) 計算</small></div><form onSubmit={e=>{e.preventDefault();try{void query(parameters()).catch(()=>{})}catch(e){toast.error((e as Error).message)}}} className="query-form"><div><Label>ASLUNG ID</Label>{pick(id,setId,devices.map(d=>({value:d.id,label:d.id+(d.description?" · "+d.description:d.name?" · "+d.name:"")})),"選擇授權設備")}</div><div><Label htmlFor="start">開始時間</Label><Input id="start" type="datetime-local" required value={start} onChange={e=>setStart(e.target.value)}/></div><div><Label htmlFor="end">結束時間</Label><Input id="end" type="datetime-local" required value={end} onChange={e=>setEnd(e.target.value)}/></div><Button disabled={busy||!id} type="submit" className="h-11"><Search size={16}/>{busy?"處理中…":"查詢資料"}</Button></form>{chosen?.start&&<p className="permission-note"><ShieldCheck size={14}/> 授權資料期間：{localTime(chosen.start)} ～ {chosen.end ? localTime(chosen.end) : localTime(new Date().toISOString())}</p>}</section>
+ <div className="stats"><div><span>{admin?"可存取設備":"可存取與列管設備"}</span><strong>{devices.length.toString().padStart(2,"0")}</strong><Database/></div><div><span>{admin?"有效會員":"帳號權限"}</span><strong>{admin?members.filter(m=>m.active&&m.role==="member").length.toString().padStart(2,"0"):"會員"}</strong><Users/></div><div><span>{admin?"資料授權":"授權期間"}</span><strong>{admin?grants.length.toString().padStart(2,"0"):"依設備設定"}</strong><ShieldCheck/></div>{admin&&<div><span>資料來源</span><strong className="source-stat">AWS EC2</strong><span className={state.connected?"status ok":"status pending"}>{state.connected?"已設定連線":"待串接"}</span></div>}</div>
+ {section==="realtime"&&<><section className="panel results"><div className="results-heading"><div><h2>設備即時線上狀態</h2><p className="flex items-center gap-2"><span>顯示授權設備的最新一筆量測紀錄（{realtimeInterval > 0 ? `每 ${formatRealtimeInterval(realtimeInterval)}自動更新` : "已暫停自動更新"}）。</span>{realtimeRefreshedAt && <span className="text-[11px] text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded font-mono">最後更新：{formatInTimeZone(realtimeRefreshedAt, tz, "HH:mm:ss")}</span>}</p></div><div className="flex gap-2 items-center flex-wrap"><Input placeholder="搜尋 ID 或位置" className="w-44 bg-white h-9 text-xs" value={realtimeSearch} onChange={e=>setRealtimeSearch(e.target.value)} /><div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 px-2.5 h-9 rounded-md text-xs text-slate-600"><Clock size={13} className="text-slate-500 shrink-0" /><span className="whitespace-nowrap">預設更新時間：</span>{admin ? (<select value={realtimeInterval} className="bg-transparent font-medium text-slate-800 outline-none cursor-pointer pr-1" title="管理員可修改預設更新時間" onChange={async e => { const newSecs = Number(e.target.value); setRealtimeInterval(newSecs); try { await mutate({ action: "realtimeIntervalUpdate", interval: newSecs }); toast.success(`已將預設更新時間設為：${formatRealtimeInterval(newSecs)}`); } catch {} }}><option value="10">每 10 秒</option><option value="30">每 30 秒</option><option value="60">每 1 分鐘 (預設)</option><option value="120">每 2 分鐘</option><option value="300">每 5 分鐘</option><option value="600">每 10 分鐘</option><option value="0">暫停自動更新</option></select>) : (<span className="font-semibold text-slate-800">{formatRealtimeInterval(realtimeInterval)}</span>)}</div><Button variant="outline" size="sm" className="h-9" disabled={realtimeLoading} onClick={() => { void fetchRealtime(true); setRealtimeRefreshKey(k => k + 1); }}><RefreshCw size={14} className={realtimeLoading ? "animate-spin" : ""} />{realtimeLoading ? "更新中…" : "更新"}</Button></div></div>{!realtimeData?<div className="p-8"><Skeleton className="h-32 w-full"/></div>:realtimeData.length===0?<Blank title="沒有任何設備數據" description="尚無授權設備或設備未上傳過資料。"/>:(()=>{const filtered=(realtimeData||[]).filter(r=>{if(!realtimeSearch)return true;const s=realtimeSearch.toLowerCase();const loc=locations.find(l=>l.aslung_id===r.aslung_id&&l.active)?.lab_id||"";return String(r.aslung_id).toLowerCase().includes(s)||loc.toLowerCase().includes(s);});return <div className="table-scroll"><Table><TableHeader><TableRow><TableHead>狀態</TableHead><TableHead>目前位置</TableHead><TableHead>timestamp</TableHead><TableHead>aslung_id</TableHead><TableHead>PM1_G3</TableHead><TableHead>PM2.5_G3</TableHead><TableHead>PM10_G3</TableHead><TableHead>temperature</TableHead><TableHead>rh</TableHead><TableHead>co2</TableHead><TableHead>PM1_GSA</TableHead><TableHead>PM2.5_GSA</TableHead><TableHead>PM10_GSA</TableHead></TableRow></TableHeader><TableBody>{filtered.length===0?<TableRow><TableCell colSpan={13} className="text-center py-8 text-slate-500">沒有符合搜尋條件的設備</TableCell></TableRow>:filtered.map((r,i)=>{const isOffline=Date.now()-new Date(r.timestamp).getTime()>3600000;const loc=locations.find(l=>l.aslung_id===r.aslung_id&&l.active)?.lab_id||devices.find(d=>d.id===r.aslung_id)?.location||locations.find(l=>l.aslung_id===r.aslung_id)?.lab_id||<span className="text-slate-400">—</span>;const dev=devices.find(d=>d.id===r.aslung_id);return <TableRow key={i}><TableCell><span className={isOffline?"status pending":"status ok"}>{isOffline?"已斷線":"連線中"}</span></TableCell><TableCell>{loc}</TableCell><TableCell className="mono font-medium">{localTime(String(r.timestamp))}</TableCell><TableCell className="mono font-medium"><div className="flex items-center gap-1.5"><span>{String(r.aslung_id)}</span>{!admin&&dev?.is_maintained&&<span className="text-[10px] px-1.5 py-0.5 rounded font-sans font-medium bg-amber-50 text-amber-800 border border-amber-200">列管</span>}{!admin&&dev?.is_granted&&<span className="text-[10px] px-1.5 py-0.5 rounded font-sans font-medium bg-blue-50 text-blue-800 border border-blue-200">授權</span>}</div></TableCell><TableCell>{String(r.PM1_G3??"—")}</TableCell><TableCell>{String(r["PM2.5_G3"]??"—")}</TableCell><TableCell>{String(r.PM10_G3??"—")}</TableCell><TableCell>{String(r.temperature??"—")}</TableCell><TableCell>{String(r.rh??"—")}</TableCell><TableCell>{String(r.co2??"—")}</TableCell><TableCell>{String(r.PM1_GSA??"—")}</TableCell><TableCell>{String(r["PM2.5_GSA"]??"—")}</TableCell><TableCell>{String(r.PM10_GSA??"—")}</TableCell></TableRow>})}</TableBody></Table></div>})()}</section></>}
+ {section==="data"&&<><section className="panel query-panel"><div className="panel-title"><span><Search size={18}/> 查詢條件</span><small>時間以所選時區 ({tz}) 計算</small></div><form onSubmit={e=>{e.preventDefault();try{void query(parameters()).catch(()=>{})}catch(e){toast.error((e as Error).message)}}} className="query-form"><div><Label>ASLUNG ID</Label>{pick(id,setId,devices.map(d=>({value:d.id,label:d.id+(!admin&&d.is_maintained?" [列管]":!admin&&d.is_granted?" [授權]":"")+(d.description?" · "+d.description:d.name?" · "+d.name:"")})),admin?"選擇授權設備":"選擇授權或列管設備")}</div><div><Label htmlFor="start">開始時間</Label><Input id="start" type="datetime-local" required value={start} onChange={e=>setStart(e.target.value)}/></div><div><Label htmlFor="end">結束時間</Label><Input id="end" type="datetime-local" required value={end} onChange={e=>setEnd(e.target.value)}/></div><Button disabled={busy||!id} type="submit" className="h-11"><Search size={16}/>{busy?"處理中…":"查詢資料"}</Button></form>{chosen?.start&&<p className="permission-note"><ShieldCheck size={14}/> 授權資料期間：{localTime(chosen.start)} ～ {chosen.end ? localTime(chosen.end) : localTime(new Date().toISOString())}</p>}</section>
  <section className="panel results"><div className="results-heading"><div><h2>量測資料 <span>{page?.data.length??0} 筆／本頁</span></h2><p>{queried?queried.id+" · "+localTime(queried.start)+" ～ "+localTime(queried.end):"查詢後顯示所選期間的量測紀錄"}</p></div><div className="flex gap-2"><Button variant="outline" disabled={busy||!page||!queried} onClick={()=>void download("csv")}><Download size={15}/>CSV</Button><Button variant="outline" disabled={busy||!page||!queried} onClick={()=>void download("json")}><FileJson size={15}/>JSON</Button></div></div>
  <Tabs defaultValue="table"><TabsList variant="line" className="mx-6"><TabsTrigger value="table">資料表</TabsTrigger><TabsTrigger value="json">JSON 預覽</TabsTrigger></TabsList><TabsContent value="table">{!page?<Blank title={devices.length?"尚未查詢資料":"尚無可存取設備"} description={devices.length?"選擇 ASLUNG ID 與期間，按下「查詢資料」。":admin?"先在 ASLUNG ID 管理建立設備，再設定資料來源。":"請聯絡管理員指派 ASLUNG ID 與資料期間。"} icon={Search}/>:page.data.length===0?<Blank title="此期間沒有量測資料" description="請調整日期範圍後重新查詢。"/>:<div className="table-scroll"><Table><TableHeader><TableRow>{columns.map(k=><TableHead key={k}>{k}</TableHead>)}</TableRow></TableHeader><TableBody>{page.data.map((r,i)=><TableRow key={i}>{columns.map(k=><TableCell key={k} className={k==="timestamp"?"mono":""}>{k==="timestamp"?localTime(String(r[k])):typeof r[k]==="object"?JSON.stringify(r[k]):String(r[k]??"—")}</TableCell>)}</TableRow>)}</TableBody></Table></div>}</TabsContent><TabsContent value="json"><pre className="json-box">{page?JSON.stringify({aslung_id:queried?.id,start:queried?.start,end:queried?.end,...page},null,2):"// 查詢完成後，將在此顯示實際 JSON 資料。"}</pre></TabsContent></Tabs>{page?.has_more&&queried&&<div className="table-footer"><span>尚有更多資料；下載會自動合併所有分頁。</span><Button variant="outline" disabled={busy} onClick={()=>void query(queried,page.next_cursor!).catch(()=>{})}>下一頁</Button></div>}</section>
  <div className="source-note"><Server size={18}/><div><strong>{state.connected?"EC2 MySQL 資料庫已連線":"AWS EC2 尚未串接"}</strong><p>{state.connected?"查詢結果直接來自既有資料來源；連線是否正常將於查詢時確認。":"會員、設備與授權可以先行設定。完成 API 串接後，即可查詢與下載實際資料。"}</p></div><Button variant="ghost" onClick={()=>setSection("connection")}>查看串接方式</Button></div></>}
@@ -486,7 +509,7 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
   {section==="locations"&&admin&&(()=>{const filteredLocations=locations.filter(l=>(l.aslung_id+" "+l.lab_id+" "+(l.maintainer||"")).toLowerCase().includes(search.toLowerCase()));return <section className="panel"><div className="list-heading"><div className="flex items-center gap-4"><h2>設備追蹤 <span className="count">{locations.length}</span></h2><Input className="w-64 h-9 bg-white" placeholder="搜尋 ID、地點或負責人..." value={search} onChange={e=>setSearch(e.target.value)} /></div><div className="flex gap-2"><input id="loc-csv-upload" type="file" accept=".csv,.tsv,.txt" className="hidden" onChange={handleLocationCsvUpload} />{selectedLocations.size > 0 && <Button variant="destructive" onClick={()=>{setConfirmation({action:"locationDeleteBulk",ids:Array.from(selectedLocations),title:`刪除所選 ${selectedLocations.size} 筆追蹤紀錄？`,description:`將一併刪除所選 ${selectedLocations.size} 筆設備擺放位置歷史紀錄，且無法復原。確認刪除？`})}}><Trash2 size={16} className="mr-1"/>大量刪除 ({selectedLocations.size})</Button>}<Button variant="secondary" onClick={()=>setModal("locationSync")}><CloudDownload size={16} className="mr-1"/>同步 Google 試算表</Button><Button variant="outline" onClick={()=>setModal("locationImport")}><FileSpreadsheet size={16} className="mr-1"/>貼上 / 匯入試算表</Button><Button onClick={()=>{setEditLocation(null);setModal("location")}}><Plus size={16}/>新增紀錄</Button></div></div>{!filteredLocations.length?<Blank title={search?"沒有符合的追蹤紀錄":"尚無位置追蹤紀錄"} description={search?"請嘗試其他關鍵字。":"新增第一筆設備擺放位置。"} icon={MapPin}/>:<Table><TableHeader><TableRow><TableHead className="w-12 text-center font-semibold">序號</TableHead><TableHead><input type="checkbox" checked={selectedLocations.size === filteredLocations.length && filteredLocations.length > 0} onChange={e => { if(e.target.checked) setSelectedLocations(new Set(filteredLocations.map(l=>l.id))); else setSelectedLocations(new Set()); }} /></TableHead><TableHead>Lab ID (地點)</TableHead><TableHead>ASLUNG ID</TableHead><TableHead>負責人 / 維護者</TableHead><TableHead>開始時間</TableHead><TableHead>結束時間</TableHead><TableHead>狀態</TableHead><TableHead>操作</TableHead></TableRow></TableHeader><TableBody>{filteredLocations.map((l,idx)=><TableRow key={l.id}><TableCell className="text-center font-mono text-xs text-slate-500">{idx+1}</TableCell><TableCell><input type="checkbox" checked={selectedLocations.has(l.id)} onChange={e => { const s = new Set(selectedLocations); if(e.target.checked) s.add(l.id); else s.delete(l.id); setSelectedLocations(s); }} /></TableCell><TableCell className="font-semibold">{l.lab_id}</TableCell><TableCell className="mono">{l.aslung_id}</TableCell><TableCell>{(()=>{const m=maintainers.find(x=>x.name===l.maintainer);if(!l.maintainer)return <span className="text-slate-400">—</span>;if(!m)return <span className="font-medium text-slate-700">{l.maintainer}</span>;return <div className="flex items-center gap-1.5"><span className="font-semibold text-slate-800">{m.name}</span>{m.email&&<a href={`mailto:${m.email}`} title={`寄信給 ${m.name} (${m.email})`} className="text-teal-600 hover:text-teal-800 transition-colors inline-flex items-center"><Mail size={13}/></a>}</div>;})()}</TableCell><TableCell>{localTime(l.start_time)}</TableCell><TableCell>{l.end_time?localTime(l.end_time):"—"}</TableCell><TableCell><span className={l.active?"status ok":"status pending"}>{l.active?"使用中":"已移出"}</span></TableCell><TableCell><div className="flex gap-2"><Button size="sm" variant="outline" onClick={()=>{setEditLocation(l); setModal("location")}}>編輯</Button><Button size="sm" variant="outline" onClick={()=>{setConfirmation({action:"locationDelete",id:l.id,title:"刪除此紀錄？",description:"確認後將無法復原。"})}}>刪除</Button></div></TableCell></TableRow>)}</TableBody></Table>}</section>})()}
   {section==="labs"&&admin&&<LabsView labs={labs} locations={locations} search={search} setSearch={setSearch} selectedLabs={selectedLabs} setSelectedLabs={setSelectedLabs} setEditLab={setEditLab} setModal={setModal} setConfirmation={setConfirmation} />}
   {section==="maintainers"&&admin&&<MaintainersView maintainers={maintainers} devices={devices} locations={locations} realtimeData={realtimeData} search={search} setSearch={setSearch} selectedMaintainers={selectedMaintainers} setSelectedMaintainers={setSelectedMaintainers} setEditMaintainer={setEditMaintainer} setModal={setModal} setConfirmation={setConfirmation} />}
-  {section==="alerts"&&admin&&<AlertsView alertSettings={alertSettings} alertLogs={alertLogs} devices={devices} locations={locations} maintainers={maintainers} realtimeData={realtimeData} setModal={setModal} load={load} localTime={localTime} selectedAlertLogs={selectedAlertLogs} setSelectedAlertLogs={setSelectedAlertLogs} setConfirmation={setConfirmation} />}
+  {section==="alerts"&&<AlertsView admin={admin} me={state?.me} alertSettings={alertSettings} alertLogs={alertLogs} devices={devices} locations={locations} maintainers={maintainers} realtimeData={realtimeData} setModal={setModal} load={load} localTime={localTime} selectedAlertLogs={selectedAlertLogs} setSelectedAlertLogs={setSelectedAlertLogs} setConfirmation={setConfirmation} />}
  
  {section==="files"&&admin&&(()=>{
    const filteredFiles=files.filter(f=>(f.name+" "+(f.description||"")).toLowerCase().includes(search.toLowerCase()));
@@ -875,17 +898,188 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
             <input type="checkbox" name="enabled" value="1" defaultChecked={alertSettings?.enabled !== 0} />
             啟用背景定時監控與離線告警發送
           </label>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label htmlFor="check-interval">檢查間隔 (分鐘)</Label>
-              <Input id="check-interval" name="check_interval_mins" type="number" min={5} defaultValue={alertSettings?.check_interval_mins || 60} required />
-              <p className="text-[11px] text-slate-400 mt-1">建議每 30～60 分鐘檢查一次</p>
+          <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                <Clock size={14} className="text-teal-600" /> 檢查排程頻率設定
+              </span>
+              <span className="text-[11px] text-slate-400">時區：{tz}</span>
             </div>
-            <div>
-              <Label htmlFor="offline-threshold">斷線判定門檻 (分鐘)</Label>
-              <Input id="offline-threshold" name="offline_threshold_mins" type="number" min={5} defaultValue={alertSettings?.offline_threshold_mins || 60} required />
-              <p className="text-[11px] text-slate-400 mt-1">超過此時間無數據即視為斷線 (預設 60 分鐘)</p>
+
+            <div className="grid grid-cols-3 gap-1.5 p-1 bg-slate-200/70 rounded-lg text-xs font-medium">
+              <button
+                type="button"
+                onClick={() => setAlertScheduleType("interval")}
+                className={`py-1.5 px-2 rounded-md transition-all flex items-center justify-center gap-1.5 ${
+                  alertScheduleType === "interval"
+                    ? "bg-white text-teal-800 font-semibold shadow-sm"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                <span>⏱️</span> 固定間隔
+              </button>
+              <button
+                type="button"
+                onClick={() => setAlertScheduleType("daily")}
+                className={`py-1.5 px-2 rounded-md transition-all flex items-center justify-center gap-1.5 ${
+                  alertScheduleType === "daily"
+                    ? "bg-white text-teal-800 font-semibold shadow-sm"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                <span>📅</span> 每天固定時間
+              </button>
+              <button
+                type="button"
+                onClick={() => setAlertScheduleType("weekly")}
+                className={`py-1.5 px-2 rounded-md transition-all flex items-center justify-center gap-1.5 ${
+                  alertScheduleType === "weekly"
+                    ? "bg-white text-teal-800 font-semibold shadow-sm"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                <span>📆</span> 每週固定時間
+              </button>
             </div>
+
+            <input type="hidden" name="schedule_type" value={alertScheduleType} />
+
+            {/* 模式 1: 固定間隔 */}
+            {alertScheduleType === "interval" && (
+              <div className="bg-white p-3 rounded-md border border-slate-200 space-y-1">
+                <input type="hidden" name="schedule_time" value={alertSettings?.schedule_time || "09:00"} />
+                <input type="hidden" name="schedule_days" value={alertSettings?.schedule_days || "1,2,3,4,5"} />
+                <Label htmlFor="check-interval" className="text-xs">檢查間隔 (分鐘)</Label>
+                <Input
+                  id="check-interval"
+                  name="check_interval_mins"
+                  type="number"
+                  min={5}
+                  defaultValue={alertSettings?.check_interval_mins || 60}
+                  required
+                />
+                <p className="text-[11px] text-slate-400">以固定頻率持續檢查所有設備狀態（建議每 30～60 分鐘一次）</p>
+              </div>
+            )}
+
+            {/* 模式 2: 每天固定時間 */}
+            {alertScheduleType === "daily" && (
+              <div className="bg-white p-3 rounded-md border border-slate-200 space-y-1">
+                <input type="hidden" name="check_interval_mins" value={alertSettings?.check_interval_mins || 60} />
+                <input type="hidden" name="schedule_days" value={alertSettings?.schedule_days || "1,2,3,4,5"} />
+                <Label htmlFor="schedule-time-daily" className="text-xs">每日執行檢查時間 ({tz})</Label>
+                <Input
+                  id="schedule-time-daily"
+                  name="schedule_time"
+                  type="time"
+                  defaultValue={alertSettings?.schedule_time || "09:00"}
+                  required
+                />
+                <p className="text-[11px] text-slate-400">每天到達指定時間時自動檢查設備斷線狀況並發送信件（當天不重複發送）</p>
+              </div>
+            )}
+
+            {/* 模式 3: 每週固定時間 */}
+            {alertScheduleType === "weekly" && (
+              <div className="bg-white p-3 rounded-md border border-slate-200 space-y-2.5">
+                <input type="hidden" name="check_interval_mins" value={alertSettings?.check_interval_mins || 60} />
+                <input type="hidden" name="schedule_days" value={alertScheduleDays} />
+
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <Label className="text-xs">每週檢查星期 (可多選)：</Label>
+                    <div className="flex gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setAlertScheduleDays("1,2,3,4,5")}
+                        className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-600"
+                      >
+                        週一至五
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setAlertScheduleDays("1,2,3,4,5,6,0")}
+                        className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-600"
+                      >
+                        每天
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setAlertScheduleDays("6,0")}
+                        className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-600"
+                      >
+                        週末
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-7 gap-1">
+                    {[
+                      { d: "1", label: "週一" },
+                      { d: "2", label: "週二" },
+                      { d: "3", label: "週三" },
+                      { d: "4", label: "週四" },
+                      { d: "5", label: "週五" },
+                      { d: "6", label: "週六" },
+                      { d: "0", label: "週日" },
+                    ].map(item => {
+                      const isSelected = alertScheduleDays.split(",").map(x => x.trim()).includes(item.d);
+                      return (
+                        <button
+                          key={item.d}
+                          type="button"
+                          onClick={() => {
+                            const cur = alertScheduleDays.split(",").map(x => x.trim()).filter(Boolean);
+                            let next;
+                            if (cur.includes(item.d)) {
+                              next = cur.filter(x => x !== item.d);
+                              if (next.length === 0) next = [item.d];
+                            } else {
+                              next = [...cur, item.d];
+                            }
+                            const order = ["1", "2", "3", "4", "5", "6", "0"];
+                            next.sort((a, b) => order.indexOf(a) - order.indexOf(b));
+                            setAlertScheduleDays(next.join(","));
+                          }}
+                          className={`py-1.5 rounded text-xs font-semibold border transition-all ${
+                            isSelected
+                              ? "bg-teal-600 text-white border-teal-700 shadow-xs"
+                              : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
+                          }`}
+                        >
+                          {item.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div>
+                  <Label htmlFor="schedule-time-weekly" className="text-xs">執行檢查時間 ({tz})</Label>
+                  <Input
+                    id="schedule-time-weekly"
+                    name="schedule_time"
+                    type="time"
+                    defaultValue={alertSettings?.schedule_time || "09:00"}
+                    required
+                  />
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    在所選的星期到達此時間時自動執行斷線檢查（已選：{
+                      alertScheduleDays.split(",").map(x => {
+                        const m: Record<string, string> = { "1": "一", "2": "二", "3": "三", "4": "四", "5": "五", "6": "六", "0": "日" };
+                        return m[x.trim()] || x;
+                      }).join("、")
+                    }）
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div>
+            <Label htmlFor="offline-threshold">斷線判定門檻 (分鐘)</Label>
+            <Input id="offline-threshold" name="offline_threshold_mins" type="number" min={5} defaultValue={alertSettings?.offline_threshold_mins || 60} required />
+            <p className="text-[11px] text-slate-400 mt-1">超過此時間無數據即視為斷線 (預設 60 分鐘)</p>
           </div>
           <label className="flex items-center gap-2 text-xs text-slate-600 cursor-pointer">
             <input type="checkbox" name="use_test_email" value="1" defaultChecked={!!alertSettings?.use_test_email} />
