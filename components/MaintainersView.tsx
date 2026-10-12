@@ -18,7 +18,7 @@ export interface Maintainer {
 interface MaintainersViewProps {
   maintainers: Maintainer[];
   devices: Array<{ id: string; status: string; location: string }>;
-  locations: Array<{ id: number; lab_id: string; aslung_id: string; maintainer?: string | null; active: number }>;
+  locations: Array<{ id: number; lab_id: string; aslung_id: string; maintainer?: string | null; active: number; end_time?: string | null }>;
   realtimeData: any[] | null;
   search: string;
   setSearch: (s: string) => void;
@@ -134,10 +134,10 @@ export default function MaintainersView({
             <TableBody>
               {filtered.map((m, idx) => {
                 // Find all active devices managed by this maintainer (只有使用中的設備才檢查)
-                const activeLocs = locations.filter((loc) => loc.active === 1 && loc.maintainer?.trim() === m.name.trim());
+                const activeLocs = locations.filter((loc) => loc.active === 1 && !loc.end_time && loc.maintainer?.trim() === m.name.trim());
                 const assignedDeviceIds = Array.from(new Set(activeLocs.map((l) => l.aslung_id))).filter((devId) => {
                   const dev = devices.find((x) => x.id === devId);
-                  return !dev || (dev.status !== "RETIRED" && dev.status !== "MAINTENANCE" && dev.status !== "LOST");
+                  return !dev || dev.status === "DEPLOYED";
                 });
                 
                 // Count offline devices among assigned

@@ -37,7 +37,7 @@ interface AlertsViewProps {
   alertSettings?: AlertSettings;
   alertLogs: AlertLog[];
   devices: Array<{ id: string; status: string; location: string }>;
-  locations: Array<{ id: number; lab_id: string; aslung_id: string; maintainer?: string | null; active: number }>;
+  locations: Array<{ id: number; lab_id: string; aslung_id: string; maintainer?: string | null; active: number; end_time?: string | null }>;
   maintainers: Array<{ name: string; email: string; email_test: string }>;
   realtimeData: any[] | null;
   setModal: (m: string) => void;
@@ -73,13 +73,13 @@ export default function AlertsView({
   // Find currently offline devices (只有使用中的設備才檢查)
   const activeLocMap = new Map<string, any>();
   for (const l of locations) {
-    if (l.active === 1 && !activeLocMap.has(l.aslung_id)) {
+    if (l.active === 1 && !l.end_time && !activeLocMap.has(l.aslung_id)) {
       activeLocMap.set(l.aslung_id, l);
     }
   }
 
   const inUseDevices = devices.filter((d) => {
-    const isStatusOk = d.status === "DEPLOYED" || !d.status || (d.status !== "RETIRED" && d.status !== "MAINTENANCE" && d.status !== "LOST");
+    const isStatusOk = d.status === "DEPLOYED";
     return isStatusOk && activeLocMap.has(d.id);
   });
 

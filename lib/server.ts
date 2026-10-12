@@ -40,3 +40,37 @@ export async function permitted(m:any,id:string,start:string,end:string){
  if(m.role!=="admin"){const grants:any=await db().prepare("SELECT * FROM grants WHERE device_id=? AND email=?").bind(id,m.email).all();if(!grants.results.some((g:any)=>start>=g.start&&(!g.end||end<=g.end)))throw new AppError(403,"此設備或查詢期間未授權。");}
  return device;
 }
+
+export async function syncDeviceStatusesAndLocations(store = db()){
+  // 1. 更新 location 欄位 (以 active = 1 且未結束者優先，次選最後一筆歷史紀錄)
+  await store.prepare(`
+    UPDATE devices
+    SET location = COALESCE(
+      (SELECT lab_id FROM device_locations WHERE aslung_id = devices.id AND active = 1 AND (end_time IS NULL OR end_time = '') ORDER BY start_time DESC LIMIT 1),
+      (SELECT lab_id FROM device_locations WHERE aslung_id = devices.id ORDER BY start_time DESC LIMIT 1),
+      ''
+    )
+  `).run();
+
+  // 2. 若有進行中的擺放紀錄 (active = 1 且 end_time 為空/NULL)，且狀態為 STANDBY/DEPLOYED/空，設為 DEPLOYED (使用中)
+  await store.prepare(`
+    UPDATE devices
+    SET status = 'DEPLOYED'
+    WHERE (status = 'STANDBY' OR status = 'DEPLOYED' OR status = '' OR status IS NULL)
+      AND EXISTS (
+        SELECT 1 FROM device_locations
+        WHERE aslung_id = devices.id AND active = 1 AND (end_time IS NULL OR end_time = '')
+      )
+  `).run();
+
+  // 3. 若無任何進行中的擺放紀錄，且狀態為 DEPLOYED/STANDBY/空，設為 STANDBY (待命中)
+  await store.prepare(`
+    UPDATE devices
+    SET status = 'STANDBY'
+    WHERE (status = 'DEPLOYED' OR status = 'STANDBY' OR status = '' OR status IS NULL)
+      AND NOT EXISTS (
+        SELECT 1 FROM device_locations
+        WHERE aslung_id = devices.id AND active = 1 AND (end_time IS NULL OR end_time = '')
+      )
+  `).run();
+}

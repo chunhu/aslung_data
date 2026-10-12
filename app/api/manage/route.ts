@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import {randomUUID} from "node:crypto";
 import {hashPassword,validPassword} from "@/lib/passwords.mjs";
-import {admin,identity,db,config,fail,writeGuard,required,instant,AppError} from "@/lib/server";
+import {admin,identity,db,config,fail,writeGuard,required,instant,AppError,syncDeviceStatusesAndLocations} from "@/lib/server";
 
 export const runtime="nodejs";
 export const dynamic="force-dynamic";
@@ -70,6 +70,7 @@ function parseCsvRows(text: string): string[][] {
 
 export async function GET(){try{
  const m=await identity();const isAdmin=m.role==="admin";
+ await syncDeviceStatusesAndLocations();
  const devices=(await (isAdmin?db().prepare("SELECT * FROM devices ORDER BY id"):db().prepare("SELECT d.*,g.start,g.end FROM devices d JOIN grants g ON g.device_id=d.id WHERE g.email=? ORDER BY d.id").bind(m.email)).all()).results;
  const members=isAdmin?(await db().prepare("SELECT email,name,nickname,role,active FROM members ORDER BY role,email").all()).results:[];
  const grants=isAdmin?(await db().prepare("SELECT * FROM grants ORDER BY device_id,email,start DESC").all()).results:[];
@@ -95,8 +96,8 @@ export async function GET(){try{
 export async function POST(r:Request){try{
  writeGuard(r);const me=await identity(r);const isAdmin=me.role==="admin";const p=await r.json() as Record<string,unknown>;if(!p||typeof p!=="object"||Array.isArray(p))throw new AppError(400,"請提供正確的表單資料。");
  const requireAdmin=()=>{if(!isAdmin)throw new AppError(403,"權限不足。")};
-  if(p.action==="tokenCreate"){const token="aslung_"+crypto.randomBytes(24).toString("hex");await db().prepare("INSERT INTO api_tokens(id,email,created_at) VALUES(?,?,?)").bind(token,me.email,new Date().toISOString()).run();}else if(p.action==="tokenDelete"){await db().prepare("DELETE FROM api_tokens WHERE id=? AND email=?").bind(String(p.id),me.email).run();}else if(p.action==="device"){requireAdmin();const id=required(p.id,80);if(!/^[A-Za-z0-9_-]+$/.test(id))throw new AppError(400,"ASLUNG ID 只能使用英文、數字、底線與連字號。");const status=p.status?String(p.status):"DEPLOYED";await db().prepare("INSERT INTO devices(id,name,location,description,status) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET description=excluded.description, status=excluded.status").bind(id,"","",String(p.description??"").slice(0,1000),status).run();const labId=String(p.labId||"").trim();const currentLoc=await db().prepare("SELECT id, lab_id FROM device_locations WHERE aslung_id=? AND active=1").bind(id).first();if(labId){if(!currentLoc||currentLoc.lab_id!==labId){const now=new Date().toISOString();if(currentLoc)await db().prepare("UPDATE device_locations SET end_time=?, active=0 WHERE id=?").bind(now,currentLoc.id).run();await db().prepare("INSERT INTO device_locations(lab_id,aslung_id,start_time,active) VALUES(?,?,?,1)").bind(labId,id,now).run();}}else if(currentLoc){const now=new Date().toISOString();await db().prepare("UPDATE device_locations SET end_time=?, active=0 WHERE id=?").bind(now,currentLoc.id).run();}}
-  else if(p.action==="deviceImport"){requireAdmin();const devices=p.devices;if(!Array.isArray(devices))throw new AppError(400,"參數錯誤");const insertDevice=db().prepare("INSERT INTO devices(id,name,location,description) VALUES(?,?,?,?) ON CONFLICT(id) DO NOTHING");const checkLoc=db().prepare("SELECT id, lab_id FROM device_locations WHERE aslung_id=? AND active=1").bind("");const endLoc=db().prepare("UPDATE device_locations SET end_time=?, active=0 WHERE id=?");const insertLoc=db().prepare("INSERT INTO device_locations(lab_id,aslung_id,start_time,active) VALUES(?,?,?,1)");for(const d of devices){const id=typeof d==="string"?d:d.id;const labId=(d.labId||"").trim();if(typeof id==="string"&&/^[A-Za-z0-9_-]+$/.test(id)){insertDevice.bind(id,"","","").run();if(labId){const currentLoc=await db().prepare("SELECT id, lab_id FROM device_locations WHERE aslung_id=? AND active=1").bind(id).first();if(!currentLoc||currentLoc.lab_id!==labId){const now=new Date().toISOString();if(currentLoc)endLoc.bind(now,currentLoc.id).run();insertLoc.bind(labId,id,now).run();}}}}} else if(p.action==="deviceDelete"){requireAdmin();const id=required(p.id);await db().prepare("DELETE FROM grants WHERE device_id=?").bind(id).run();await db().prepare("DELETE FROM device_locations WHERE aslung_id=?").bind(id).run();await db().prepare("DELETE FROM devices WHERE id=?").bind(id).run();} else if(p.action==="deviceDeleteBulk"){requireAdmin();const ids=((p.ids||p.aslungIds)??[]) as unknown[];if(!Array.isArray(ids)||ids.length===0)throw new AppError(400,"請選擇要刪除的設備。");await db().prepare("BEGIN").run();try{for(const id of ids){const deviceId=String(id);await db().prepare("DELETE FROM grants WHERE device_id=?").bind(deviceId).run();await db().prepare("DELETE FROM device_locations WHERE aslung_id=?").bind(deviceId).run();await db().prepare("DELETE FROM devices WHERE id=?").bind(deviceId).run();}await db().prepare("COMMIT").run();}catch(e){await db().prepare("ROLLBACK").run();throw e;}}
+  if(p.action==="tokenCreate"){const token="aslung_"+crypto.randomBytes(24).toString("hex");await db().prepare("INSERT INTO api_tokens(id,email,created_at) VALUES(?,?,?)").bind(token,me.email,new Date().toISOString()).run();}else if(p.action==="tokenDelete"){await db().prepare("DELETE FROM api_tokens WHERE id=? AND email=?").bind(String(p.id),me.email).run();}else if(p.action==="device"){requireAdmin();const id=required(p.id,80);if(!/^[A-Za-z0-9_-]+$/.test(id))throw new AppError(400,"ASLUNG ID 只能使用英文、數字、底線與連字號。");const status=p.status?String(p.status):"DEPLOYED";await db().prepare("INSERT INTO devices(id,name,location,description,status) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET description=excluded.description, status=excluded.status").bind(id,"","",String(p.description??"").slice(0,1000),status).run();const labId=String(p.labId||"").trim();const currentLoc=await db().prepare("SELECT id, lab_id FROM device_locations WHERE aslung_id=? AND active=1").bind(id).first();if(labId){if(!currentLoc||currentLoc.lab_id!==labId){const now=new Date().toISOString();if(currentLoc)await db().prepare("UPDATE device_locations SET end_time=?, active=0 WHERE id=?").bind(now,currentLoc.id).run();await db().prepare("INSERT INTO device_locations(lab_id,aslung_id,start_time,active) VALUES(?,?,?,1)").bind(labId,id,now).run();}}else if(currentLoc){const now=new Date().toISOString();await db().prepare("UPDATE device_locations SET end_time=?, active=0 WHERE id=?").bind(now,currentLoc.id).run();}await syncDeviceStatusesAndLocations();}
+  else if(p.action==="deviceImport"){requireAdmin();const devices=p.devices;if(!Array.isArray(devices))throw new AppError(400,"參數錯誤");const insertDevice=db().prepare("INSERT INTO devices(id,name,location,description,status) VALUES(?,?,?,?,'STANDBY') ON CONFLICT(id) DO NOTHING");const checkLoc=db().prepare("SELECT id, lab_id FROM device_locations WHERE aslung_id=? AND active=1").bind("");const endLoc=db().prepare("UPDATE device_locations SET end_time=?, active=0 WHERE id=?");const insertLoc=db().prepare("INSERT INTO device_locations(lab_id,aslung_id,start_time,active) VALUES(?,?,?,1)");for(const d of devices){const id=typeof d==="string"?d:d.id;const labId=(d.labId||"").trim();if(typeof id==="string"&&/^[A-Za-z0-9_-]+$/.test(id)){insertDevice.bind(id,"","","").run();if(labId){const currentLoc=await db().prepare("SELECT id, lab_id FROM device_locations WHERE aslung_id=? AND active=1").bind(id).first();if(!currentLoc||currentLoc.lab_id!==labId){const now=new Date().toISOString();if(currentLoc)endLoc.bind(now,currentLoc.id).run();insertLoc.bind(labId,id,now).run();}}}}await syncDeviceStatusesAndLocations();} else if(p.action==="deviceDelete"){requireAdmin();const id=required(p.id);await db().prepare("DELETE FROM grants WHERE device_id=?").bind(id).run();await db().prepare("DELETE FROM device_locations WHERE aslung_id=?").bind(id).run();await db().prepare("DELETE FROM devices WHERE id=?").bind(id).run();} else if(p.action==="deviceDeleteBulk"){requireAdmin();const ids=((p.ids||p.aslungIds)??[]) as unknown[];if(!Array.isArray(ids)||ids.length===0)throw new AppError(400,"請選擇要刪除的設備。");await db().prepare("BEGIN").run();try{for(const id of ids){const deviceId=String(id);await db().prepare("DELETE FROM grants WHERE device_id=?").bind(deviceId).run();await db().prepare("DELETE FROM device_locations WHERE aslung_id=?").bind(deviceId).run();await db().prepare("DELETE FROM devices WHERE id=?").bind(deviceId).run();}await db().prepare("COMMIT").run();}catch(e){await db().prepare("ROLLBACK").run();throw e;}}
  else if(p.action==="member"){
  requireAdmin();
  const nickname = typeof p.nickname === "string" && p.nickname.trim() ? p.nickname.trim() : null;
@@ -178,20 +179,20 @@ export async function POST(r:Request){try{
  else if(p.action==="memberStatus"){requireAdmin();const email=required(p.email);if(email===me.email)throw new AppError(400,"無法停用自己的帳號。");await db().prepare("UPDATE members SET active=? WHERE email=?").bind(p.active?1:0,email).run();}
  else if(p.action==="grant"){requireAdmin();const device_id=required(p.deviceId),email=required(p.email),start=instant(p.start),end=p.end?instant(p.end):null;if(end&&start>end)throw new AppError(400,"結束時間必須晚於開始時間。");if(p.id){await db().prepare("UPDATE grants SET device_id=?, email=?, start=?, end=? WHERE id=?").bind(device_id,email,start,end,p.id).run();}else{await db().prepare("INSERT INTO grants(device_id,email,start,end) VALUES(?,?,?,?)").bind(device_id,email,start,end).run();}}
  else if(p.action==="revoke"){requireAdmin();await db().prepare("DELETE FROM grants WHERE id=?").bind(required(p.id)).run();}
- else if(p.action==="transfer"){requireAdmin();const aslungId=required(p.aslungId),labId=required(p.labId),startTime=p.startTime?instant(p.startTime):new Date().toISOString();await db().prepare("BEGIN").run();try{await db().prepare("UPDATE device_locations SET end_time=?, active=0 WHERE aslung_id=? AND active=1").bind(startTime,aslungId).run();await db().prepare("INSERT INTO device_locations(lab_id,aslung_id,start_time,active) VALUES(?,?,?,1)").bind(labId,aslungId,startTime).run();await db().prepare("UPDATE devices SET location=? WHERE id=?").bind(labId,aslungId).run();await db().prepare("COMMIT").run();}catch(e){await db().prepare("ROLLBACK").run();throw e;}}
- else if(p.action==="transferBulk"){requireAdmin();const aslungIds=p.aslungIds as string[],labId=required(p.labId),startTime=new Date().toISOString();if(!Array.isArray(aslungIds)||!aslungIds.length)throw new AppError(400,"請選擇要移轉的設備。");await db().prepare("BEGIN").run();try{for(const id of aslungIds){await db().prepare("UPDATE device_locations SET end_time=?, active=0 WHERE aslung_id=? AND active=1").bind(startTime,id).run();await db().prepare("INSERT INTO device_locations(lab_id,aslung_id,start_time,active) VALUES(?,?,?,1)").bind(labId,id,startTime).run();await db().prepare("UPDATE devices SET location=? WHERE id=?").bind(labId,id).run();}await db().prepare("COMMIT").run();}catch(e){await db().prepare("ROLLBACK").run();throw e;}}
+ else if(p.action==="transfer"){requireAdmin();const aslungId=required(p.aslungId),labId=required(p.labId),startTime=p.startTime?instant(p.startTime):new Date().toISOString();await db().prepare("BEGIN").run();try{await db().prepare("UPDATE device_locations SET end_time=?, active=0 WHERE aslung_id=? AND active=1").bind(startTime,aslungId).run();await db().prepare("INSERT INTO device_locations(lab_id,aslung_id,start_time,active) VALUES(?,?,?,1)").bind(labId,aslungId,startTime).run();await db().prepare("UPDATE devices SET location=? WHERE id=?").bind(labId,aslungId).run();await db().prepare("COMMIT").run();}catch(e){await db().prepare("ROLLBACK").run();throw e;}await syncDeviceStatusesAndLocations();}
+ else if(p.action==="transferBulk"){requireAdmin();const aslungIds=p.aslungIds as string[],labId=required(p.labId),startTime=new Date().toISOString();if(!Array.isArray(aslungIds)||!aslungIds.length)throw new AppError(400,"請選擇要移轉的設備。");await db().prepare("BEGIN").run();try{for(const id of aslungIds){await db().prepare("UPDATE device_locations SET end_time=?, active=0 WHERE aslung_id=? AND active=1").bind(startTime,id).run();await db().prepare("INSERT INTO device_locations(lab_id,aslung_id,start_time,active) VALUES(?,?,?,1)").bind(labId,id,startTime).run();await db().prepare("UPDATE devices SET location=? WHERE id=?").bind(labId,id).run();}await db().prepare("COMMIT").run();}catch(e){await db().prepare("ROLLBACK").run();throw e;}await syncDeviceStatusesAndLocations();}
  else if(p.action==="endGrants"){requireAdmin();const aslungId=required(p.aslungId),now=new Date().toISOString();await db().prepare("UPDATE grants SET end=? WHERE device_id=? AND (end IS NULL OR end>?)").bind(now,aslungId,now).run();}
- else if(p.action==="locationAdd"){requireAdmin();const labId=required(p.labId),aslungId=required(p.aslungId),maintainer=p.maintainer?String(p.maintainer).trim():null,startTime=instant(p.startTime),endTime=p.endTime?instant(p.endTime):null,active=p.active?1:0;await db().prepare("INSERT INTO device_locations(lab_id,aslung_id,maintainer,start_time,end_time,active) VALUES(?,?,?,?,?,?)").bind(labId,aslungId,maintainer,startTime,endTime,active).run();if(active)await db().prepare("UPDATE devices SET location=? WHERE id=?").bind(labId,aslungId).run();}
- else if(p.action==="locationUpdate"){requireAdmin();const id=required(p.id),labId=required(p.labId),aslungId=required(p.aslungId),maintainer=p.maintainer?String(p.maintainer).trim():null,startTime=instant(p.startTime),endTime=p.endTime?instant(p.endTime):null,active=p.active?1:0;await db().prepare("UPDATE device_locations SET lab_id=?, aslung_id=?, maintainer=?, start_time=?, end_time=?, active=? WHERE id=?").bind(labId,aslungId,maintainer,startTime,endTime,active,id).run();if(active)await db().prepare("UPDATE devices SET location=? WHERE id=?").bind(labId,aslungId).run();}
- else if(p.action==="locationDelete"){requireAdmin();await db().prepare("DELETE FROM device_locations WHERE id=?").bind(required(p.id)).run();}
- else if(p.action==="locationDeleteBulk"){requireAdmin();const ids=((p.ids||p.locationIds)??[]) as unknown[];if(!Array.isArray(ids)||ids.length===0)throw new AppError(400,"請選擇要刪除的位置紀錄。");await db().prepare("BEGIN").run();try{for(const id of ids){await db().prepare("DELETE FROM device_locations WHERE id=?").bind(Number(id)).run();}await db().prepare("COMMIT").run();}catch(e){await db().prepare("ROLLBACK").run();throw e;}}
+ else if(p.action==="locationAdd"){requireAdmin();const labId=required(p.labId),aslungId=required(p.aslungId),maintainer=p.maintainer?String(p.maintainer).trim():null,startTime=instant(p.startTime),endTime=p.endTime?instant(p.endTime):null,active=p.active?1:0;await db().prepare("INSERT INTO device_locations(lab_id,aslung_id,maintainer,start_time,end_time,active) VALUES(?,?,?,?,?,?)").bind(labId,aslungId,maintainer,startTime,endTime,active).run();await syncDeviceStatusesAndLocations();}
+ else if(p.action==="locationUpdate"){requireAdmin();const id=required(p.id),labId=required(p.labId),aslungId=required(p.aslungId),maintainer=p.maintainer?String(p.maintainer).trim():null,startTime=instant(p.startTime),endTime=p.endTime?instant(p.endTime):null,active=p.active?1:0;await db().prepare("UPDATE device_locations SET lab_id=?, aslung_id=?, maintainer=?, start_time=?, end_time=?, active=? WHERE id=?").bind(labId,aslungId,maintainer,startTime,endTime,active,id).run();await syncDeviceStatusesAndLocations();}
+ else if(p.action==="locationDelete"){requireAdmin();await db().prepare("DELETE FROM device_locations WHERE id=?").bind(required(p.id)).run();await syncDeviceStatusesAndLocations();}
+ else if(p.action==="locationDeleteBulk"){requireAdmin();const ids=((p.ids||p.locationIds)??[]) as unknown[];if(!Array.isArray(ids)||ids.length===0)throw new AppError(400,"請選擇要刪除的位置紀錄。");await db().prepare("BEGIN").run();try{for(const id of ids){await db().prepare("DELETE FROM device_locations WHERE id=?").bind(Number(id)).run();}await db().prepare("COMMIT").run();}catch(e){await db().prepare("ROLLBACK").run();throw e;}await syncDeviceStatusesAndLocations();}
  else if(p.action==="locationImport"){
   requireAdmin();
   const records = p.records as any[];
   if(!Array.isArray(records)||!records.length)throw new AppError(400,"無有效紀錄可匯入。");
   await db().prepare("BEGIN").run();
   try{
-    const insertDev=db().prepare("INSERT INTO devices(id,name,location,description,status) VALUES(?,?,?,?,'DEPLOYED') ON CONFLICT(id) DO NOTHING");
+    const insertDev=db().prepare("INSERT INTO devices(id,name,location,description,status) VALUES(?,?,?,?,'STANDBY') ON CONFLICT(id) DO NOTHING");
     const checkExist=db().prepare("SELECT id FROM device_locations WHERE lab_id=? AND aslung_id=? AND start_time=?");
     const updateLoc=db().prepare("UPDATE device_locations SET maintainer=?, end_time=?, active=? WHERE id=?");
     const insertLoc=db().prepare("INSERT INTO device_locations(lab_id,aslung_id,maintainer,start_time,end_time,active) VALUES(?,?,?,?,?,?)");
@@ -204,16 +205,9 @@ export async function POST(r:Request){try{
       if(ex)await updateLoc.bind(maintainer,endTime,active,ex.id).run();
       else await insertLoc.bind(labId,aslungId,maintainer,startTime,endTime,active).run();
     }
-    await db().prepare(`
-      UPDATE devices
-      SET location = COALESCE(
-        (SELECT lab_id FROM device_locations WHERE aslung_id = devices.id AND active = 1 ORDER BY start_time DESC LIMIT 1),
-        (SELECT lab_id FROM device_locations WHERE aslung_id = devices.id ORDER BY start_time DESC LIMIT 1),
-        ''
-      )
-    `).run();
     await db().prepare("COMMIT").run();
   }catch(e){await db().prepare("ROLLBACK").run();throw e;}
+  await syncDeviceStatusesAndLocations();
 } else if(p.action==="locationSyncGoogle"){
   requireAdmin();
   let url=typeof p.url==="string"&&p.url.trim()?p.url.trim():"https://docs.google.com/spreadsheets/d/1Vzaz14hHco2u8nmjoKBqDC12k-OX6lMjyrP_UhAhZrI/export?format=csv&gid=140603820#gid=140603820";
@@ -253,7 +247,7 @@ export async function POST(r:Request){try{
   if(!records.length)throw new AppError(400,"未解析到符合條件的設備紀錄。");
   await db().prepare("BEGIN").run();
   try{
-    const insertDev=db().prepare("INSERT INTO devices(id,name,location,description,status) VALUES(?,?,?,?,'DEPLOYED') ON CONFLICT(id) DO NOTHING");
+    const insertDev=db().prepare("INSERT INTO devices(id,name,location,description,status) VALUES(?,?,?,?,'STANDBY') ON CONFLICT(id) DO NOTHING");
     const checkExist=db().prepare("SELECT id FROM device_locations WHERE lab_id=? AND aslung_id=? AND start_time=?");
     const updateLoc=db().prepare("UPDATE device_locations SET maintainer=?, end_time=?, active=? WHERE id=?");
     const insertLoc=db().prepare("INSERT INTO device_locations(lab_id,aslung_id,maintainer,start_time,end_time,active) VALUES(?,?,?,?,?,?)");
@@ -263,16 +257,9 @@ export async function POST(r:Request){try{
       if(ex)await updateLoc.bind(r.maintainer,r.end_time,r.active,ex.id).run();
       else await insertLoc.bind(r.lab_id,r.aslung_id,r.maintainer,r.start_time,r.end_time,r.active).run();
     }
-    await db().prepare(`
-      UPDATE devices
-      SET location = COALESCE(
-        (SELECT lab_id FROM device_locations WHERE aslung_id = devices.id AND active = 1 ORDER BY start_time DESC LIMIT 1),
-        (SELECT lab_id FROM device_locations WHERE aslung_id = devices.id ORDER BY start_time DESC LIMIT 1),
-        ''
-      )
-    `).run();
     await db().prepare("COMMIT").run();
   }catch(e){await db().prepare("ROLLBACK").run();throw e;}
+  await syncDeviceStatusesAndLocations();
   return Response.json({ok:true,synced:records.length});
 } else if(p.action==="lab"){
   requireAdmin();

@@ -1,5 +1,5 @@
 import nodemailer from "nodemailer";
-import { db } from "@/lib/server";
+import { db, syncDeviceStatusesAndLocations } from "@/lib/server";
 import { getPool } from "@/lib/data";
 
 export interface AlertResult {
@@ -24,6 +24,7 @@ export interface AlertResult {
 
 export async function checkAndSendOfflineAlerts(options: { force?: boolean } = {}): Promise<AlertResult> {
   const store = db();
+  await syncDeviceStatusesAndLocations(store);
   const settingsRow: any = await store.prepare("SELECT * FROM alert_settings WHERE id=1").first();
   const settings = settingsRow || {
     enabled: 1,
@@ -51,8 +52,8 @@ export async function checkAndSendOfflineAlerts(options: { force?: boolean } = {
   const now = new Date();
   const nowIso = now.toISOString();
 
-  // 1. Load active locations (where active = 1)
-  const locsRes: any = await store.prepare("SELECT * FROM device_locations WHERE active = 1 ORDER BY start_time DESC").all();
+  // 1. Load active locations (where active = 1 and end_time is null/empty)
+  const locsRes: any = await store.prepare("SELECT * FROM device_locations WHERE active = 1 AND (end_time IS NULL OR end_time = '') ORDER BY start_time DESC").all();
   const activeLocations: any[] = locsRes.results || [];
   const activeLocMap = new Map<string, any>();
   for (const l of activeLocations) {
@@ -61,14 +62,14 @@ export async function checkAndSendOfflineAlerts(options: { force?: boolean } = {
     }
   }
 
-  // 2. Get all devices, and filter ONLY in-use devices
+  // 2. Get all devices, and filter ONLY in-use devices (使用中 DEPLOYED)
   // 「只有使用中的才要檢查」：
-  // (1) 設備在設備追蹤內必須是有「使用中」(active = 1) 的位置紀錄
-  // (2) 設備本身狀態不可為「已報廢」(RETIRED)、「維修中」(MAINTENANCE) 或「遺失」(LOST)
+  // (1) 設備狀態為「使用中」(DEPLOYED)，排除「待命中」(STANDBY)、「維修中」(MAINTENANCE)、「已報廢」(RETIRED)、「遺失」(LOST)
+  // (2) 設備在設備追蹤內必須是有進行中 (active = 1 且未結束) 的位置紀錄
   const devsRes: any = await store.prepare("SELECT id, name, location, status FROM devices").all();
   const allDevices: any[] = devsRes.results || [];
   const inUseDevices = allDevices.filter(d => {
-    const isStatusOk = d.status === "DEPLOYED" || !d.status || (d.status !== "RETIRED" && d.status !== "MAINTENANCE" && d.status !== "LOST");
+    const isStatusOk = d.status === "DEPLOYED";
     const hasActiveLoc = activeLocMap.has(d.id);
     return isStatusOk && hasActiveLoc;
   });
