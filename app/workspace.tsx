@@ -3,7 +3,7 @@ import {useState,useEffect,useCallback,useRef,useMemo} from "react";
 import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
 import LanguageSwitcher from "@/components/LanguageSwitcher";
 import FontSizeAdjuster from "@/components/FontSizeAdjuster";
-import {Activity,Database,Users,ShieldCheck,Download,Plus,RefreshCw,Code2,Server,LockKeyhole,FileJson,LogOut,CheckCircle2,Unplug,Search,Trash2, MapPin, Key, RadioTower, Upload, Pencil, Check, ChevronsUpDown, ArrowRightLeft, QrCode, FileSpreadsheet, CloudDownload, FolderDown, FileText, Eye, Building2, UserCheck, BellRing, Mail, Clock, KeyRound} from "lucide-react";
+import {Activity,Database,Users,ShieldCheck,Download,Plus,RefreshCw,Code2,Server,LockKeyhole,FileJson,LogOut,CheckCircle2,Unplug,Search,Trash2, MapPin, Key, RadioTower, Upload, Pencil, Check, ChevronsUpDown, ArrowRightLeft, QrCode, FileSpreadsheet, CloudDownload, FolderDown, FileText, Eye, Building2, UserCheck, BellRing, Mail, Clock, KeyRound, Filter, RotateCcw, X} from "lucide-react";
 import {Button} from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -118,6 +118,10 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
   const [reviewRequest, setReviewRequest] = useState<any>(null);
   const [alertScheduleType, setAlertScheduleType] = useState<"interval" | "daily" | "weekly">("interval");
   const [alertScheduleDays, setAlertScheduleDays] = useState<string>("1,2,3,4,5");
+  const [deviceStatusFilter, setDeviceStatusFilter] = useState<string>("ALL");
+  const [deviceOnlineFilter, setDeviceOnlineFilter] = useState<string>("ALL");
+  const [deviceLocationFilter, setDeviceLocationFilter] = useState<string>("ALL");
+  const [deviceGrantFilter, setDeviceGrantFilter] = useState<string>("ALL");
   const allTimeZones = useMemo(() => {
     if (typeof Intl === 'undefined' || !Intl.supportedValuesOf) {
       return [{ tz: "Asia/Taipei", label: "(UTC+08:00) Asia / Taipei" }];
@@ -287,7 +291,75 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
  useEffect(()=>{const context=(document as any).modelContext;if(!context?.registerTool)return;const lifecycle=new AbortController();void Promise.resolve(context.registerTool({name:"query_aslung_data",title:"查詢 ASLUNG 量測資料",description:"依授權設備與 UTC 期間查詢一頁量測資料，並更新頁面結果。",inputSchema:{type:"object",properties:{aslung_id:{type:"string"},start:{type:"string"},end:{type:"string"}},required:["aslung_id","start","end"],additionalProperties:false},annotations:{readOnlyHint:true,untrustedContentHint:true},execute:async(input:any)=>{if(!input||typeof input.aslung_id!=="string"||!Number.isFinite(Date.parse(input.start))||!Number.isFinite(Date.parse(input.end))||Date.parse(input.start)>Date.parse(input.end))throw new Error("無效查詢參數");if(!devices.some(d=>d.id===input.aslung_id))throw new Error("未授權的設備");setSection("data");setId(input.aslung_id);const local=(v:string)=>formatInTimeZone(new Date(v), tz, "yyyy-MM-dd'T'HH:mm");setStart(local(input.start));setEnd(local(input.end));return query({id:input.aslung_id,start:new Date(input.start).toISOString(),end:new Date(input.end).toISOString()});}},{signal:lifecycle.signal})).catch(()=>{});return()=>lifecycle.abort();},[devices]);
  const labels:Record<string,string>={realtime:"即時線上狀態",data:"資料查詢",devices:"ASLUNG ID 管理",members:"會員管理",permissions:"資料授權",locations:"設備追蹤",labs:"地點庫 (Lab ID)",maintainers:"維護人員名單",alerts:"斷線告警監控",files:"檔案專區",connection:"系統連線狀態"};
  const nav=[{id:"realtime",name:"即時線上狀態",icon:RadioTower},{id:"data",name:"資料查詢",icon:Activity},{id:"devices",name:"ASLUNG ID 管理",icon:Database},{id:"members",name:"會員管理",icon:Users},{id:"permissions",name:"資料授權",icon:ShieldCheck},{id:"locations",name:"設備追蹤",icon:MapPin},{id:"labs",name:"地點庫 (Lab ID)",icon:Building2},{id:"maintainers",name:"維護人員名單",icon:UserCheck},{id:"alerts",name:"斷線告警監控",icon:BellRing},{id:"files",name:"檔案專區",icon:FolderDown},{id:"connection",name:"系統連線狀態",icon:Code2}];
- const filtered=devices.filter(d=>{const activeLoc=locations.find(l=>l.aslung_id===d.id&&l.active);const loc=activeLoc?.lab_id||d.location||locations.find(l=>l.aslung_id===d.id)?.lab_id||"";return (d.id+" "+(d.description||"")+" "+loc).toLowerCase().includes(search.toLowerCase())});
+ const statusCounts = useMemo(() => {
+    const counts = { ALL: devices.length, DEPLOYED: 0, STANDBY: 0, MAINTENANCE: 0, RETIRED: 0, LOST: 0 };
+    for (const d of devices) {
+      const st = (d.status || "DEPLOYED").toUpperCase();
+      if (st in counts) (counts as any)[st]++;
+      else counts.DEPLOYED++;
+    }
+    return counts;
+  }, [devices]);
+
+  const availableLocations = useMemo(() => {
+    const set = new Set<string>();
+    for (const l of locations) {
+      if (l.lab_id) set.add(l.lab_id);
+    }
+    for (const d of devices) {
+      if (d.location) set.add(d.location);
+    }
+    return Array.from(set).sort();
+  }, [locations, devices]);
+
+  const filtered = useMemo(() => {
+    return devices.filter(d => {
+      const st = (d.status || "DEPLOYED").toUpperCase();
+      if (deviceStatusFilter !== "ALL" && st !== deviceStatusFilter) return false;
+
+      if (deviceOnlineFilter !== "ALL") {
+        const r = (realtimeData || []).find(x => x.aslung_id === d.id);
+        if (deviceOnlineFilter === "NODATA" && r) return false;
+        if (deviceOnlineFilter !== "NODATA" && !r) return false;
+        if (r) {
+          const isOffline = Date.now() - new Date(r.timestamp).getTime() > 86400000;
+          if (deviceOnlineFilter === "ONLINE" && isOffline) return false;
+          if (deviceOnlineFilter === "OFFLINE" && !isOffline) return false;
+        }
+      }
+
+      const activeLoc = locations.find(l => l.aslung_id === d.id && l.active && !l.end_time);
+      const locName = activeLoc?.lab_id || d.location || locations.find(l => l.aslung_id === d.id)?.lab_id || "";
+      if (deviceLocationFilter !== "ALL") {
+        if (deviceLocationFilter === "UNASSIGNED" && locName) return false;
+        if (deviceLocationFilter !== "UNASSIGNED" && locName !== deviceLocationFilter) return false;
+      }
+
+      if (deviceGrantFilter !== "ALL") {
+        const grantCount = grants.filter(g => g.device_id === d.id).length;
+        if (deviceGrantFilter === "GRANTED" && grantCount === 0) return false;
+        if (deviceGrantFilter === "UNGRANTED" && grantCount > 0) return false;
+      }
+
+      if (search) {
+        const s = search.toLowerCase();
+        const match = (d.id + " " + (d.description || "") + " " + locName).toLowerCase().includes(s);
+        if (!match) return false;
+      }
+
+      return true;
+    });
+  }, [devices, deviceStatusFilter, deviceOnlineFilter, deviceLocationFilter, deviceGrantFilter, search, locations, realtimeData, grants]);
+
+  const hasActiveDeviceFilters = deviceStatusFilter !== "ALL" || deviceOnlineFilter !== "ALL" || deviceLocationFilter !== "ALL" || deviceGrantFilter !== "ALL" || search !== "";
+
+  const resetDeviceFilters = () => {
+    setDeviceStatusFilter("ALL");
+    setDeviceOnlineFilter("ALL");
+    setDeviceLocationFilter("ALL");
+    setDeviceGrantFilter("ALL");
+    setSearch("");
+  };
  const chosen=devices.find(d=>d.id===id); let columns=Array.from(new Set((page?.data??[]).flatMap(Object.keys)));if(columns.includes("timestamp"))columns=["timestamp",...columns.filter(c=>c!=="timestamp")];
  
  const parseAndImportCsv = async (text: string) => {
@@ -508,7 +580,77 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
   <section className="panel results"><div className="results-heading"><div><h2>量測資料 <span>{page?.data.length??0} 筆／本頁</span></h2><p>{queried?queried.id+" · "+localTime(queried.start)+" ～ "+localTime(queried.end):"查詢後顯示所選期間的量測紀錄"}</p></div><div className="flex gap-2"><Button variant="outline" disabled={busy||!page||!queried} onClick={()=>void download("csv")}><Download size={15}/>CSV</Button><Button variant="outline" disabled={busy||!page||!queried} onClick={()=>void download("json")}><FileJson size={15}/>JSON</Button></div></div>
   <Tabs defaultValue="table"><TabsList variant="line" className="mx-6"><TabsTrigger value="table">資料表</TabsTrigger><TabsTrigger value="json">JSON 預覽</TabsTrigger></TabsList><TabsContent value="table">{!page?<Blank title={devices.length?"尚未查詢資料":"尚無可存取設備"} description={devices.length?"選擇 ASLUNG ID 與期間，按下「查詢資料」。":admin?"先在 ASLUNG ID 管理建立設備，再設定資料來源。":"您目前尚無已授權的設備。您可以點擊右上角「申請設備授權」輸入 ASLUNG ID 向管理員申請存取權限。"} icon={Search}/>:page.data.length===0?<Blank title="此期間沒有量測資料" description="請調整日期範圍後重新查詢。"/>:<div className="table-scroll"><Table><TableHeader><TableRow>{columns.map(k=><TableHead key={k}>{k}</TableHead>)}</TableRow></TableHeader><TableBody>{page.data.map((r,i)=><TableRow key={i}>{columns.map(k=><TableCell key={k} className={k==="timestamp"?"mono":""}>{k==="timestamp"?localTime(String(r[k])):typeof r[k]==="object"?JSON.stringify(r[k]):String(r[k]??"—")}</TableCell>)}</TableRow>)}</TableBody></Table></div>}</TabsContent><TabsContent value="json"><pre className="json-box">{page?JSON.stringify({aslung_id:queried?.id,start:queried?.start,end:queried?.end,...page},null,2):"// 查詢完成後，將在此顯示實際 JSON 資料。"}</pre></TabsContent></Tabs>{page?.has_more&&queried&&<div className="table-footer"><span>尚有更多資料；下載會自動合併所有分頁。</span><Button variant="outline" disabled={busy} onClick={()=>void query(queried,page.next_cursor!).catch(()=>{})}>下一頁</Button></div>}</section>
  <div className="source-note"><Server size={18}/><div><strong>{state.connected?"EC2 MySQL 資料庫已連線":"AWS EC2 尚未串接"}</strong><p>{state.connected?"查詢結果直接來自既有資料來源；連線是否正常將於查詢時確認。":"會員、設備與授權可以先行設定。完成 API 串接後，即可查詢與下載實際資料。"}</p></div><Button variant="ghost" onClick={()=>setSection("connection")}>查看串接方式</Button></div></>}
-  {section==="devices"&&admin&&<section className="panel"><div className="list-heading"><Input className="max-w-sm" placeholder="搜尋 ID、位置或備註" aria-label="搜尋設備" value={search} onChange={e=>setSearch(e.target.value)}/><div className="flex gap-2"><input id="csv-upload" type="file" accept=".csv" className="hidden" onChange={handleCsvUpload} />{selectedDevices.size > 0 && <><Button variant="secondary" onClick={()=>{setTransferDevice(null);setModal("transferBulk")}}><ArrowRightLeft size={16} className="mr-1"/>大量移轉 ({selectedDevices.size})</Button><Button variant="destructive" onClick={()=>{setConfirmation({action:"deviceDeleteBulk",ids:Array.from(selectedDevices),title:`刪除所選 ${selectedDevices.size} 台設備？`,description:`將一併刪除所選 ${selectedDevices.size} 台設備所有的「資料授權紀錄」與「位置追蹤紀錄」，且無法復原。確認刪除？`})}}><Trash2 size={16} className="mr-1"/>大量刪除 ({selectedDevices.size})</Button></>}<Button variant="secondary" onClick={()=>setModal("locationSync")}><CloudDownload size={16} className="mr-1"/>同步 Google 試算表</Button><Button variant="outline" onClick={()=>{setQrScanning(true);setModal("qrScanner")}}><QrCode size={16} className="mr-1"/>掃描</Button><Button variant="outline" onClick={()=>setModal("importCsv")}><Upload size={16} className="mr-1"/>匯入 CSV</Button><Button onClick={()=>{setEditDevice(null); setLiveQrId(""); setLiveQrUrl(""); setModal("device")}}><Plus size={16}/>建立 ID</Button></div></div>{!filtered.length?<Blank title={search?"沒有符合的設備":"建立第一個 ASLUNG ID"} description={search?"請嘗試其他關鍵字。":"建立設備 ID，並為會員指定資料權限。"}/>:<Table><TableHeader><TableRow><TableHead className="w-12 text-center font-semibold">序號</TableHead><TableHead><input type="checkbox" checked={selectedDevices.size === filtered.length && filtered.length > 0} onChange={e => { if(e.target.checked) setSelectedDevices(new Set(filtered.map(d=>d.id))); else setSelectedDevices(new Set()); }} /></TableHead><TableHead>ASLUNG ID</TableHead><TableHead>狀態</TableHead><TableHead>最後上線</TableHead><TableHead>目前位置</TableHead><TableHead>備註</TableHead><TableHead>授權會員</TableHead><TableHead>操作</TableHead></TableRow></TableHeader><TableBody>{filtered.map((d,idx)=><TableRow key={d.id}><TableCell className="text-center font-mono text-xs text-slate-500">{idx+1}</TableCell><TableCell><input type="checkbox" checked={selectedDevices.has(d.id)} onChange={e => { const s = new Set(selectedDevices); if(e.target.checked) s.add(d.id); else s.delete(d.id); setSelectedDevices(s); }} /></TableCell><TableCell className="mono font-semibold">{d.id}</TableCell><TableCell><select value={d.status||"DEPLOYED"} className={`text-xs px-2.5 py-1 rounded font-medium border cursor-pointer outline-none transition-colors ${d.status==="DEPLOYED"?"bg-emerald-50 text-emerald-800 border-emerald-200":d.status==="STANDBY"?"bg-amber-50 text-amber-800 border-amber-200 font-semibold":d.status==="MAINTENANCE"?"bg-orange-50 text-orange-800 border-orange-200":d.status==="RETIRED"?"bg-slate-100 text-slate-500 border-slate-200":"bg-red-50 text-red-700 border-red-200"}`} title="點擊可快速切換設備狀態" onChange={async e=>{const newStatus=e.target.value;setState(prev=>prev?{...prev,devices:prev.devices.map(item=>item.id===d.id?{...item,status:newStatus}:item)}:prev);await mutate({action:"deviceStatus",id:d.id,status:newStatus});}}><option value="DEPLOYED">使用中</option><option value="STANDBY">待命中</option><option value="MAINTENANCE">維修中</option><option value="RETIRED">已報廢</option><option value="LOST">遺失</option></select></TableCell><TableCell>{(() => { const r = (realtimeData||[]).find(x => x.aslung_id === d.id); if(!r) return <span className="text-slate-400">無資料</span>; const isOffline = Date.now()-new Date(r.timestamp).getTime()>86400000; return <span className={isOffline?"text-red-500":"text-green-600"}>{isOffline?"已離線":"連線中"}</span>; })()}</TableCell><TableCell>{(() => { const activeLoc = locations.find(l=>l.aslung_id===d.id&&l.active&&!l.end_time); if(activeLoc) return <span className="font-semibold text-slate-800">{activeLoc.lab_id}</span>; const locName = d.location || locations.find(l=>l.aslung_id===d.id)?.lab_id; if(locName) return <span className="text-slate-600 flex items-center gap-1.5" title={`最新紀錄地點：${locName}`}><span>{locName}</span><span className="text-[11px] text-slate-400 bg-slate-100 px-1 py-0.5 rounded font-normal">前次</span></span>; return <span className="text-slate-400">無</span>; })()}</TableCell><TableCell className="text-slate-500">{d.description||"—"}</TableCell><TableCell>{grants.filter(g=>g.device_id===d.id).length} 位</TableCell><TableCell><div className="flex gap-2"><Button variant="ghost" size="icon-xs" title="查看 / 列印 QR Code" onClick={()=>{setQrDevice(d);setModal("deviceQr")}}><QrCode size={15}/></Button><Button variant="ghost" size="icon-xs" title="編輯" onClick={()=>{setEditDevice(d); setLiveQrId(d.id); setModal("device")}}><Pencil size={15}/></Button><Button variant="outline" size="sm" onClick={()=>{setTransferDevice(d);setModal("transfer")}}><ArrowRightLeft size={14} className="mr-1"/>移轉位置</Button><Button variant="outline" size="sm" onClick={()=>{setGrantDevice(d.id);setModal("grant")}}><ShieldCheck size={14} className="mr-1"/>設定授權</Button><Button variant="ghost" size="icon-xs" title="刪除" className="text-red-500 hover:text-red-600 hover:bg-red-50 ml-1" onClick={()=>setConfirmation({action:"deviceDelete",id:d.id,title:"刪除此設備？",description:"將一併刪除此設備所有的「資料授權紀錄」與「位置追蹤紀錄」，且無法復原。確認刪除？"})}><Trash2 size={15}/></Button></div></TableCell></TableRow>)}</TableBody></Table>}</section>}
+  {section==="devices"&&admin&&<section className="panel">
+    <div className="px-6 pt-5 pb-3 border-b border-slate-100 flex items-center justify-between flex-wrap gap-3">
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <span className="text-xs font-semibold text-slate-500 mr-1 flex items-center gap-1"><Filter size={13}/>狀態篩選：</span>
+        {[
+          { key: "ALL", label: "全部", count: statusCounts.ALL, badgeClass: "bg-slate-200 text-slate-700", activeClass: "bg-slate-900 text-white shadow-xs border-slate-900" },
+          { key: "DEPLOYED", label: "使用中", count: statusCounts.DEPLOYED, badgeClass: "bg-emerald-100 text-emerald-800", activeClass: "bg-emerald-700 text-white shadow-xs border-emerald-800" },
+          { key: "STANDBY", label: "待命中", count: statusCounts.STANDBY, badgeClass: "bg-amber-100 text-amber-800", activeClass: "bg-amber-600 text-white shadow-xs border-amber-700" },
+          { key: "MAINTENANCE", label: "維修中", count: statusCounts.MAINTENANCE, badgeClass: "bg-orange-100 text-orange-800", activeClass: "bg-orange-600 text-white shadow-xs border-orange-700" },
+          { key: "RETIRED", label: "已報廢", count: statusCounts.RETIRED, badgeClass: "bg-slate-200 text-slate-700", activeClass: "bg-slate-600 text-white shadow-xs border-slate-700" },
+          { key: "LOST", label: "遺失", count: statusCounts.LOST, badgeClass: "bg-red-100 text-red-800", activeClass: "bg-red-600 text-white shadow-xs border-red-700" },
+        ].map(item => {
+          const isSelected = deviceStatusFilter === item.key;
+          return (
+            <button
+              key={item.key}
+              type="button"
+              onClick={() => setDeviceStatusFilter(item.key)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all flex items-center gap-1.5 cursor-pointer ${
+                isSelected
+                  ? item.activeClass
+                  : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50 hover:border-slate-300"
+              }`}
+            >
+              <span>{item.label}</span>
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${isSelected ? "bg-white/20 text-white" : item.badgeClass}`}>
+                {item.count}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      <div className="text-xs text-slate-500 font-medium">
+        顯示 <span className="font-bold text-slate-800">{filtered.length}</span> / {devices.length} 台設備
+      </div>
+    </div>
+    <div className="list-heading flex-wrap gap-2.5">
+      <div className="flex items-center gap-2 flex-wrap flex-1 min-w-[280px]">
+        <Input className="w-48 h-9 text-xs bg-white" placeholder="搜尋 ID、位置或備註..." aria-label="搜尋設備" value={search} onChange={e=>setSearch(e.target.value)}/>
+        <select value={deviceOnlineFilter} onChange={e=>setDeviceOnlineFilter(e.target.value)} className="h-9 px-2.5 text-xs bg-white border border-slate-200 rounded-md outline-none text-slate-700 font-medium cursor-pointer hover:border-slate-300 transition-colors" title="篩選連線健康狀態">
+          <option value="ALL">全部連線狀態</option>
+          <option value="ONLINE">🟢 連線中 (&lt; 24h)</option>
+          <option value="OFFLINE">🔴 已離線 (&gt; 24h)</option>
+          <option value="NODATA">⚪ 無資料 (未回報)</option>
+        </select>
+        <select value={deviceLocationFilter} onChange={e=>setDeviceLocationFilter(e.target.value)} className="h-9 px-2.5 text-xs bg-white border border-slate-200 rounded-md outline-none text-slate-700 font-medium cursor-pointer hover:border-slate-300 transition-colors max-w-[150px] truncate" title="篩選擺放地點">
+          <option value="ALL">全部地點</option>
+          <option value="UNASSIGNED">⚠️ 未分配地點</option>
+          {availableLocations.map(loc=><option key={loc} value={loc}>{loc}</option>)}
+        </select>
+        <select value={deviceGrantFilter} onChange={e=>setDeviceGrantFilter(e.target.value)} className="h-9 px-2.5 text-xs bg-white border border-slate-200 rounded-md outline-none text-slate-700 font-medium cursor-pointer hover:border-slate-300 transition-colors" title="篩選會員授權情況">
+          <option value="ALL">全部授權</option>
+          <option value="GRANTED">🛡️ 已授權會員</option>
+          <option value="UNGRANTED">🔒 尚未授權</option>
+        </select>
+        {hasActiveDeviceFilters && (
+          <Button type="button" variant="ghost" size="sm" className="h-9 px-2.5 text-xs text-slate-500 hover:text-slate-800 hover:bg-slate-100" onClick={resetDeviceFilters} title="清除所有篩選條件">
+            <RotateCcw size={13} className="mr-1" /> 重設
+          </Button>
+        )}
+      </div>
+      <div className="flex gap-2 items-center flex-wrap">
+        <input id="csv-upload" type="file" accept=".csv" className="hidden" onChange={handleCsvUpload} />
+        {selectedDevices.size > 0 && <><Button variant="secondary" onClick={()=>{setTransferDevice(null);setModal("transferBulk")}}><ArrowRightLeft size={16} className="mr-1"/>大量移轉 ({selectedDevices.size})</Button><Button variant="destructive" onClick={()=>{setConfirmation({action:"deviceDeleteBulk",ids:Array.from(selectedDevices),title:`刪除所選 ${selectedDevices.size} 台設備？`,description:`將一併刪除所選 ${selectedDevices.size} 台設備所有的「資料授權紀錄」與「位置追蹤紀錄」，且無法復原。確認刪除？`})}}><Trash2 size={16} className="mr-1"/>大量刪除 ({selectedDevices.size})</Button></>}
+        <Button variant="secondary" onClick={()=>setModal("locationSync")}><CloudDownload size={16} className="mr-1"/>同步 Google 試算表</Button>
+        <Button variant="outline" onClick={()=>{setQrScanning(true);setModal("qrScanner")}}><QrCode size={16} className="mr-1"/>掃描</Button>
+        <Button variant="outline" onClick={()=>setModal("importCsv")}><Upload size={16} className="mr-1"/>匯入 CSV</Button>
+        <Button onClick={()=>{setEditDevice(null); setLiveQrId(""); setLiveQrUrl(""); setModal("device")}}><Plus size={16}/>建立 ID</Button>
+      </div>
+    </div>
+    {!filtered.length?<div className="p-8 text-center"><Blank title={hasActiveDeviceFilters?"沒有符合篩選條件的設備":"建立第一個 ASLUNG ID"} description={hasActiveDeviceFilters?"目前設定的狀態或搜尋條件下查無設備，請嘗試調整條件或點擊下方按鈕重設。":"建立設備 ID，並為會員指定資料權限。"}/>{hasActiveDeviceFilters&&<div className="mt-4"><Button variant="outline" size="sm" onClick={resetDeviceFilters}><RotateCcw size={14} className="mr-1.5"/>重設所有篩選</Button></div>}</div>:<Table><TableHeader><TableRow><TableHead className="w-12 text-center font-semibold">序號</TableHead><TableHead><input type="checkbox" checked={selectedDevices.size === filtered.length && filtered.length > 0} onChange={e => { if(e.target.checked) setSelectedDevices(new Set(filtered.map(d=>d.id))); else setSelectedDevices(new Set()); }} /></TableHead><TableHead>ASLUNG ID</TableHead><TableHead>狀態</TableHead><TableHead>最後上線</TableHead><TableHead>目前位置</TableHead><TableHead>備註</TableHead><TableHead>授權會員</TableHead><TableHead>操作</TableHead></TableRow></TableHeader><TableBody>{filtered.map((d,idx)=><TableRow key={d.id}><TableCell className="text-center font-mono text-xs text-slate-500">{idx+1}</TableCell><TableCell><input type="checkbox" checked={selectedDevices.has(d.id)} onChange={e => { const s = new Set(selectedDevices); if(e.target.checked) s.add(d.id); else s.delete(d.id); setSelectedDevices(s); }} /></TableCell><TableCell className="mono font-semibold">{d.id}</TableCell><TableCell><select value={d.status||"DEPLOYED"} className={`text-xs px-2.5 py-1 rounded font-medium border cursor-pointer outline-none transition-colors ${d.status==="DEPLOYED"?"bg-emerald-50 text-emerald-800 border-emerald-200":d.status==="STANDBY"?"bg-amber-50 text-amber-800 border-amber-200 font-semibold":d.status==="MAINTENANCE"?"bg-orange-50 text-orange-800 border-orange-200":d.status==="RETIRED"?"bg-slate-100 text-slate-500 border-slate-200":"bg-red-50 text-red-700 border-red-200"}`} title="點擊可快速切換設備狀態" onChange={async e=>{const newStatus=e.target.value;setState(prev=>prev?{...prev,devices:prev.devices.map(item=>item.id===d.id?{...item,status:newStatus}:item)}:prev);await mutate({action:"deviceStatus",id:d.id,status:newStatus});}}><option value="DEPLOYED">使用中</option><option value="STANDBY">待命中</option><option value="MAINTENANCE">維修中</option><option value="RETIRED">已報廢</option><option value="LOST">遺失</option></select></TableCell><TableCell>{(() => { const r = (realtimeData||[]).find(x => x.aslung_id === d.id); if(!r) return <span className="text-slate-400">無資料</span>; const isOffline = Date.now()-new Date(r.timestamp).getTime()>86400000; return <span className={isOffline?"text-red-500":"text-green-600"}>{isOffline?"已離線":"連線中"}</span>; })()}</TableCell><TableCell>{(() => { const activeLoc = locations.find(l=>l.aslung_id===d.id&&l.active&&!l.end_time); if(activeLoc) return <span className="font-semibold text-slate-800">{activeLoc.lab_id}</span>; const locName = d.location || locations.find(l=>l.aslung_id===d.id)?.lab_id; if(locName) return <span className="text-slate-600 flex items-center gap-1.5" title={`最新紀錄地點：${locName}`}><span>{locName}</span><span className="text-[11px] text-slate-400 bg-slate-100 px-1 py-0.5 rounded font-normal">前次</span></span>; return <span className="text-slate-400">無</span>; })()}</TableCell><TableCell className="text-slate-500">{d.description||"—"}</TableCell><TableCell>{grants.filter(g=>g.device_id===d.id).length} 位</TableCell><TableCell><div className="flex gap-2"><Button variant="ghost" size="icon-xs" title="查看 / 列印 QR Code" onClick={()=>{setQrDevice(d);setModal("deviceQr")}}><QrCode size={15}/></Button><Button variant="ghost" size="icon-xs" title="編輯" onClick={()=>{setEditDevice(d); setLiveQrId(d.id); setModal("device")}}><Pencil size={15}/></Button><Button variant="outline" size="sm" onClick={()=>{setTransferDevice(d);setModal("transfer")}}><ArrowRightLeft size={14} className="mr-1"/>移轉位置</Button><Button variant="outline" size="sm" onClick={()=>{setGrantDevice(d.id);setModal("grant")}}><ShieldCheck size={14} className="mr-1"/>設定授權</Button><Button variant="ghost" size="icon-xs" title="刪除" className="text-red-500 hover:text-red-600 hover:bg-red-50 ml-1" onClick={()=>setConfirmation({action:"deviceDelete",id:d.id,title:"刪除此設備？",description:"將一併刪除此設備所有的「資料授權紀錄」與「位置追蹤紀錄」，且無法復原。確認刪除？"})}><Trash2 size={15}/></Button></div></TableCell></TableRow>)}</TableBody></Table>}</section>}
  {section==="members"&&admin&&<section className="panel"><div className="list-heading"><h2>會員帳號 <span className="count">{members.length}</span></h2><Button onClick={()=>{setEditMember(null);setModal("member")}}><Plus size={16}/>新增會員</Button></div><Table><TableHeader><TableRow><TableHead>會員</TableHead><TableHead>帳號 (暱稱)</TableHead><TableHead>Email</TableHead><TableHead>角色</TableHead><TableHead>狀態</TableHead><TableHead>操作</TableHead></TableRow></TableHeader><TableBody>{members.map(m=><TableRow key={m.email}><TableCell className="font-semibold">{m.name}</TableCell><TableCell className="font-medium">{m.nickname || <span className="text-slate-400">-</span>}</TableCell><TableCell>{m.email.endsWith("@local.aslung")?<span className="text-slate-400">無</span>:m.email}</TableCell><TableCell>{m.role==="admin"?"管理員":"會員"}</TableCell><TableCell><span className={m.active?"status ok":"status pending"}>{m.active?"已開通":"已停用"}</span></TableCell><TableCell><div className="flex gap-2"><Button variant="ghost" size="icon-xs" title="編輯" onClick={()=>{setEditMember(m); setModal("member")}}><Pencil size={15}/></Button>{m.email !== state?.me.email && <Button variant="outline" size="sm" onClick={()=>setConfirmation({action:"memberRole",email:m.email,role:m.role==="admin"?"member":"admin",title:m.role==="admin"?"降為一般會員？":"升級為管理員？",description:m.role==="admin"?"此帳號將無法再管理系統。":"此帳號將能管理系統設定與其他帳號。"})}>{m.role==="admin"?"降為會員":"設為管理員"}</Button>}{m.role==="member"&&<Button variant="outline" size="sm" onClick={()=>setConfirmation({action:"memberStatus",email:m.email,active:!m.active,title:m.active?"停用會員？":"恢復會員？",description:m.active?"此會員將無法查詢或下載資料，既有授權仍保留。":"此會員可重新使用已指派的設備授權。"})}>{m.active?"停用":"恢復"}</Button>}</div></TableCell></TableRow>)}</TableBody></Table><p className="panel-footnote">管理員建立帳號後，請自行將帳號暱稱與初始密碼交給會員；此操作不會寄送邀請信。會員可於登入後變更密碼。</p></section>}
   {section==="locations"&&admin&&(()=>{const filteredLocations=locations.filter(l=>(l.aslung_id+" "+l.lab_id+" "+(l.maintainer||"")).toLowerCase().includes(search.toLowerCase()));return <section className="panel"><div className="list-heading"><div className="flex items-center gap-4"><h2>設備追蹤 <span className="count">{locations.length}</span></h2><Input className="w-64 h-9 bg-white" placeholder="搜尋 ID、地點或負責人..." value={search} onChange={e=>setSearch(e.target.value)} /></div><div className="flex gap-2"><input id="loc-csv-upload" type="file" accept=".csv,.tsv,.txt" className="hidden" onChange={handleLocationCsvUpload} />{selectedLocations.size > 0 && <Button variant="destructive" onClick={()=>{setConfirmation({action:"locationDeleteBulk",ids:Array.from(selectedLocations),title:`刪除所選 ${selectedLocations.size} 筆追蹤紀錄？`,description:`將一併刪除所選 ${selectedLocations.size} 筆設備擺放位置歷史紀錄，且無法復原。確認刪除？`})}}><Trash2 size={16} className="mr-1"/>大量刪除 ({selectedLocations.size})</Button>}<Button variant="secondary" onClick={()=>setModal("locationSync")}><CloudDownload size={16} className="mr-1"/>同步 Google 試算表</Button><Button variant="outline" onClick={()=>setModal("locationImport")}><FileSpreadsheet size={16} className="mr-1"/>貼上 / 匯入試算表</Button><Button onClick={()=>{setEditLocation(null);setModal("location")}}><Plus size={16}/>新增紀錄</Button></div></div>{!filteredLocations.length?<Blank title={search?"沒有符合的追蹤紀錄":"尚無位置追蹤紀錄"} description={search?"請嘗試其他關鍵字。":"新增第一筆設備擺放位置。"} icon={MapPin}/>:<Table><TableHeader><TableRow><TableHead className="w-12 text-center font-semibold">序號</TableHead><TableHead><input type="checkbox" checked={selectedLocations.size === filteredLocations.length && filteredLocations.length > 0} onChange={e => { if(e.target.checked) setSelectedLocations(new Set(filteredLocations.map(l=>l.id))); else setSelectedLocations(new Set()); }} /></TableHead><TableHead>Lab ID (地點)</TableHead><TableHead>ASLUNG ID</TableHead><TableHead>負責人 / 維護者</TableHead><TableHead>開始時間</TableHead><TableHead>結束時間</TableHead><TableHead>狀態</TableHead><TableHead>操作</TableHead></TableRow></TableHeader><TableBody>{filteredLocations.map((l,idx)=><TableRow key={l.id}><TableCell className="text-center font-mono text-xs text-slate-500">{idx+1}</TableCell><TableCell><input type="checkbox" checked={selectedLocations.has(l.id)} onChange={e => { const s = new Set(selectedLocations); if(e.target.checked) s.add(l.id); else s.delete(l.id); setSelectedLocations(s); }} /></TableCell><TableCell className="font-semibold">{l.lab_id}</TableCell><TableCell className="mono">{l.aslung_id}</TableCell><TableCell>{(()=>{const m=maintainers.find(x=>x.name===l.maintainer);if(!l.maintainer)return <span className="text-slate-400">—</span>;if(!m)return <span className="font-medium text-slate-700">{l.maintainer}</span>;return <div className="flex items-center gap-1.5"><span className="font-semibold text-slate-800">{m.name}</span>{m.email&&<a href={`mailto:${m.email}`} title={`寄信給 ${m.name} (${m.email})`} className="text-teal-600 hover:text-teal-800 transition-colors inline-flex items-center"><Mail size={13}/></a>}</div>;})()}</TableCell><TableCell>{localTime(l.start_time)}</TableCell><TableCell>{l.end_time?localTime(l.end_time):"—"}</TableCell><TableCell><span className={l.active?"status ok":"status pending"}>{l.active?"使用中":"已移出"}</span></TableCell><TableCell><div className="flex gap-2"><Button size="sm" variant="outline" onClick={()=>{setEditLocation(l); setModal("location")}}>編輯</Button><Button size="sm" variant="outline" onClick={()=>{setConfirmation({action:"locationDelete",id:l.id,title:"刪除此紀錄？",description:"確認後將無法復原。"})}}>刪除</Button></div></TableCell></TableRow>)}</TableBody></Table>}</section>})()}
   {section==="labs"&&admin&&<LabsView labs={labs} locations={locations} search={search} setSearch={setSearch} selectedLabs={selectedLabs} setSelectedLabs={setSelectedLabs} setEditLab={setEditLab} setModal={setModal} setConfirmation={setConfirmation} />}
