@@ -21,7 +21,35 @@ export default function LanguageSwitcher() {
     addScript.async = true;
     document.body.appendChild(addScript);
     
+    const ensureCleanStyles = () => {
+      if (!document.getElementById("gt-clean-style")) {
+        const style = document.createElement("style");
+        style.id = "gt-clean-style";
+        style.innerHTML = `
+          html body .goog-text-highlight,
+          html body font.goog-text-highlight,
+          html body font[style*="background-color"],
+          html body font,
+          html body font:hover {
+            background-color: transparent !important;
+            background: transparent !important;
+            box-shadow: none !important;
+            -webkit-box-shadow: none !important;
+            border: none !important;
+            color: inherit !important;
+          }
+          #goog-gt-tt, .goog-tooltip, .goog-te-balloon-frame {
+            display: none !important;
+            visibility: hidden !important;
+          }
+        `;
+        document.head.appendChild(style);
+      }
+    };
+    ensureCleanStyles();
+
     (window as any).googleTranslateElementInit = () => {
+      ensureCleanStyles();
       new (window as any).google.translate.TranslateElement(
         { pageLanguage: "zh-TW", includedLanguages: "en,zh-TW", autoDisplay: false },
         "google_translate_element"
