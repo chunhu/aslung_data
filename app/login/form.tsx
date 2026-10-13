@@ -1,6 +1,6 @@
 "use client";
-import {useState} from "react";
-import {Activity,LockKeyhole} from "lucide-react";
+import {useState, useEffect} from "react";
+import {Activity,LockKeyhole,Eye} from "lucide-react";
 import {Button} from "@/components/ui/button";
 import {Input} from "@/components/ui/input";
 import {Label} from "@/components/ui/label";
@@ -9,6 +9,10 @@ import LanguageSwitcher from "@/components/LanguageSwitcher";
 
 export default function LoginForm(){
  const [error,setError]=useState(""),[busy,setBusy]=useState(false);
+ const [stats,setStats]=useState<{totalViews?:number;todayViews?:number}|null>(null);
+ useEffect(()=>{
+   fetch("/api/stats").then(r=>r.json()).then(d=>setStats(d)).catch(()=>{});
+ },[]);
  return (
   <main className="min-h-screen relative flex items-center justify-center p-6 bg-[#102d40]">
    <div className="absolute top-5 right-6 flex items-center gap-3 z-10">
@@ -46,6 +50,12 @@ export default function LoginForm(){
       <LockKeyhole size={15} className="shrink-0 mt-1"/>
       帳號由管理員建立。如忘記密碼，請聯絡管理員重設。
     </p>
+    {stats && (
+      <div className="mt-6 pt-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-400">
+        <span className="flex items-center gap-1.5"><Eye size={13} className="text-teal-600"/> 網站累計瀏覽：<strong className="text-slate-600 font-semibold">{stats.totalViews?.toLocaleString() ?? 0}</strong> 次</span>
+        <span>今日：<strong className="text-slate-600 font-semibold">{stats.todayViews ?? 0}</strong> 次</span>
+      </div>
+    )}
    </section>
   </main>
  );

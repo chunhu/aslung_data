@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
-import {getStore} from "./store.mjs";
+import {getStore, recordSiteVisit, getSiteStats} from "./store.mjs";
+export {recordSiteVisit, getSiteStats};
 import {getSessionUser} from "./auth";
 export class AppError extends Error { constructor(public status:number,message:string){super(message)} }
 export function db(){return getStore();}

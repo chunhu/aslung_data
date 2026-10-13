@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import {randomUUID} from "node:crypto";
 import {hashPassword,validPassword} from "@/lib/passwords.mjs";
-import {admin,identity,db,config,fail,writeGuard,required,instant,AppError,syncDeviceStatusesAndLocations} from "@/lib/server";
+import {admin,identity,db,config,fail,writeGuard,required,instant,AppError,syncDeviceStatusesAndLocations,getSiteStats} from "@/lib/server";
 
 export const runtime="nodejs";
 export const dynamic="force-dynamic";
@@ -160,10 +160,11 @@ export async function GET(){try{
    alertSettings.realtime_interval_secs = 60;
  }
 
+ const siteStats=getSiteStats();
  return Response.json({
    me:{email:m.email,name:m.name,role:m.role,login_count:m.login_count||0,last_login_at:m.last_login_at||null},
    devices,members,grants,locations,tokens,files,fileGrants,
-   labs,maintainers,alertSettings,alertChecks,alertLogs,grantRequests,totalLogins,
+   labs,maintainers,alertSettings,alertChecks,alertLogs,grantRequests,totalLogins,siteStats,
    connected:!!(config().url&&config().token)
  },{headers:{"Cache-Control":"no-store"}});
 }catch(e){return fail(e)}}
