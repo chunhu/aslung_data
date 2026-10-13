@@ -1,9 +1,10 @@
 "use client";
+import JSZip from "jszip";
 import {useState,useEffect,useCallback,useRef,useMemo} from "react";
 import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
 import LanguageSwitcher from "@/components/LanguageSwitcher";
 import FontSizeAdjuster from "@/components/FontSizeAdjuster";
-import {Activity,Database,Users,ShieldCheck,Download,Plus,RefreshCw,Code2,Server,LockKeyhole,FileJson,LogOut,LogIn,CheckCircle2,Unplug,Search,Trash2, MapPin, Key, RadioTower, Upload, Pencil, Check, ChevronsUpDown, ArrowRightLeft, QrCode, FileSpreadsheet, CloudDownload, FolderDown, FileText, Eye, Building2, UserCheck, BellRing, Mail, Clock, KeyRound, Filter, RotateCcw, X} from "lucide-react";
+import {Activity,Database,Users,ShieldCheck,Download,Plus,RefreshCw,Code2,Server,LockKeyhole,FileJson,LogOut,LogIn,CheckCircle2,Unplug,Search,Trash2, MapPin, Key, RadioTower, Upload, Pencil, Check, ChevronsUpDown, ArrowRightLeft, QrCode, FileSpreadsheet, CloudDownload, FolderDown, FileText, Eye, Building2, UserCheck, BellRing, Mail, Clock, KeyRound, Filter, RotateCcw, X, AlertTriangle} from "lucide-react";
 import {Button} from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -13,7 +14,7 @@ import {Label} from "@/components/ui/label";
 import {Textarea} from "@/components/ui/textarea";
 import {Tabs,TabsList,TabsTrigger,TabsContent} from "@/components/ui/tabs";
 import {Table,TableHeader,TableRow,TableHead,TableBody,TableCell} from "@/components/ui/table";
-import {Dialog,DialogContent,DialogHeader,DialogTitle,DialogDescription} from "@/components/ui/dialog";
+import {Dialog,DialogContent,DialogHeader,DialogTitle,DialogDescription,DialogFooter} from "@/components/ui/dialog";
 import {AlertDialog,AlertDialogContent,AlertDialogHeader,AlertDialogTitle,AlertDialogDescription,AlertDialogFooter,AlertDialogCancel,AlertDialogAction} from "@/components/ui/alert-dialog";
 import {Select,SelectTrigger,SelectValue,SelectContent,SelectItem} from "@/components/ui/select";
 import {SidebarProvider,Sidebar,SidebarHeader,SidebarContent,SidebarFooter,SidebarMenu,SidebarMenuItem,SidebarMenuButton,SidebarTrigger} from "@/components/ui/sidebar";
@@ -25,7 +26,23 @@ import MaintainersView, { Maintainer } from "@/components/MaintainersView";
 import AlertsView, { AlertSettings, AlertLog, AlertCheck } from "@/components/AlertsView";
 import ApiDocsView from "@/components/ApiDocsView";
 
-type Device={id:string;name:string;location:string;description:string;status:string;start?:string;end?:string;is_granted?:boolean;is_maintained?:boolean;grant_source?:string;grant_lab_id?:string;grant_lab_name?:string};
+type TrackingRange = { start: string; end: string | null; active: boolean };
+type Device = {
+  id: string;
+  name: string;
+  location: string;
+  description: string;
+  status: string;
+  start?: string;
+  end?: string;
+  is_granted?: boolean;
+  is_maintained?: boolean;
+  grant_source?: string;
+  grant_lab_id?: string;
+  grant_lab_name?: string;
+  tracking_ranges?: TrackingRange[];
+  is_active_at_lab?: boolean;
+};
 type Member={email:string;name:string;nickname?:string|null;role:string;active:number;login_count?:number;last_login_at?:string|null};
 type Grant={id:number;grant_type?:string;device_id:string|null;lab_id:string|null;email:string;start:string;end:string|null;location_name?:string;city_name?:string;town_name?:string;lab_device_count?:number};
 type DeviceLocation={id:number;lab_id:string;aslung_id:string;maintainer?:string|null;start_time:string;end_time:string|null;active:number};
@@ -91,6 +108,26 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
  const [state,setState]=useState<State|null>(null),[error,setError]=useState(""),[loading,setLoading]=useState(signedIn),[section,setSection]=useState("data"),[modal,setModal]=useState(""),[busy,setBusy]=useState(false),[confirmation,setConfirmation]=useState<any>(null);
  const [id,setId]=useState(""),[start,setStart]=useState(""),[end,setEnd]=useState(""),[page,setPage]=useState<Page|null>(null),[queried,setQueried]=useState<{id:string;start:string;end:string}|null>(null),[search,setSearch]=useState("");
  const [grantDevice,setGrantDevice]=useState(""),[grantEmail,setGrantEmail]=useState(""),[grantId,setGrantId]=useState<number|null>(null),[grantType,setGrantType]=useState<"device"|"lab">("lab"),[grantLab,setGrantLab]=useState("");
+  const [clippingWarning, setClippingWarning] = useState<{
+    device: Device;
+    original: { start: string; end: string };
+    clipped: { start: string; end: string };
+    actionType: "query" | "download";
+    format?: string;
+  } | null>(null);
+
+  const [batchModalOpen, setBatchModalOpen] = useState(false);
+  const [batchRunning, setBatchRunning] = useState(false);
+  const [batchProgress, setBatchProgress] = useState(0);
+  const [batchLogs, setBatchLogs] = useState<Array<{
+    id: string;
+    status: "waiting" | "fetching" | "success" | "skipped" | "error";
+    message?: string;
+    count?: number;
+    validRange?: string;
+  }>>([]);
+  const [batchBlobUrl, setBatchBlobUrl] = useState<string>("");
+  const [batchZipFilename, setBatchZipFilename] = useState<string>("");
   const [tz, setTz] = useState<string>("Asia/Taipei");
   const [tzOpen, setTzOpen] = useState(false);
   const [editDevice, setEditDevice] = useState<any>(null);
@@ -374,7 +411,243 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
   async function mutate(p:any){setBusy(true);try{await request("/api/manage",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(p)});await load();setModal("");setConfirmation(null);if(p?.action==="deviceDeleteBulk")setSelectedDevices(new Set());if(p?.action==="deviceDelete")setSelectedDevices(prev=>{const s=new Set(prev);s.delete(p.id);return s;});if(p?.action==="locationDeleteBulk")setSelectedLocations(new Set());if(p?.action==="locationDelete")setSelectedLocations(prev=>{const s=new Set(prev);s.delete(Number(p.id));return s;});if(p?.action==="labDeleteBulk")setSelectedLabs(new Set());if(p?.action==="labDelete")setSelectedLabs(prev=>{const s=new Set(prev);s.delete(p.id);return s;});if(p?.action==="maintainerDeleteBulk")setSelectedMaintainers(new Set());if(p?.action==="maintainerDelete")setSelectedMaintainers(prev=>{const s=new Set(prev);s.delete(p.name);return s;});if(p?.action==="alertLogDeleteBulk"||p?.action==="alertLogClearAll")setSelectedAlertLogs(new Set());if(p?.action==="alertLogDelete")setSelectedAlertLogs(prev=>{const s=new Set(prev);s.delete(Number(p.id));return s;});if(p?.action==="alertCheckDeleteBulk"||p?.action==="alertCheckClearAll")setSelectedAlertChecks(new Set());if(p?.action==="alertCheckDelete")setSelectedAlertChecks(prev=>{const s=new Set(prev);s.delete(Number(p.id));return s;});if(p?.action==="memberDeleteBulk")setSelectedMembers(new Set());if(p?.action==="memberDelete")setSelectedMembers(prev=>{const s=new Set(prev);s.delete(p.email);return s;});toast.success("已儲存變更");return true;}catch(e){toast.error((e as Error).message);return false;}finally{setBusy(false)}}
  async function query(params:{id:string;start:string;end:string},cursor=""){setBusy(true);try{const q=new URLSearchParams({aslung_id:params.id,start:params.start,end:params.end,cursor});const p=await request("/api/data?"+q);setPage(p);setQueried(params);return {count:p.data.length,has_more:p.has_more};}catch(e){setPage(null);setQueried(null);toast.error((e as Error).message);throw e;}finally{setBusy(false)}}
  function parameters(){if(!id||!start||!end)throw new Error("請選擇 ASLUNG ID 和完整查詢期間。");const s=zoned(start),e=zoned(end);if(s>e)throw new Error("結束時間必須晚於開始時間。");return {id,start:s,end:e};}
- async function download(format:string){setBusy(true);try{const p=parameters(),q=new URLSearchParams({aslung_id:p.id,start:p.start,end:p.end,format,download:"1"}),r=await fetch("/api/data?"+q);if(!r.ok)throw new Error((await r.json() as any).error);const href=URL.createObjectURL(await r.blob()),a=document.createElement("a");a.href=href;a.download=p.id+"_"+start.slice(0,10)+"_"+end.slice(0,10)+"."+format;a.click();setTimeout(()=>URL.revokeObjectURL(href),1000);toast.success("下載完成");}catch(e){toast.error((e as Error).message)}finally{setBusy(false)}}
+   const checkDeviceRange = useCallback((dev: Device, qStartStr: string, qEndStr: string) => {
+    if (!dev || !dev.tracking_ranges || dev.tracking_ranges.length === 0) {
+      return { status: "OK" as const, validStart: zoned(qStartStr), validEnd: zoned(qEndStr) };
+    }
+    const qS = new Date(zoned(qStartStr)).getTime();
+    const qE = new Date(zoned(qEndStr)).getTime();
+
+    const overlaps: Array<{ start: string; end: string }> = [];
+    for (const tr of dev.tracking_ranges) {
+      const rS = new Date(tr.start).getTime();
+      const rE = tr.end ? new Date(tr.end).getTime() : Infinity;
+
+      if (qS <= rE && qE >= rS) {
+        const overlapStart = Math.max(qS, rS);
+        const overlapEnd = rE === Infinity ? qE : Math.min(qE, rE);
+        if (overlapStart <= overlapEnd) {
+          overlaps.push({
+            start: new Date(overlapStart).toISOString(),
+            end: new Date(overlapEnd).toISOString()
+          });
+        }
+      }
+    }
+
+    if (overlaps.length === 0) {
+      return { status: "OUT_OF_RANGE" as const };
+    }
+
+    const best = overlaps[overlaps.length - 1];
+    const isPartiallyOutOfRange = new Date(best.start).getTime() > qS || new Date(best.end).getTime() < qE;
+
+    if (isPartiallyOutOfRange) {
+      return {
+        status: "PARTIAL" as const,
+        clippedStart: best.start,
+        clippedEnd: best.end
+      };
+    }
+
+    return { status: "OK" as const, validStart: zoned(qStartStr), validEnd: zoned(qEndStr) };
+  }, [zoned]);
+
+  async function executeDirectDownload(deviceId: string, sIso: string, eIso: string, format: string) {
+    setBusy(true);
+    try {
+      const q = new URLSearchParams({ aslung_id: deviceId, start: sIso, end: eIso, format, download: "1" });
+      const r = await fetch("/api/data?" + q);
+      if (!r.ok) throw new Error((await r.json() as any).error);
+      const href = URL.createObjectURL(await r.blob());
+      const a = document.createElement("a");
+      a.href = href;
+      a.download = deviceId + "_" + sIso.slice(0, 10) + "_" + eIso.slice(0, 10) + "." + format;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(href), 1000);
+      toast.success("下載完成");
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function handleExecuteQuery() {
+    if (id === "__ALL__") {
+      toast.info("全部授權設備僅支援批次打包下載。請點選下方「打包下載」按鈕。");
+      return;
+    }
+    try {
+      const p = parameters();
+      if (chosen) {
+        const check = checkDeviceRange(chosen, start, end);
+        if (check.status === "OUT_OF_RANGE") {
+          toast.error(`設備 ${chosen.id} 在您所選期間未擺放於該站點。請重新選擇在站期間。`);
+          return;
+        }
+        if (check.status === "PARTIAL") {
+          const localS = formatInTimeZone(new Date(check.clippedStart), tz, "yyyy-MM-dd'T'HH:mm");
+          const localE = formatInTimeZone(new Date(check.clippedEnd), tz, "yyyy-MM-dd'T'HH:mm");
+          setClippingWarning({
+            device: chosen,
+            original: { start, end },
+            clipped: { start: localS, end: localE },
+            actionType: "query"
+          });
+          return;
+        }
+      }
+      void query(p).catch(() => {});
+    } catch (e: any) {
+      toast.error(e.message);
+    }
+  }
+
+  function handleExecuteDownload(format: string) {
+    if (id === "__ALL__") {
+      void startBatchDownload(format);
+      return;
+    }
+    try {
+      const p = parameters();
+      if (chosen) {
+        const check = checkDeviceRange(chosen, start, end);
+        if (check.status === "OUT_OF_RANGE") {
+          toast.error(`設備 ${chosen.id} 在您所選期間未擺放於該站點。請重新選擇在站期間。`);
+          return;
+        }
+        if (check.status === "PARTIAL") {
+          const localS = formatInTimeZone(new Date(check.clippedStart), tz, "yyyy-MM-dd'T'HH:mm");
+          const localE = formatInTimeZone(new Date(check.clippedEnd), tz, "yyyy-MM-dd'T'HH:mm");
+          setClippingWarning({
+            device: chosen,
+            original: { start, end },
+            clipped: { start: localS, end: localE },
+            actionType: "download",
+            format
+          });
+          return;
+        }
+      }
+      void download(format);
+    } catch (e: any) {
+      toast.error(e.message);
+    }
+  }
+
+  async function startBatchDownload(format: string) {
+    if (!start || !end) {
+      toast.error("請選擇完整開始時間與結束時間。");
+      return;
+    }
+    const sIso = zoned(start);
+    const eIso = zoned(end);
+    if (sIso > eIso) {
+      toast.error("結束時間必須晚於開始時間。");
+      return;
+    }
+    if (new Date(eIso).getTime() - new Date(sIso).getTime() > 31 * 86400000) {
+      toast.error("為維持效能，批次下載區間不可超過 31 天。請縮短日期範圍。");
+      return;
+    }
+    if (!devices.length) {
+      toast.error("尚無可存取的設備。");
+      return;
+    }
+
+    setBatchModalOpen(true);
+    setBatchRunning(true);
+    setBatchProgress(0);
+    setBatchBlobUrl("");
+    setBatchZipFilename("");
+
+    const initialLogs = devices.map(d => ({
+      id: d.id,
+      status: "waiting" as const,
+      message: d.description || d.name || ""
+    }));
+    setBatchLogs(initialLogs);
+
+    const zip = new JSZip();
+    let manifestText = "==================================================\r\n";
+    manifestText += "  ASLUNG 設備資料批次匯出清單報告 (Manifest)\r\n";
+    manifestText += "==================================================\r\n";
+    manifestText += `匯出時間：${localTime(new Date().toISOString())}\r\n`;
+    manifestText += `使用者帳號：${state?.me.email} (${state?.me.name})\r\n`;
+    manifestText += `所選查詢區間：${start} ～ ${end}\r\n`;
+    manifestText += `匯出格式：${format.toUpperCase()}\r\n\r\n`;
+    manifestText += "設備匯出明細：\r\n";
+
+    let successCount = 0;
+    let skippedCount = 0;
+
+    for (let i = 0; i < devices.length; i++) {
+      const dev = devices[i];
+      setBatchLogs(prev => prev.map((l, idx) => idx === i ? { ...l, status: "fetching" } : l));
+
+      const check = checkDeviceRange(dev, start, end);
+      if (check.status === "OUT_OF_RANGE") {
+        skippedCount++;
+        const msg = dev.tracking_ranges && dev.tracking_ranges.length > 0 ? "所選期間未擺放於該站點" : "無有效授權紀錄";
+        manifestText += `${i + 1}. ${dev.id}: 略過 (${msg})\r\n`;
+        setBatchLogs(prev => prev.map((l, idx) => idx === i ? { ...l, status: "skipped", message: msg } : l));
+      } else {
+        const devStart = check.status === "PARTIAL" ? check.clippedStart : sIso;
+        const devEnd = check.status === "PARTIAL" ? check.clippedEnd : eIso;
+        try {
+          const q = new URLSearchParams({ aslung_id: dev.id, start: devStart, end: devEnd, format, download: "1" });
+          const res = await fetch("/api/data?" + q);
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.error || "下載失敗");
+          }
+          const content = await res.text();
+          const lines = content.trim().split("\n");
+          const recordCount = format === "csv" ? Math.max(0, lines.length - 1) : 0;
+          if (recordCount === 0 && format === "csv") {
+            skippedCount++;
+            manifestText += `${i + 1}. ${dev.id}: 略過 (有效期間內無回報數據)\r\n`;
+            setBatchLogs(prev => prev.map((l, idx) => idx === i ? { ...l, status: "skipped", message: "此期間無數據" } : l));
+          } else {
+            successCount++;
+            const fName = `${dev.id}_${devStart.slice(0, 10)}_${devEnd.slice(0, 10)}.${format}`;
+            zip.file(fName, content);
+            manifestText += `${i + 1}. ${dev.id}: 成功 (匯出 ${recordCount} 筆，有效在站區間: ${localTime(devStart)} ~ ${localTime(devEnd)})\r\n`;
+            setBatchLogs(prev => prev.map((l, idx) => idx === i ? { ...l, status: "success", count: recordCount, validRange: `${localTime(devStart).slice(0, 10)} ~ ${localTime(devEnd).slice(0, 10)}` } : l));
+          }
+        } catch (e: any) {
+          skippedCount++;
+          manifestText += `${i + 1}. ${dev.id}: 錯誤 (${e.message})\r\n`;
+          setBatchLogs(prev => prev.map((l, idx) => idx === i ? { ...l, status: "error", message: e.message } : l));
+        }
+      }
+      setBatchProgress(Math.round(((i + 1) / devices.length) * 100));
+    }
+
+    manifestText += `\r\n總計完成：${successCount} 台成功，${skippedCount} 台略過。\r\n==================================================\r\n`;
+    zip.file("download_manifest.txt", manifestText);
+
+    try {
+      const blob = await zip.generateAsync({ type: "blob" });
+      const blobUrl = URL.createObjectURL(blob);
+      const zipName = `ASLUNG_Export_${start.slice(0, 10)}_${end.slice(0, 10)}.zip`;
+      setBatchBlobUrl(blobUrl);
+      setBatchZipFilename(zipName);
+      setBatchRunning(false);
+
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = zipName;
+      a.click();
+      toast.success(`批次打包完成！已下載 ${successCount} 台設備資料。`);
+    } catch (e: any) {
+      setBatchRunning(false);
+      toast.error("ZIP 封裝失敗：" + e.message);
+    }
+  }
+
+  async function download(format:string){setBusy(true);try{const p=parameters(),q=new URLSearchParams({aslung_id:p.id,start:p.start,end:p.end,format,download:"1"}),r=await fetch("/api/data?"+q);if(!r.ok)throw new Error((await r.json() as any).error);const href=URL.createObjectURL(await r.blob()),a=document.createElement("a");a.href=href;a.download=p.id+"_"+start.slice(0,10)+"_"+end.slice(0,10)+"."+format;a.click();setTimeout(()=>URL.revokeObjectURL(href),1000);toast.success("下載完成");}catch(e){toast.error((e as Error).message)}finally{setBusy(false)}}
  useEffect(()=>{const context=(document as any).modelContext;if(!context?.registerTool)return;const lifecycle=new AbortController();void Promise.resolve(context.registerTool({name:"query_aslung_data",title:"查詢 ASLUNG 量測資料",description:"依授權設備與 UTC 期間查詢一頁量測資料，並更新頁面結果。",inputSchema:{type:"object",properties:{aslung_id:{type:"string"},start:{type:"string"},end:{type:"string"}},required:["aslung_id","start","end"],additionalProperties:false},annotations:{readOnlyHint:true,untrustedContentHint:true},execute:async(input:any)=>{if(!input||typeof input.aslung_id!=="string"||!Number.isFinite(Date.parse(input.start))||!Number.isFinite(Date.parse(input.end))||Date.parse(input.start)>Date.parse(input.end))throw new Error("無效查詢參數");if(!devices.some(d=>d.id===input.aslung_id))throw new Error("未授權的設備");setSection("data");setId(input.aslung_id);const local=(v:string)=>formatInTimeZone(new Date(v), tz, "yyyy-MM-dd'T'HH:mm");setStart(local(input.start));setEnd(local(input.end));return query({id:input.aslung_id,start:new Date(input.start).toISOString(),end:new Date(input.end).toISOString()});}},{signal:lifecycle.signal})).catch(()=>{});return()=>lifecycle.abort();},[devices]);
  const labels: Record<string, string> = {
   realtime: isEn ? "Realtime Status" : "即時線上狀態",
@@ -668,8 +941,55 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
  {!signedIn?<section className="panel welcome"><div className="welcome-icon"><ShieldCheck size={38}/></div><p className="eyebrow">安全資料存取</p><h2>登入您的 ASLUNG 工作空間</h2><p>使用 Email 與密碼登入，查看您的設備與資料授權。<br/>管理員可建立 ASLUNG ID、開通會員與指定資料期間。</p><Button asChild size="lg"><a href={signInUrl} target="_top">使用 Email 登入</a></Button><div className="welcome-foot"><LockKeyhole size={14}/>帳號由管理員建立；請使用您的 Email 與密碼登入。</div></section>:error?<section className="panel"><Blank title="無法開啟工作空間" description={error} icon={LockKeyhole}/><div className="text-center pb-8"><Button onClick={()=>void load()}>重試</Button></div></section>:!state?<div className="panel p-8 space-y-5"><Skeleton className="h-9 w-48"/><Skeleton className="h-32 w-full"/></div>:<>
  <div className="stats"><div><span>{admin?"可存取設備":"可存取與列管設備"}</span><strong>{devices.length.toString().padStart(2,"0")}</strong><Database/></div><div><span>{admin?"有效會員":"帳號權限"}</span><strong>{admin?members.filter(m=>m.active&&m.role==="member").length.toString().padStart(2,"0"):"會員"}</strong><Users/></div><div><span>{admin?"資料授權":"授權期間"}</span><strong>{admin?grants.length.toString().padStart(2,"0"):"依設備設定"}</strong><ShieldCheck/></div><div><span>網站瀏覽次數</span><strong className="source-stat" title={`累計瀏覽：${state?.siteStats?.totalViews ?? 0} 次，今日：${state?.siteStats?.todayViews ?? 0} 次`}>{(state?.siteStats?.totalViews ?? 0).toLocaleString()} <span className="text-xs font-normal text-slate-500">次</span></strong><span className="status ok" title="今日造訪人次">今日 {state?.siteStats?.todayViews ?? 0} 次</span></div></div>
  {section==="realtime"&&<><section className="panel results"><div className="results-heading"><div><h2>設備即時線上狀態</h2><p className="flex items-center gap-2"><span>顯示授權設備的最新一筆量測紀錄（{realtimeInterval > 0 ? `每 ${formatRealtimeInterval(realtimeInterval)}自動更新` : "已暫停自動更新"}）。</span>{realtimeRefreshedAt && <span className="text-[11px] text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded font-mono">最後更新：{formatInTimeZone(realtimeRefreshedAt, tz, "HH:mm:ss")}</span>}</p></div><div className="flex gap-2 items-center flex-wrap"><Input placeholder="搜尋 ID 或位置" className="w-44 bg-white h-9 text-xs" value={realtimeSearch} onChange={e=>setRealtimeSearch(e.target.value)} /><div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 px-2.5 h-9 rounded-md text-xs text-slate-600"><Clock size={13} className="text-slate-500 shrink-0" /><span className="whitespace-nowrap">預設更新時間：</span>{admin ? (<select value={realtimeInterval} className="bg-transparent font-medium text-slate-800 outline-none cursor-pointer pr-1" title="管理員可修改預設更新時間" onChange={async e => { const newSecs = Number(e.target.value); setRealtimeInterval(newSecs); try { await mutate({ action: "realtimeIntervalUpdate", interval: newSecs }); toast.success(`已將預設更新時間設為：${formatRealtimeInterval(newSecs)}`); } catch {} }}><option value="10">每 10 秒</option><option value="30">每 30 秒</option><option value="60">每 1 分鐘 (預設)</option><option value="120">每 2 分鐘</option><option value="300">每 5 分鐘</option><option value="600">每 10 分鐘</option><option value="0">暫停自動更新</option></select>) : (<span className="font-semibold text-slate-800">{formatRealtimeInterval(realtimeInterval)}</span>)}</div><Button variant="outline" size="sm" className="h-9" disabled={realtimeLoading} onClick={() => { void fetchRealtime(true); setRealtimeRefreshKey(k => k + 1); }}><RefreshCw size={14} className={realtimeLoading ? "animate-spin" : ""} />{realtimeLoading ? "更新中…" : "更新"}</Button></div></div>{!realtimeData?<div className="p-8"><Skeleton className="h-32 w-full"/></div>:realtimeData.length===0?<Blank title="沒有任何設備數據" description="尚無授權設備或設備未上傳過資料。"/>:(()=>{const filtered=(realtimeData||[]).filter(r=>{if(!realtimeSearch)return true;const s=realtimeSearch.toLowerCase();const loc=locations.find(l=>l.aslung_id===r.aslung_id&&l.active)?.lab_id||"";return String(r.aslung_id).toLowerCase().includes(s)||loc.toLowerCase().includes(s);});return <div className="table-scroll"><Table><TableHeader><TableRow><TableHead className="w-12 text-center font-semibold">序號</TableHead><TableHead>狀態</TableHead><TableHead>目前位置</TableHead><TableHead>timestamp</TableHead><TableHead>aslung_id</TableHead><TableHead>PM1_G3</TableHead><TableHead>PM2.5_G3</TableHead><TableHead>PM10_G3</TableHead><TableHead>temperature</TableHead><TableHead>rh</TableHead><TableHead>co2</TableHead><TableHead>PM1_GSA</TableHead><TableHead>PM2.5_GSA</TableHead><TableHead>PM10_GSA</TableHead></TableRow></TableHeader><TableBody>{filtered.length===0?<TableRow><TableCell colSpan={14} className="text-center py-8 text-slate-500">沒有符合搜尋條件的設備</TableCell></TableRow>:filtered.map((r,i)=>{const isOffline=Date.now()-new Date(r.timestamp).getTime()>3600000;const loc=locations.find(l=>l.aslung_id===r.aslung_id&&l.active)?.lab_id||devices.find(d=>d.id===r.aslung_id)?.location||locations.find(l=>l.aslung_id===r.aslung_id)?.lab_id||<span className="text-slate-400">—</span>;const dev=devices.find(d=>d.id===r.aslung_id);return <TableRow key={i}><TableCell className="text-center font-mono text-xs text-slate-500">{i+1}</TableCell><TableCell><span className={isOffline?"status pending":"status ok"}>{isOffline?"已斷線":"連線中"}</span></TableCell><TableCell>{loc}</TableCell><TableCell className="mono font-medium">{localTime(String(r.timestamp))}</TableCell><TableCell className="mono font-medium"><div className="flex items-center gap-1.5"><span>{String(r.aslung_id)}</span>{!admin&&dev?.is_maintained&&<span className="text-[10px] px-1.5 py-0.5 rounded font-sans font-medium bg-amber-50 text-amber-800 border border-amber-200">列管</span>}{!admin&&dev?.is_granted&&<span className="text-[10px] px-1.5 py-0.5 rounded font-sans font-medium bg-blue-50 text-blue-800 border border-blue-200">授權</span>}</div></TableCell><TableCell>{String(r.PM1_G3??"—")}</TableCell><TableCell>{String(r["PM2.5_G3"]??"—")}</TableCell><TableCell>{String(r.PM10_G3??"—")}</TableCell><TableCell>{String(r.temperature??"—")}</TableCell><TableCell>{String(r.rh??"—")}</TableCell><TableCell>{String(r.co2??"—")}</TableCell><TableCell>{String(r.PM1_GSA??"—")}</TableCell><TableCell>{String(r["PM2.5_GSA"]??"—")}</TableCell><TableCell>{String(r.PM10_GSA??"—")}</TableCell></TableRow>})}</TableBody></Table></div>})()}</section></>}
- {section==="data"&&<><section className="panel query-panel"><div className="panel-title flex items-center justify-between"><div><span><Search size={18}/> 查詢條件</span><small className="ml-2">時間以所選時區 ({tz}) 計算</small></div>{!admin&&<Button type="button" variant="outline" size="sm" className="h-8 gap-1 text-teal-700 border-teal-300 hover:bg-teal-50" onClick={()=>{setRequestType("lab");setRequestAslungId("");setRequestLabId("");setRequestReason("");setModal("requestGrant")}}><KeyRound size={14}/>{isEn ? "Request Data Access" : "申請資料授權"}{grantRequests.filter(r=>r.status==="PENDING").length>0&&<span className="ml-1 px-1.5 py-0.2 rounded-full bg-amber-100 text-amber-800 text-[10px] font-bold">{grantRequests.filter(r=>r.status==="PENDING").length}</span>}</Button>}</div><form onSubmit={e=>{e.preventDefault();try{void query(parameters()).catch(()=>{})}catch(e){toast.error((e as Error).message)}}} className="query-form"><div><Label>ASLUNG ID</Label>{pick(id,setId,devices.map(d=>({value:d.id,label:d.id+(!admin?(d.grant_source==="lab"?` [地點授權: ${d.grant_lab_id||""}${d.grant_lab_name?" "+d.grant_lab_name:""}]`:d.grant_source==="both"?` [雙重授權: ${d.grant_lab_id||""}]`:d.is_maintained?" [列管]":d.is_granted?" [設備授權]":""):"")+(d.description?" · "+d.description:d.name?" · "+d.name:"")})),admin?"選擇授權設備":devices.length?"選擇授權或列管設備":"尚未取得授權設備")}</div><div><Label htmlFor="start">開始時間</Label><Input id="start" type="datetime-local" required value={start} onChange={e=>setStart(e.target.value)}/></div><div><Label htmlFor="end">結束時間</Label><Input id="end" type="datetime-local" required value={end} onChange={e=>setEnd(e.target.value)}/></div><Button disabled={busy||!id} type="submit" className="h-11"><Search size={16}/>{busy?"處理中…":"查詢資料"}</Button></form>{chosen?.start&&<p className="permission-note"><ShieldCheck size={14}/> {chosen.grant_source==="lab"?`授權來源：地點授權【${chosen.grant_lab_id||""}${chosen.grant_lab_name?" "+chosen.grant_lab_name:""}】 · 期間：`:`授權資料期間：`}{localTime(chosen.start)} ～ {chosen.end ? localTime(chosen.end) : localTime(new Date().toISOString())}</p>}</section>
-  <section className="panel results"><div className="results-heading"><div><h2>量測資料 <span>{page?.data.length??0} 筆／本頁</span></h2><p>{queried?queried.id+" · "+localTime(queried.start)+" ～ "+localTime(queried.end):"查詢後顯示所選期間的量測紀錄"}</p></div><div className="flex gap-2"><Button variant="outline" disabled={busy||!page||!queried} onClick={()=>void download("csv")}><Download size={15}/>CSV</Button><Button variant="outline" disabled={busy||!page||!queried} onClick={()=>void download("json")}><FileJson size={15}/>JSON</Button></div></div>
+ {section==="data"&&<><section className="panel query-panel"><div className="panel-title flex items-center justify-between"><div><span><Search size={18}/> 查詢條件</span><small className="ml-2">時間以所選時區 ({tz}) 計算</small></div>{!admin&&<Button type="button" variant="outline" size="sm" className="h-8 gap-1 text-teal-700 border-teal-300 hover:bg-teal-50" onClick={()=>{setRequestType("lab");setRequestAslungId("");setRequestLabId("");setRequestReason("");setModal("requestGrant")}}><KeyRound size={14}/>{isEn ? "Request Data Access" : "申請資料授權"}{grantRequests.filter(r=>r.status==="PENDING").length>0&&<span className="ml-1 px-1.5 py-0.2 rounded-full bg-amber-100 text-amber-800 text-[10px] font-bold">{grantRequests.filter(r=>r.status==="PENDING").length}</span>}</Button>}</div><form onSubmit={e=>{e.preventDefault();handleExecuteQuery();}} className="query-form"><div><Label>ASLUNG ID</Label>{pick(id,setId,[
+  ...(devices.length > 1 ? [{ value: "__ALL__", label: `📦 【全部授權設備】(一鍵打包全部 ${devices.length} 台為 ZIP 壓縮檔)` }] : []),
+  ...devices.map(d=>({value:d.id,label:d.id+(!admin?(d.grant_source==="lab"?` [地點授權: ${d.grant_lab_id||""}${d.grant_lab_name?" "+d.grant_lab_name:""}]`:d.grant_source==="both"?` [雙重授權: ${d.grant_lab_id||""}]`:d.is_maintained?" [列管]":d.is_granted?" [設備授權]":""):"")+(d.description?" · "+d.description:d.name?" · "+d.name:"")}))
+],admin?"選擇授權設備":devices.length?"選擇授權或列管設備":"尚未取得授權設備")}</div><div><Label htmlFor="start">開始時間</Label><Input id="start" type="datetime-local" required value={start} onChange={e=>setStart(e.target.value)}/></div><div><Label htmlFor="end">結束時間</Label><Input id="end" type="datetime-local" required value={end} onChange={e=>setEnd(e.target.value)}/></div><Button disabled={busy||!id} type="submit" className="h-11"><Search size={16}/>{busy?"處理中…":"查詢資料"}</Button></form>{id === "__ALL__" ? (
+  <div className="permission-note bg-teal-50/70 border border-teal-200 text-teal-900 p-3 rounded-lg text-xs space-y-1 mt-3">
+    <div className="flex items-center gap-1.5 font-bold">
+      <FolderDown size={15} className="text-teal-700" />
+      <span>已選擇：全部授權設備（共 {devices.length} 台設備）</span>
+    </div>
+    <p className="text-slate-600">請設定開始與結束時間，並點選右上方「打包下載 CSV (ZIP)」按鈕。系統將自動為每台設備獨立建立資料檔並封裝為單一 ZIP 壓縮檔。</p>
+  </div>
+) : chosen ? (
+  <div className="permission-note space-y-1.5 text-xs bg-slate-50 border p-3 rounded-lg mt-3">
+    <div className="flex items-center gap-2 flex-wrap">
+      <ShieldCheck size={15} className="text-teal-600 shrink-0" />
+      <span className="font-semibold text-slate-800">
+        {chosen.grant_source === "lab" ? `授權來源：地點授權【${chosen.grant_lab_id || ""}${chosen.grant_lab_name ? " " + chosen.grant_lab_name : ""}】` : `授權來源：個別設備授權`}
+      </span>
+      {chosen.is_active_at_lab ? (
+        <span className="text-[10px] px-1.5 py-0.2 rounded font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">現役運作中</span>
+      ) : (
+        <span className="text-[10px] px-1.5 py-0.2 rounded font-semibold bg-slate-200 text-slate-700">歷史調度設備</span>
+      )}
+    </div>
+    {chosen.tracking_ranges && chosen.tracking_ranges.length > 0 ? (
+      <div className="text-slate-600 pl-5 leading-relaxed">
+        <span className="font-medium text-slate-700">實際在站服役期間：</span>
+        {chosen.tracking_ranges.map((tr, idx) => (
+          <span key={idx} className="font-mono ml-1 text-slate-800 font-semibold bg-white px-1.5 py-0.5 rounded border border-slate-200">
+            {localTime(tr.start)} ～ {tr.end ? localTime(tr.end) : "至今 (無期限)"}
+            {idx < (chosen.tracking_ranges?.length || 0) - 1 ? "、" : ""}
+          </span>
+        ))}
+      </div>
+    ) : chosen.start ? (
+      <div className="text-slate-600 pl-5">
+        授權資料期間：<span className="font-mono font-medium">{localTime(chosen.start)} ～ {chosen.end ? localTime(chosen.end) : "無限制"}</span>
+      </div>
+    ) : null}
+  </div>
+) : null}</section>
+  <section className="panel results"><div className="results-heading"><div><h2>量測資料 <span>{page?.data.length??0} 筆／本頁</span></h2><p>{queried?queried.id+" · "+localTime(queried.start)+" ～ "+localTime(queried.end):"查詢後顯示所選期間的量測紀錄"}</p></div><div className="flex gap-2">
+  <Button variant="outline" disabled={busy||(id!=="__ALL__"&&(!page||!queried))} onClick={()=>handleExecuteDownload("csv")}>
+    <Download size={15}/>{id==="__ALL__" ? "打包下載 CSV (ZIP)" : "CSV"}
+  </Button>
+  <Button variant="outline" disabled={busy||(id!=="__ALL__"&&(!page||!queried))} onClick={()=>handleExecuteDownload("json")}>
+    <FileJson size={15}/>{id==="__ALL__" ? "打包下載 JSON (ZIP)" : "JSON"}
+  </Button>
+</div></div>
   <Tabs defaultValue="table"><TabsList variant="line" className="mx-6"><TabsTrigger value="table">資料表</TabsTrigger><TabsTrigger value="json">JSON 預覽</TabsTrigger></TabsList><TabsContent value="table">{!page?<Blank title={devices.length?"尚未查詢資料":"尚無可存取設備"} description={devices.length?"選擇 ASLUNG ID 與期間，按下「查詢資料」。":admin?"先在 ASLUNG ID 管理建立設備，再設定資料來源。":"您目前尚無已授權的設備。您可以點擊右上角「申請設備授權」輸入 ASLUNG ID 向管理員申請存取權限。"} icon={Search}/>:page.data.length===0?<Blank title="此期間沒有量測資料" description="請調整日期範圍後重新查詢。"/>:<div className="table-scroll"><Table><TableHeader><TableRow>{columns.map(k=><TableHead key={k}>{k}</TableHead>)}</TableRow></TableHeader><TableBody>{page.data.map((r,i)=><TableRow key={i}>{columns.map(k=><TableCell key={k} className={k==="timestamp"?"mono":""}>{k==="timestamp"?localTime(String(r[k])):typeof r[k]==="object"?JSON.stringify(r[k]):String(r[k]??"—")}</TableCell>)}</TableRow>)}</TableBody></Table></div>}</TabsContent><TabsContent value="json"><pre className="json-box">{page?JSON.stringify({aslung_id:queried?.id,start:queried?.start,end:queried?.end,...page},null,2):"// 查詢完成後，將在此顯示實際 JSON 資料。"}</pre></TabsContent></Tabs>{page?.has_more&&queried&&<div className="table-footer"><span>尚有更多資料；下載會自動合併所有分頁。</span><Button variant="outline" disabled={busy} onClick={()=>void query(queried,page.next_cursor!).catch(()=>{})}>下一頁</Button></div>}</section>
  {admin && <div className="source-note"><Server size={18}/><div><strong>{state.connected?"EC2 MySQL 資料庫已連線":"AWS EC2 尚未串接"}</strong><p>{state.connected?"查詢結果直接來自既有資料來源；連線是否正常將於查詢時確認。":"會員、設備與授權可以先行設定。完成 API 串接後，即可查詢與下載實際資料。"}</p></div><Button variant="ghost" onClick={()=>setSection("connection")}>查看串接方式</Button></div>}</>}
   {section==="devices"&&admin&&<section className="panel">
@@ -1648,5 +1968,141 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
   </DialogContent>
 </Dialog>
  <AlertDialog open={!!confirmation} onOpenChange={v=>{if(!busy&&!v)setConfirmation(null)}}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>{confirmation?.title}</AlertDialogTitle><AlertDialogDescription>{confirmation?.description}</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={busy}>取消</AlertDialogCancel><AlertDialogAction disabled={busy} onClick={e=>{e.preventDefault();void mutate(confirmation)}}>{busy?"處理中…":"確認"}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
- </SidebarProvider>;
+ 
+  {/* Clipping Warning Modal */}
+  <Dialog open={!!clippingWarning} onOpenChange={v => !v && setClippingWarning(null)}>
+    <DialogContent className="bg-white sm:max-w-md">
+      <DialogHeader>
+        <DialogTitle className="flex items-center gap-2 text-amber-700">
+          <AlertTriangle size={20} className="text-amber-500" />
+          查詢時間超出在站授權範圍
+        </DialogTitle>
+        <DialogDescription className="text-slate-600 text-xs">
+          設備在該站點的實際擺放服役期間與您輸入的時間部分不重疊。
+        </DialogDescription>
+      </DialogHeader>
+      {clippingWarning && (
+        <div className="space-y-3 py-2 text-xs">
+          <div className="bg-slate-50 p-3 rounded-lg border space-y-1.5">
+            <div className="flex justify-between">
+              <span className="text-slate-500">設備編號：</span>
+              <span className="font-mono font-bold text-slate-800">{clippingWarning.device.id}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-slate-500">原始輸入期間：</span>
+              <span className="font-mono text-slate-700">{clippingWarning.original.start} ～ {clippingWarning.original.end}</span>
+            </div>
+          </div>
+
+          <div className="bg-teal-50/80 p-3 rounded-lg border border-teal-200 space-y-1">
+            <span className="text-teal-900 font-bold block mb-1">💡 系統將自動調整為有效在站重疊期間：</span>
+            <p className="font-mono font-bold text-teal-800 text-sm">
+              {clippingWarning.clipped.start} ～ {clippingWarning.clipped.end}
+            </p>
+            <p className="text-[11px] text-teal-700 mt-1">超出此範圍的時間該設備已移出本站，無在站有效數據。</p>
+          </div>
+        </div>
+      )}
+      <DialogFooter className="gap-2 sm:gap-0">
+        <Button variant="outline" onClick={() => setClippingWarning(null)}>取消</Button>
+        <Button
+          className="bg-teal-700 hover:bg-teal-800"
+          onClick={() => {
+            if (!clippingWarning) return;
+            const { clipped, actionType, format } = clippingWarning;
+            setStart(clipped.start);
+            setEnd(clipped.end);
+            setClippingWarning(null);
+            if (actionType === "query") {
+              setTimeout(() => {
+                void query({ id, start: zoned(clipped.start), end: zoned(clipped.end) });
+              }, 100);
+            } else if (actionType === "download" && format) {
+              setTimeout(() => {
+                void executeDirectDownload(id, zoned(clipped.start), zoned(clipped.end), format);
+              }, 100);
+            }
+          }}
+        >
+          確定，以調整後時間繼續
+        </Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
+
+  {/* Batch Download Progress Modal */}
+  <Dialog open={batchModalOpen} onOpenChange={v => { if (!batchRunning) setBatchModalOpen(v); }}>
+    <DialogContent className="bg-white sm:max-w-lg max-h-[85vh] overflow-hidden flex flex-col">
+      <DialogHeader>
+        <DialogTitle className="flex items-center gap-2">
+          <FolderDown size={20} className="text-teal-600" />
+          批次打包下載全部授權設備
+        </DialogTitle>
+        <DialogDescription className="text-xs">
+          共 {devices.length} 台設備 · 查詢區間：{start} ～ {end}
+        </DialogDescription>
+      </DialogHeader>
+
+      <div className="space-y-4 py-2 flex-1 overflow-y-auto">
+        <div className="space-y-1.5">
+          <div className="flex justify-between text-xs text-slate-600 font-medium">
+            <span>{batchRunning ? "正在逐台擷取數據並打包中..." : "批次處理完成"}</span>
+            <span className="font-mono font-bold">{batchProgress}%</span>
+          </div>
+          <div className="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden">
+            <div
+              className="bg-teal-600 h-2.5 rounded-full transition-all duration-300"
+              style={{ width: `${batchProgress}%` }}
+            />
+          </div>
+        </div>
+
+        <div className="border rounded-lg max-h-56 overflow-y-auto divide-y bg-slate-50 text-xs">
+          {batchLogs.map((log) => (
+            <div key={log.id} className="p-2.5 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="font-mono font-bold text-slate-800">{log.id}</span>
+                {log.validRange && <span className="text-[10px] text-slate-500 font-mono">({log.validRange})</span>}
+              </div>
+              <div>
+                {log.status === "waiting" && <span className="text-slate-400">等待中</span>}
+                {log.status === "fetching" && <span className="text-teal-600 font-medium flex items-center gap-1"><RefreshCw size={12} className="animate-spin" />下載中...</span>}
+                {log.status === "success" && <span className="text-emerald-700 font-semibold flex items-center gap-1"><CheckCircle2 size={13} /> {log.count} 筆</span>}
+                {log.status === "skipped" && <span className="text-slate-400 text-[11px]">{log.message || "略過"}</span>}
+                {log.status === "error" && <span className="text-red-600 font-medium">{log.message || "錯誤"}</span>}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <DialogFooter className="border-t pt-3 flex justify-between items-center sm:justify-between">
+        <span className="text-[11px] text-slate-400">每台設備獨立存為一個檔案並封裝成 ZIP</span>
+        <div className="flex gap-2">
+          {batchBlobUrl && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                const a = document.createElement("a");
+                a.href = batchBlobUrl;
+                a.download = batchZipFilename || "ASLUNG_Export.zip";
+                a.click();
+              }}
+            >
+              <Download size={14} className="mr-1" /> 再次下載 ZIP
+            </Button>
+          )}
+          <Button
+            size="sm"
+            disabled={batchRunning}
+            onClick={() => setBatchModalOpen(false)}
+          >
+            {batchRunning ? "處理中…" : "關閉"}
+          </Button>
+        </div>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
+</SidebarProvider>;
 }

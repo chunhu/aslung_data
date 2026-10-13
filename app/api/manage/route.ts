@@ -110,34 +110,76 @@ export async function GET(){try{
     for (const lg of labGrants) {
       const labName = [lg.city_name, lg.town_name, lg.location_name].filter(Boolean).join(" ") || lg.lab_id;
       const devsAtLab = (await db().prepare(`
-        SELECT DISTINCT d.*, ? as start, ? as end, ? as grant_lab_id, ? as grant_lab_name
+        SELECT DISTINCT d.*
         FROM devices d
         LEFT JOIN device_locations dl ON dl.aslung_id = d.id
         WHERE d.location = ? OR dl.lab_id = ?
-      `).bind(lg.start, lg.end, lg.lab_id, labName, lg.lab_id, lg.lab_id).all()).results as any[];
+      `).bind(lg.lab_id, lg.lab_id).all()).results as any[];
 
       for (const d of devsAtLab) {
-        labGrantedDevs.push(d);
+        const locHistory = (await db().prepare(`
+          SELECT start_time, end_time, active
+          FROM device_locations
+          WHERE aslung_id = ? AND lab_id = ?
+          ORDER BY start_time ASC
+        `).bind(d.id, lg.lab_id).all()).results as any[];
+
+        const ranges: Array<{ start: string; end: string | null; active: boolean }> = [];
+        let isActiveAtLab = false;
+        if (locHistory.length > 0) {
+          for (const loc of locHistory) {
+            if (loc.active === 1 && !loc.end_time) isActiveAtLab = true;
+            const locStart = loc.start_time;
+            const locEnd = loc.end_time || null;
+            const rStart = lg.start && lg.start > locStart ? lg.start : locStart;
+            let rEnd = null;
+            if (lg.end && locEnd) {
+              rEnd = lg.end < locEnd ? lg.end : locEnd;
+            } else if (lg.end) {
+              rEnd = lg.end;
+            } else if (locEnd) {
+              rEnd = locEnd;
+            }
+            if (!rEnd || rStart <= rEnd) {
+              ranges.push({ start: rStart, end: rEnd, active: loc.active === 1 && !loc.end_time });
+            }
+          }
+        } else {
+          isActiveAtLab = true;
+          ranges.push({ start: lg.start, end: lg.end || null, active: true });
+        }
+
+        const effectiveStart = ranges.length > 0 ? ranges[ranges.length - 1].start : lg.start;
+        const effectiveEnd = ranges.length > 0 ? ranges[ranges.length - 1].end : lg.end;
+
+        labGrantedDevs.push({
+          ...d,
+          start: effectiveStart,
+          end: effectiveEnd,
+          grant_lab_id: lg.lab_id,
+          grant_lab_name: labName,
+          tracking_ranges: ranges,
+          is_active_at_lab: isActiveAtLab
+        });
       }
     }
 
-   // 2. Devices maintained by this member (matched by name or maintainer email)
-   const mName = String(m.name || "").trim();
-   const maintainerRows = (await db().prepare("SELECT name FROM maintainers WHERE LOWER(email)=LOWER(?)").bind(m.email).all()).results as any[];
-   const maintainerNames = Array.from(new Set([mName, ...maintainerRows.map(r => String(r.name || "").trim())].filter(Boolean)));
+    // 2. Devices maintained by this member (matched by name or maintainer email)
+    const mName = String(m.name || "").trim();
+    const maintainerRows = (await db().prepare("SELECT name FROM maintainers WHERE LOWER(email)=LOWER(?)").bind(m.email).all()).results as any[];
+    const maintainerNames = Array.from(new Set([mName, ...maintainerRows.map(r => String(r.name || "").trim())].filter(Boolean)));
 
-   let maintainedDevs: any[] = [];
-   if (maintainerNames.length > 0) {
-     const placeholders = maintainerNames.map(() => "?").join(",");
-     maintainedDevs = (await db().prepare(`
-       SELECT DISTINCT d.*, NULL as start, NULL as end
-       FROM devices d
-       JOIN device_locations dl ON dl.aslung_id = d.id
-       WHERE TRIM(dl.maintainer) IN (${placeholders})
-       ORDER BY d.id
-     `).bind(...maintainerNames).all()).results as any[];
-   }
-
+    let maintainedDevs: any[] = [];
+    if (maintainerNames.length > 0) {
+      const placeholders = maintainerNames.map(() => "?").join(",");
+      maintainedDevs = (await db().prepare(`
+        SELECT DISTINCT d.*, NULL as start, NULL as end
+        FROM devices d
+        JOIN device_locations dl ON dl.aslung_id = d.id
+        WHERE TRIM(dl.maintainer) IN (${placeholders})
+        ORDER BY d.id
+      `).bind(...maintainerNames).all()).results as any[];
+    }
    // Merge devices (deduplicate by id, add flags & grant source)
    const devMap = new Map<string, any>();
    for (const d of grantedDevs) {
