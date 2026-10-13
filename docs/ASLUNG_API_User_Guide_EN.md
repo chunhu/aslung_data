@@ -25,7 +25,8 @@ Authorization: Bearer aslung_your_token_here
 
 ## 2. API Endpoint & HTTP Method
 
-- **Endpoint URL**: `https://your-domain.com/api/data` (Local development: `http://localhost:3000/api/data`)
+- **Server URL**: `https://api.lunglab.rcec.sinica.edu.tw/`
+- **Endpoint URL**: `https://api.lunglab.rcec.sinica.edu.tw/api/data` (Local development: `http://localhost:3000/api/data`)
 - **HTTP Method**: `GET`
 - **Data Protection**: Enforces server-side permission verification. Users can only query devices and time ranges explicitly granted by administrators.
 
@@ -35,7 +36,7 @@ Authorization: Bearer aslung_your_token_here
 
 | Parameter | Type | Required | Description | Example |
 | :--- | :--- | :---: | :--- | :--- |
-| `aslung_id` | `string` | **Yes** | Device identifier to query. | `ASLUNG-001` |
+| `aslung_id` | `string` | **Yes** | Device identifier to query. | `AL-0001` |
 | `start` | `string` | **Yes** | Query start timestamp (**ISO 8601** format with timezone). | `2026-10-01T00:00:00+08:00` |
 | `end` | `string` | **Yes** | Query end timestamp (**ISO 8601** format with timezone). | `2026-10-07T23:59:59+08:00` |
 | `cursor` | `string` | No | Pagination cursor. When records exceed page limit, supply the `next_cursor` from the previous response. | `eyJ0aW1lIjoi...` |
@@ -91,19 +92,19 @@ Each measurement record returned by the API contains the following fields:
 
 ### 5.1 Paginated Query Mode (Default)
 ```http
-GET /api/data?aslung_id=ASLUNG-001&start=2026-10-01T00:00:00%2B08:00&end=2026-10-02T00:00:00%2B08:00
+GET /api/data?aslung_id=AL-0001&start=2026-10-01T00:00:00%2B08:00&end=2026-10-02T00:00:00%2B08:00
 ```
 
 **JSON Response Example**:
 ```json
 {
-  "aslung_id": "ASLUNG-001",
+  "aslung_id": "AL-0001",
   "start": "2026-09-30T16:00:00.000Z",
   "end": "2026-10-01T16:00:00.000Z",
   "data": [
     {
       "id": 105820,
-      "aslung_id": "ASLUNG-001",
+      "aslung_id": "AL-0001",
       "timestamp": "2026-09-30T16:00:15.000Z",
       "PM1_G3": 11.2,
       "PM2.5_G3": 15.6,
@@ -128,9 +129,9 @@ GET /api/data?aslung_id=ASLUNG-001&start=2026-10-01T00:00:00%2B08:00&end=2026-10
 
 ### 5.2 Full Download Mode (CSV File)
 ```http
-GET /api/data?aslung_id=ASLUNG-001&start=2026-10-01T00:00:00%2B08:00&end=2026-10-07T23:59:59%2B08:00&download=1&format=csv
+GET /api/data?aslung_id=AL-0001&start=2026-10-01T00:00:00%2B08:00&end=2026-10-07T23:59:59%2B08:00&download=1&format=csv
 ```
-- Directly streams and downloads the CSV file (`aslung_ASLUNG-001_export.csv`, UTF-8 encoded).
+- Directly streams and downloads the CSV file (`aslung_AL-0001_export.csv`, UTF-8 encoded).
 
 ---
 
@@ -140,13 +141,13 @@ GET /api/data?aslung_id=ASLUNG-001&start=2026-10-01T00:00:00%2B08:00&end=2026-10
 
 #### (1) Query Paginated JSON Data
 ```bash
-curl -X GET "https://your-domain.com/api/data?aslung_id=ASLUNG-001&start=2026-10-01T00:00:00%2B08:00&end=2026-10-03T00:00:00%2B08:00" \
+curl -X GET "https://api.lunglab.rcec.sinica.edu.tw/api/data?aslung_id=AL-0001&start=2026-10-01T00:00:00%2B08:00&end=2026-10-03T00:00:00%2B08:00" \
      -H "Authorization: Bearer aslung_your_token_here"
 ```
 
 #### (2) Download Complete CSV File Directly
 ```bash
-curl -X GET "https://your-domain.com/api/data?aslung_id=ASLUNG-001&start=2026-10-01T00:00:00%2B08:00&end=2026-10-07T23:59:59%2B08:00&download=1&format=csv" \
+curl -X GET "https://api.lunglab.rcec.sinica.edu.tw/api/data?aslung_id=AL-0001&start=2026-10-01T00:00:00%2B08:00&end=2026-10-07T23:59:59%2B08:00&download=1&format=csv" \
      -H "Authorization: Bearer aslung_your_token_here" \
      -o output.csv
 ```
@@ -160,9 +161,9 @@ import io
 import requests
 import pandas as pd
 
-API_URL = "https://your-domain.com/api/data"
+API_URL = "https://api.lunglab.rcec.sinica.edu.tw/api/data"
 API_TOKEN = "aslung_your_token_here"
-DEVICE_ID = "ASLUNG-001"
+DEVICE_ID = "AL-0001"
 START_TIME = "2026-10-01T00:00:00+08:00"
 END_TIME = "2026-10-05T23:59:59+08:00"
 
@@ -187,12 +188,12 @@ else:
 ### 6.3 JavaScript / Node.js Example
 
 ```javascript
-const API_URL = "https://your-domain.com/api/data";
+const API_URL = "https://api.lunglab.rcec.sinica.edu.tw/api/data";
 const API_TOKEN = "aslung_your_token_here";
 
 async function fetchSensorData() {
   const params = new URLSearchParams({
-    aslung_id: "ASLUNG-001",
+    aslung_id: "AL-0001",
     start: "2026-10-01T00:00:00+08:00",
     end: "2026-10-03T00:00:00+08:00"
   });

@@ -25,7 +25,8 @@ Authorization: Bearer aslung_your_token_here
 
 ## 二、 API 端點與請求方法
 
-- **端點 URL**：`https://您的主機網址/api/data`（本機測試為 `http://localhost:3000/api/data`）
+- **伺服器網址**：`https://api.lunglab.rcec.sinica.edu.tw/`
+- **端點 URL**：`https://api.lunglab.rcec.sinica.edu.tw/api/data`（本機開發測試為 `http://localhost:3000/api/data`）
 - **請求方法**：`GET`
 - **資料保護**：強制套用伺服器端權限驗證，僅能查詢管理員指派給該帳號的「設備授權名單」與「可存取有效期間」。
 
@@ -35,7 +36,7 @@ Authorization: Bearer aslung_your_token_here
 
 | 參數名稱 | 類型 | 必填 | 說明 | 範例 |
 | :--- | :--- | :---: | :--- | :--- |
-| `aslung_id` | `string` | **是** | 要查詢的設備編號識別碼。 | `ASLUNG-001` |
+| `aslung_id` | `string` | **是** | 要查詢的設備編號識別碼。 | `AL-0001` |
 | `start` | `string` | **是** | 查詢起始時間（需為含時區的 **ISO 8601** 格式）。 | `2026-10-01T00:00:00+08:00` |
 | `end` | `string` | **是** | 查詢結束時間（需為含時區的 **ISO 8601** 格式）。 | `2026-10-07T23:59:59+08:00` |
 | `cursor` | `string` | 否 | 分頁游標。當資料超過單頁限制時，帶入上一頁回傳的 `next_cursor`。 | `eyJ0aW1lIjoi...` |
@@ -91,19 +92,19 @@ API 回傳之每一筆量測紀錄對應的欄位定義如下：
 
 ### 1. 分頁查詢模式（預設）
 ```http
-GET /api/data?aslung_id=ASLUNG-001&start=2026-10-01T00:00:00%2B08:00&end=2026-10-02T00:00:00%2B08:00
+GET /api/data?aslung_id=AL-0001&start=2026-10-01T00:00:00%2B08:00&end=2026-10-02T00:00:00%2B08:00
 ```
 
 **JSON 回應範例**：
 ```json
 {
-  "aslung_id": "ASLUNG-001",
+  "aslung_id": "AL-0001",
   "start": "2026-09-30T16:00:00.000Z",
   "end": "2026-10-01T16:00:00.000Z",
   "data": [
     {
       "id": 105820,
-      "aslung_id": "ASLUNG-001",
+      "aslung_id": "AL-0001",
       "timestamp": "2026-09-30T16:00:15.000Z",
       "PM1_G3": 11.2,
       "PM2.5_G3": 15.6,
@@ -128,9 +129,9 @@ GET /api/data?aslung_id=ASLUNG-001&start=2026-10-01T00:00:00%2B08:00&end=2026-10
 
 ### 2. 完整下載模式（CSV 檔案）
 ```http
-GET /api/data?aslung_id=ASLUNG-001&start=2026-10-01T00:00:00%2B08:00&end=2026-10-07T23:59:59%2B08:00&download=1&format=csv
+GET /api/data?aslung_id=AL-0001&start=2026-10-01T00:00:00%2B08:00&end=2026-10-07T23:59:59%2B08:00&download=1&format=csv
 ```
-- 直接串流下載 CSV 檔案（例如 `aslung_ASLUNG-001_export.csv`，UTF-8 編碼）。
+- 直接串流下載 CSV 檔案（例如 `aslung_AL-0001_export.csv`，UTF-8 編碼）。
 
 ---
 
@@ -140,13 +141,13 @@ GET /api/data?aslung_id=ASLUNG-001&start=2026-10-01T00:00:00%2B08:00&end=2026-10
 
 #### (1) 查詢分頁 JSON 數據
 ```bash
-curl -X GET "https://your-domain.com/api/data?aslung_id=ASLUNG-001&start=2026-10-01T00:00:00%2B08:00&end=2026-10-03T00:00:00%2B08:00" \
+curl -X GET "https://api.lunglab.rcec.sinica.edu.tw/api/data?aslung_id=AL-0001&start=2026-10-01T00:00:00%2B08:00&end=2026-10-03T00:00:00%2B08:00" \
      -H "Authorization: Bearer aslung_your_token_here"
 ```
 
 #### (2) 直接下載完整 CSV 檔案
 ```bash
-curl -X GET "https://your-domain.com/api/data?aslung_id=ASLUNG-001&start=2026-10-01T00:00:00%2B08:00&end=2026-10-07T23:59:59%2B08:00&download=1&format=csv" \
+curl -X GET "https://api.lunglab.rcec.sinica.edu.tw/api/data?aslung_id=AL-0001&start=2026-10-01T00:00:00%2B08:00&end=2026-10-07T23:59:59%2B08:00&download=1&format=csv" \
      -H "Authorization: Bearer aslung_your_token_here" \
      -o output.csv
 ```
@@ -160,9 +161,9 @@ import io
 import requests
 import pandas as pd
 
-API_URL = "https://your-domain.com/api/data"
+API_URL = "https://api.lunglab.rcec.sinica.edu.tw/api/data"
 API_TOKEN = "aslung_your_token_here"
-DEVICE_ID = "ASLUNG-001"
+DEVICE_ID = "AL-0001"
 START_TIME = "2026-10-01T00:00:00+08:00"
 END_TIME = "2026-10-05T23:59:59+08:00"
 
@@ -187,12 +188,12 @@ else:
 ### 3. JavaScript / Node.js 範例
 
 ```javascript
-const API_URL = "https://your-domain.com/api/data";
+const API_URL = "https://api.lunglab.rcec.sinica.edu.tw/api/data";
 const API_TOKEN = "aslung_your_token_here";
 
 async function fetchSensorData() {
   const params = new URLSearchParams({
-    aslung_id: "ASLUNG-001",
+    aslung_id: "AL-0001",
     start: "2026-10-01T00:00:00+08:00",
     end: "2026-10-03T00:00:00+08:00"
   });

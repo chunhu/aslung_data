@@ -28,9 +28,9 @@ import io
 import requests
 import pandas as pd
 
-API_URL = "https://your-domain.com/api/data"
+API_URL = "https://api.lunglab.rcec.sinica.edu.tw/api/data"
 API_TOKEN = "aslung_your_token_here"
-DEVICE_ID = "ASLUNG-001"
+DEVICE_ID = "AL-0001"
 START_TIME = "2026-10-01T00:00:00+08:00"
 END_TIME = "2026-10-05T23:59:59+08:00"
 
@@ -51,22 +51,22 @@ else:
 `;
 
   const curlCode = `# 1. 分頁查詢 JSON 數據（單頁最多 1000 筆）
-curl -X GET "https://your-domain.com/api/data?aslung_id=ASLUNG-001&start=2026-10-01T00:00:00+08:00&end=2026-10-03T00:00:00+08:00" \\
+curl -X GET "https://api.lunglab.rcec.sinica.edu.tw/api/data?aslung_id=AL-0001&start=2026-10-01T00:00:00+08:00&end=2026-10-03T00:00:00+08:00" \\
      -H "Authorization: Bearer aslung_your_token_here"
 
 # 2. 直接下載完整期間 CSV 檔案
-curl -X GET "https://your-domain.com/api/data?aslung_id=ASLUNG-001&start=2026-10-01T00:00:00+08:00&end=2026-10-07T23:59:59+08:00&download=1&format=csv" \\
+curl -X GET "https://api.lunglab.rcec.sinica.edu.tw/api/data?aslung_id=AL-0001&start=2026-10-01T00:00:00+08:00&end=2026-10-07T23:59:59+08:00&download=1&format=csv" \\
      -H "Authorization: Bearer aslung_your_token_here" \\
-     -o aslung_data_export.csv
+     -o aslung_AL-0001_export.csv
 `;
 
   const jsCode = `// Node.js / JavaScript Fetch 範例
-const API_URL = "https://your-domain.com/api/data";
+const API_URL = "https://api.lunglab.rcec.sinica.edu.tw/api/data";
 const API_TOKEN = "aslung_your_token_here";
 
 async function fetchSensorData() {
   const params = new URLSearchParams({
-    aslung_id: "ASLUNG-001",
+    aslung_id: "AL-0001",
     start: "2026-10-01T00:00:00+08:00",
     end: "2026-10-03T00:00:00+08:00"
   });
@@ -92,13 +92,13 @@ fetchSensorData();
 `;
 
   const jsonSample = `{
-  "aslung_id": "ASLUNG-001",
+  "aslung_id": "AL-0001",
   "start": "2026-09-30T16:00:00.000Z",
   "end": "2026-10-01T16:00:00.000Z",
   "data": [
     {
       "id": 105820,
-      "aslung_id": "ASLUNG-001",
+      "aslung_id": "AL-0001",
       "timestamp": "2026-09-30T16:00:15.000Z",
       "PM1_G3": 11.2,
       "PM2.5_G3": 15.6,
@@ -140,7 +140,7 @@ fetchSensorData();
   ];
 
   const paramsData = [
-    { name: "aslung_id", type: "string", reqZh: "是", reqEn: "Yes", descZh: "要查詢的設備編號識別碼", descEn: "Device identifier to query", ex: "ASLUNG-001" },
+    { name: "aslung_id", type: "string", reqZh: "是", reqEn: "Yes", descZh: "要查詢的設備編號識別碼", descEn: "Device identifier to query", ex: "AL-0001" },
     { name: "start", type: "string", reqZh: "是", reqEn: "Yes", descZh: "查詢起始時間（需包含時區的 ISO 8601 格式）", descEn: "Start timestamp (ISO 8601 format with timezone)", ex: "2026-10-01T00:00:00+08:00" },
     { name: "end", type: "string", reqZh: "是", reqEn: "Yes", descZh: "查詢結束時間（需包含時區的 ISO 8601 格式）", descEn: "End timestamp (ISO 8601 format with timezone)", ex: "2026-10-07T23:59:59+08:00" },
     { name: "cursor", type: "string", reqZh: "否", reqEn: "No", descZh: "分頁游標；資料超過 1000 筆時帶入上一頁回傳的 next_cursor", descEn: "Pagination cursor from previous response", ex: "eyJ0aW1lIjoi..." },
@@ -217,7 +217,7 @@ fetchSensorData();
       <div className="bg-slate-50 border border-slate-200 rounded-lg p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
         <div className="flex items-center gap-2.5">
           <span className="px-2 py-0.5 rounded font-mono font-bold bg-teal-700 text-white text-[11px]">GET</span>
-          <code className="text-sm font-semibold text-slate-800 font-mono">/api/data</code>
+          <code className="text-xs sm:text-sm font-semibold text-slate-800 font-mono">https://api.lunglab.rcec.sinica.edu.tw/api/data</code>
           <span className="text-slate-500 hidden md:inline">
             {isZh ? "（支援 Bearer Token 與 Session Cookie 身分認證）" : "(Supports Bearer Token & Session Cookie authentication)"}
           </span>
