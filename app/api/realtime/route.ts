@@ -18,21 +18,30 @@ export async function GET(r: Request) {
             const grants: any = await db().prepare("SELECT device_id FROM grants WHERE email=? AND (grant_type='device' OR grant_type IS NULL) AND start <= ? AND (end IS NULL OR end >= ?)").bind(m.email, now, now).all();
             const grantedIds: string[] = grants.results.map((g: any) => g.device_id).filter(Boolean);
 
-            // 2. 地點授權 (Lab Grants)
+            // 2. 地點授權 (Lab Grants: 僅回傳當前在該站點有效服役的設備)
             const labGrants: any = await db().prepare("SELECT lab_id FROM grants WHERE email=? AND grant_type='lab' AND start <= ? AND (end IS NULL OR end >= ?)").bind(m.email, now, now).all();
             const labDevIds: string[] = [];
             for (const lg of labGrants.results) {
                 const devs: any = await db().prepare(`
-                    SELECT DISTINCT d.id FROM devices d
-                    LEFT JOIN device_locations dl ON dl.aslung_id = d.id
-                    WHERE d.location = ? OR dl.lab_id = ?
-                `).bind(lg.lab_id, lg.lab_id).all();
+                    SELECT DISTINCT dl.aslung_id AS id
+                    FROM device_locations dl
+                    WHERE dl.lab_id = ?
+                      AND dl.start_time <= ?
+                      AND (dl.end_time IS NULL OR dl.end_time = '' OR dl.end_time >= ?)
+                      AND dl.active = 1
+                    UNION
+                    SELECT d.id
+                    FROM devices d
+                    WHERE d.location = ?
+                      AND (d.status = 'DEPLOYED' OR d.status = '' OR d.status IS NULL)
+                      AND NOT EXISTS (SELECT 1 FROM device_locations dl WHERE dl.aslung_id = d.id)
+                `).bind(lg.lab_id, now, now, lg.lab_id).all();
                 for (const d of devs.results) {
                     if (d.id) labDevIds.push(d.id);
                 }
             }
 
-            // 3. 維護人員列管設備
+            // 3. 維護人員列管設備 (僅回傳當前負責維護且服役中的設備)
             const mName = String(m.name || "").trim();
             const maintainerRows = (await db().prepare("SELECT name FROM maintainers WHERE LOWER(email)=LOWER(?)").bind(m.email).all()).results as any[];
             const maintainerNames = Array.from(new Set([mName, ...maintainerRows.map(r => String(r.name || "").trim())].filter(Boolean)));
@@ -43,7 +52,10 @@ export async function GET(r: Request) {
                 const maintainedDevs: any = await db().prepare(`
                     SELECT DISTINCT aslung_id FROM device_locations
                     WHERE TRIM(maintainer) IN (${placeholders})
-                `).bind(...maintainerNames).all();
+                      AND start_time <= ?
+                      AND (end_time IS NULL OR end_time = '' OR end_time >= ?)
+                      AND active = 1
+                `).bind(...maintainerNames, now, now).all();
                 maintainedIds = maintainedDevs.results.map((r: any) => r.aslung_id).filter(Boolean);
             }
 
