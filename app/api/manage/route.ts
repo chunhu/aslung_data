@@ -251,6 +251,44 @@ export async function POST(r:Request){try{
 }
  else if(p.action==="memberRole"){requireAdmin();const email=required(p.email);if(email===me.email)throw new AppError(400,"無法修改自己的角色。");await db().prepare("UPDATE members SET role=? WHERE email=?").bind(p.role==="admin"?"admin":"member",email).run();}
  else if(p.action==="memberStatus"){requireAdmin();const email=required(p.email);if(email===me.email)throw new AppError(400,"無法停用自己的帳號。");await db().prepare("UPDATE members SET active=? WHERE email=?").bind(p.active?1:0,email).run();}
+ else if(p.action==="memberDelete"){
+  requireAdmin();
+  const email=required(p.email);
+  if(email===me.email)throw new AppError(400,"無法刪除目前登入的管理員帳號。");
+  const target: any = await db().prepare("SELECT role FROM members WHERE email=?").bind(email).first();
+  if(!target)throw new AppError(404,"找不到此會員帳號。");
+  if(target.role==="admin"){
+    const adminCount=(await db().prepare("SELECT COUNT(*) as count FROM members WHERE role='admin'").first())?.count||0;
+    if(adminCount<=1)throw new AppError(400,"系統必須至少保留一位管理員，無法刪除最後一位管理員。");
+  }
+  await db().prepare("BEGIN").run();
+  try{
+    await db().prepare("DELETE FROM login_attempts WHERE email=?").bind(email).run();
+    await db().prepare("DELETE FROM members WHERE email=?").bind(email).run();
+    await db().prepare("COMMIT").run();
+  }catch(e){
+    await db().prepare("ROLLBACK").run();
+    throw e;
+  }
+ }
+ else if(p.action==="memberDeleteBulk"){
+  requireAdmin();
+  const emails=((p.emails||p.memberEmails)??[]) as string[];
+  if(!Array.isArray(emails)||emails.length===0)throw new AppError(400,"請選擇要刪除的會員。");
+  const filteredEmails=emails.filter(e=>e!==me.email);
+  if(filteredEmails.length===0)throw new AppError(400,"無法刪除目前登入的管理員帳號。");
+  await db().prepare("BEGIN").run();
+  try{
+    for(const email of filteredEmails){
+      await db().prepare("DELETE FROM login_attempts WHERE email=?").bind(email).run();
+      await db().prepare("DELETE FROM members WHERE email=?").bind(email).run();
+    }
+    await db().prepare("COMMIT").run();
+  }catch(e){
+    await db().prepare("ROLLBACK").run();
+    throw e;
+  }
+ }
  else if(p.action==="grant"){requireAdmin();const device_id=required(p.deviceId),email=required(p.email),start=instant(p.start),end=p.end?instant(p.end):null;if(end&&start>end)throw new AppError(400,"結束時間必須晚於開始時間。");if(p.id){await db().prepare("UPDATE grants SET device_id=?, email=?, start=?, end=? WHERE id=?").bind(device_id,email,start,end,p.id).run();}else{await db().prepare("INSERT INTO grants(device_id,email,start,end) VALUES(?,?,?,?)").bind(device_id,email,start,end).run();}}
  else if(p.action==="revoke"){requireAdmin();await db().prepare("DELETE FROM grants WHERE id=?").bind(required(p.id)).run();}
  else if(p.action==="transfer"){requireAdmin();const aslungId=required(p.aslungId),labId=required(p.labId),startTime=p.startTime?instant(p.startTime):new Date().toISOString();await db().prepare("BEGIN").run();try{await db().prepare("UPDATE device_locations SET end_time=?, active=0 WHERE aslung_id=? AND active=1").bind(startTime,aslungId).run();await db().prepare("INSERT INTO device_locations(lab_id,aslung_id,start_time,active) VALUES(?,?,?,1)").bind(labId,aslungId,startTime).run();await db().prepare("UPDATE devices SET location=? WHERE id=?").bind(labId,aslungId).run();await db().prepare("COMMIT").run();}catch(e){await db().prepare("ROLLBACK").run();throw e;}await syncDeviceStatusesAndLocations();}
