@@ -20,5 +20,14 @@ export async function POST(r:Request){try{
  d.prepare("DELETE FROM login_attempts WHERE email=?").run(inputId);d.prepare("DELETE FROM sessions WHERE expires_at<?").run(now);
  const token=randomBytes(32).toString("hex");
  d.prepare("INSERT INTO sessions(token_hash,email,expires_at) VALUES(?,?,?)").run(tokenHash(token),member.email,now+43200000);
+ try {
+   const nowIso = new Date().toISOString();
+   const ip = r.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || r.headers.get("x-real-ip") || "127.0.0.1";
+   const ua = r.headers.get("user-agent")?.slice(0, 255) || "";
+   d.prepare("UPDATE members SET login_count = COALESCE(login_count, 0) + 1, last_login_at = ? WHERE email = ?").run(nowIso, member.email);
+   d.prepare("INSERT INTO login_logs (email, ip, user_agent, created_at) VALUES (?, ?, ?, ?)").run(member.email, ip, ua, nowIso);
+ } catch (err) {
+   console.error("Failed to record login stats:", err);
+ }
  const response=NextResponse.json({ok:true},{headers:{"Cache-Control":"no-store"}});response.cookies.set(sessionCookie(token));return response;
 }catch(e){return fail(e)}}

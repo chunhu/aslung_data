@@ -141,7 +141,8 @@ export async function GET(){try{
      }
    }
  }
- const members=isAdmin?(await db().prepare("SELECT email,name,nickname,role,active FROM members ORDER BY role,email").all()).results:[];
+ const members=isAdmin?(await db().prepare("SELECT email,name,nickname,role,active,login_count,last_login_at FROM members ORDER BY role,email").all()).results:[];
+ const totalLogins=((await db().prepare("SELECT COALESCE(SUM(login_count), 0) as total FROM members").first()) as any)?.total || 0;
  const grants=isAdmin?(await db().prepare("SELECT * FROM grants ORDER BY device_id,email,start DESC").all()).results:[];
  const locations=(await db().prepare("SELECT * FROM device_locations ORDER BY start_time DESC").all()).results;
  const tokens=(await db().prepare("SELECT id, created_at FROM api_tokens WHERE email=? ORDER BY created_at DESC").bind(m.email).all()).results;
@@ -160,9 +161,9 @@ export async function GET(){try{
  }
 
  return Response.json({
-   me:{email:m.email,name:m.name,role:m.role},
+   me:{email:m.email,name:m.name,role:m.role,login_count:m.login_count||0,last_login_at:m.last_login_at||null},
    devices,members,grants,locations,tokens,files,fileGrants,
-   labs,maintainers,alertSettings,alertChecks,alertLogs,grantRequests,
+   labs,maintainers,alertSettings,alertChecks,alertLogs,grantRequests,totalLogins,
    connected:!!(config().url&&config().token)
  },{headers:{"Cache-Control":"no-store"}});
 }catch(e){return fail(e)}}
