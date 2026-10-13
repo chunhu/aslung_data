@@ -80,11 +80,46 @@ export async function GET(){try{
    devices = (await db().prepare("SELECT * FROM devices ORDER BY id").all()).results;
    alertChecks = (await db().prepare("SELECT * FROM alert_checks ORDER BY created_at DESC LIMIT 100").all()).results;
    alertLogs = (await db().prepare("SELECT * FROM alert_logs ORDER BY created_at DESC LIMIT 500").all()).results;
-   grantRequests = (await db().prepare("SELECT gr.*, m.name as member_name, m.nickname as member_nickname FROM grant_requests gr LEFT JOIN members m ON m.email = gr.email ORDER BY CASE WHEN gr.status='PENDING' THEN 0 ELSE 1 END, gr.created_at DESC LIMIT 200").all()).results;
+   grantRequests = (await db().prepare(`
+    SELECT gr.*, m.name as member_name, m.nickname as member_nickname, l.location_name, l.city_name, l.town_name
+    FROM grant_requests gr
+    LEFT JOIN members m ON m.email = gr.email
+    LEFT JOIN labs l ON l.id = gr.lab_id
+    ORDER BY CASE WHEN gr.status='PENDING' THEN 0 ELSE 1 END, gr.created_at DESC LIMIT 200
+  `).all()).results;
  } else {
-   grantRequests = (await db().prepare("SELECT * FROM grant_requests WHERE email=? ORDER BY created_at DESC LIMIT 50").bind(m.email).all()).results;
+   grantRequests = (await db().prepare(`
+    SELECT gr.*, l.location_name, l.city_name, l.town_name
+    FROM grant_requests gr
+    LEFT JOIN labs l ON l.id = gr.lab_id
+    WHERE gr.email=?
+    ORDER BY gr.created_at DESC LIMIT 50
+  `).bind(m.email).all()).results;
    // 1. Authorized devices by grants
-   const grantedDevs = (await db().prepare("SELECT d.*, g.start, g.end FROM devices d JOIN grants g ON g.device_id=d.id WHERE g.email=? ORDER BY d.id").bind(m.email).all()).results as any[];
+   const grantedDevs = (await db().prepare("SELECT d.*, g.start, g.end FROM devices d JOIN grants g ON g.device_id=d.id WHERE g.email=? AND (g.grant_type='device' OR g.grant_type IS NULL) ORDER BY d.id").bind(m.email).all()).results as any[];
+
+    // 2. Authorized devices by lab grants
+    const labGrants = (await db().prepare(`
+      SELECT g.*, l.location_name, l.city_name, l.town_name
+      FROM grants g
+      LEFT JOIN labs l ON l.id = g.lab_id
+      WHERE g.email=? AND g.grant_type='lab'
+    `).bind(m.email).all()).results as any[];
+
+    const labGrantedDevs: any[] = [];
+    for (const lg of labGrants) {
+      const labName = [lg.city_name, lg.town_name, lg.location_name].filter(Boolean).join(" ") || lg.lab_id;
+      const devsAtLab = (await db().prepare(`
+        SELECT DISTINCT d.*, ? as start, ? as end, ? as grant_lab_id, ? as grant_lab_name
+        FROM devices d
+        LEFT JOIN device_locations dl ON dl.aslung_id = d.id
+        WHERE d.location = ? OR dl.lab_id = ?
+      `).bind(lg.start, lg.end, lg.lab_id, labName, lg.lab_id, lg.lab_id).all()).results as any[];
+
+      for (const d of devsAtLab) {
+        labGrantedDevs.push(d);
+      }
+    }
 
    // 2. Devices maintained by this member (matched by name or maintainer email)
    const mName = String(m.name || "").trim();
@@ -143,7 +178,13 @@ export async function GET(){try{
  }
  const members=isAdmin?(await db().prepare("SELECT email,name,nickname,role,active,login_count,last_login_at FROM members ORDER BY role,email").all()).results:[];
  const totalLogins=((await db().prepare("SELECT COALESCE(SUM(login_count), 0) as total FROM members").first()) as any)?.total || 0;
- const grants=isAdmin?(await db().prepare("SELECT * FROM grants ORDER BY device_id,email,start DESC").all()).results:[];
+ const grants=isAdmin?(await db().prepare(`
+  SELECT g.*, l.location_name, l.city_name, l.town_name,
+    (SELECT COUNT(DISTINCT d.id) FROM devices d LEFT JOIN device_locations dl ON dl.aslung_id = d.id WHERE (g.grant_type='lab' AND (d.location = g.lab_id OR dl.lab_id = g.lab_id))) as lab_device_count
+  FROM grants g
+  LEFT JOIN labs l ON l.id = g.lab_id
+  ORDER BY g.grant_type DESC, g.lab_id, g.device_id, g.email, g.start DESC
+`).all()).results:[];
  const locations=(await db().prepare("SELECT * FROM device_locations ORDER BY start_time DESC").all()).results;
  const tokens=(await db().prepare("SELECT id, created_at FROM api_tokens WHERE email=? ORDER BY created_at DESC").bind(m.email).all()).results;
  const files=(await (isAdmin?db().prepare("SELECT * FROM files ORDER BY created_at DESC"):db().prepare("SELECT f.* FROM files f JOIN file_grants fg ON fg.file_id=f.id WHERE fg.email=? ORDER BY f.created_at DESC").bind(m.email)).all()).results;
@@ -291,7 +332,29 @@ export async function POST(r:Request){try{
     throw e;
   }
  }
- else if(p.action==="grant"){requireAdmin();const device_id=required(p.deviceId),email=required(p.email),start=instant(p.start),end=p.end?instant(p.end):null;if(end&&start>end)throw new AppError(400,"結束時間必須晚於開始時間。");if(p.id){await db().prepare("UPDATE grants SET device_id=?, email=?, start=?, end=? WHERE id=?").bind(device_id,email,start,end,p.id).run();}else{await db().prepare("INSERT INTO grants(device_id,email,start,end) VALUES(?,?,?,?)").bind(device_id,email,start,end).run();}}
+ else if(p.action==="grant"){
+  requireAdmin();
+  const grant_type = p.grantType === "lab" ? "lab" : "device";
+  const email = required(p.email);
+  const start = instant(p.start);
+  const end = p.end ? instant(p.end) : null;
+  if(end && start > end) throw new AppError(400, "結束時間必須晚於開始時間。");
+  if(grant_type === "lab"){
+    const lab_id = required(p.labId);
+    if(p.id){
+      await db().prepare("UPDATE grants SET grant_type='lab', lab_id=?, device_id=NULL, email=?, start=?, end=? WHERE id=?").bind(lab_id,email,start,end,p.id).run();
+    }else{
+      await db().prepare("INSERT INTO grants(grant_type, lab_id, device_id, email, start, end) VALUES('lab',?,NULL,?,?,?)").bind(lab_id,email,start,end).run();
+    }
+  }else{
+    const device_id = required(p.deviceId);
+    if(p.id){
+      await db().prepare("UPDATE grants SET grant_type='device', device_id=?, lab_id=NULL, email=?, start=?, end=? WHERE id=?").bind(device_id,email,start,end,p.id).run();
+    }else{
+      await db().prepare("INSERT INTO grants(grant_type, device_id, lab_id, email, start, end) VALUES('device',?,NULL,?,?,?)").bind(device_id,email,start,end).run();
+    }
+  }
+}
  else if(p.action==="revoke"){requireAdmin();await db().prepare("DELETE FROM grants WHERE id=?").bind(required(p.id)).run();}
  else if(p.action==="transfer"){requireAdmin();const aslungId=required(p.aslungId),labId=required(p.labId),startTime=p.startTime?instant(p.startTime):new Date().toISOString();await db().prepare("BEGIN").run();try{await db().prepare("UPDATE device_locations SET end_time=?, active=0 WHERE aslung_id=? AND active=1").bind(startTime,aslungId).run();await db().prepare("INSERT INTO device_locations(lab_id,aslung_id,start_time,active) VALUES(?,?,?,1)").bind(labId,aslungId,startTime).run();await db().prepare("UPDATE devices SET location=? WHERE id=?").bind(labId,aslungId).run();await db().prepare("COMMIT").run();}catch(e){await db().prepare("ROLLBACK").run();throw e;}await syncDeviceStatusesAndLocations();}
  else if(p.action==="transferBulk"){requireAdmin();const aslungIds=p.aslungIds as string[],labId=required(p.labId),startTime=new Date().toISOString();if(!Array.isArray(aslungIds)||!aslungIds.length)throw new AppError(400,"請選擇要移轉的設備。");await db().prepare("BEGIN").run();try{for(const id of aslungIds){await db().prepare("UPDATE device_locations SET end_time=?, active=0 WHERE aslung_id=? AND active=1").bind(startTime,id).run();await db().prepare("INSERT INTO device_locations(lab_id,aslung_id,start_time,active) VALUES(?,?,?,1)").bind(labId,id,startTime).run();await db().prepare("UPDATE devices SET location=? WHERE id=?").bind(labId,id).run();}await db().prepare("COMMIT").run();}catch(e){await db().prepare("ROLLBACK").run();throw e;}await syncDeviceStatusesAndLocations();}
@@ -640,15 +703,27 @@ export async function POST(r:Request){try{
   await db().prepare("DELETE FROM alert_logs").run();
   await db().prepare("DELETE FROM alert_checks").run();
 } else if(p.action==="requestGrant"){
-  const aslungId=required(p.aslungId||p.aslung_id,80).trim().toUpperCase();
-  const reason=String(p.reason||"").trim().slice(0,500);
-  const dev=await db().prepare("SELECT id FROM devices WHERE UPPER(id)=UPPER(?)").bind(aslungId).first();
-  if(!dev)throw new AppError(404,`找不到 ASLUNG ID 為「${aslungId}」的設備，請確認編號是否正確。`);
-  const pending=await db().prepare("SELECT id FROM grant_requests WHERE email=? AND UPPER(aslung_id)=UPPER(?) AND status='PENDING'").bind(me.email,aslungId).first();
-  if(pending)throw new AppError(400,"您已提出過此設備的授權申請，目前正在等待管理員審核中。");
-  const existingGrant=await db().prepare("SELECT id FROM grants WHERE email=? AND UPPER(device_id)=UPPER(?) AND (end IS NULL OR end>=?)").bind(me.email,aslungId,new Date().toISOString()).first();
-  if(existingGrant)throw new AppError(400,"您目前已擁有此設備的有效資料授權，無須重複申請。");
-  await db().prepare("INSERT INTO grant_requests(email,aslung_id,reason,status,created_at) VALUES(?,?,?,'PENDING',?)").bind(me.email,dev.id,reason,new Date().toISOString()).run();
+  const reqType = p.requestType === "lab" ? "lab" : "device";
+  const reason = String(p.reason||"").trim().slice(0,500);
+  if(reqType === "lab"){
+    const labId = required(p.labId, 80).trim();
+    const lab: any = await db().prepare("SELECT id FROM labs WHERE UPPER(id)=UPPER(?)").bind(labId).first();
+    if(!lab) throw new AppError(404, `找不到地點代碼為「${labId}」的地點資料。`);
+    const pending = await db().prepare("SELECT id FROM grant_requests WHERE email=? AND UPPER(lab_id)=UPPER(?) AND status='PENDING'").bind(me.email, lab.id).first();
+    if(pending) throw new AppError(400, "您已提出過此地點的授權申請，目前正在等待管理員審核中。");
+    const existingGrant = await db().prepare("SELECT id FROM grants WHERE email=? AND UPPER(lab_id)=UPPER(?) AND grant_type='lab' AND (end IS NULL OR end>=?)").bind(me.email, lab.id, new Date().toISOString()).first();
+    if(existingGrant) throw new AppError(400, "您目前已擁有此地點的有效資料授權，無須重複申請。");
+    await db().prepare("INSERT INTO grant_requests(email,request_type,lab_id,aslung_id,reason,status,created_at) VALUES(?,'lab',?,'',?,'PENDING',?)").bind(me.email, lab.id, reason, new Date().toISOString()).run();
+  } else {
+    const aslungId = required(p.aslungId||p.aslung_id, 80).trim().toUpperCase();
+    const dev: any = await db().prepare("SELECT id FROM devices WHERE UPPER(id)=UPPER(?)").bind(aslungId).first();
+    if(!dev) throw new AppError(404, `找不到 ASLUNG ID 為「${aslungId}」的設備，請確認編號是否正確。`);
+    const pending = await db().prepare("SELECT id FROM grant_requests WHERE email=? AND UPPER(aslung_id)=UPPER(?) AND status='PENDING'").bind(me.email, aslungId).first();
+    if(pending) throw new AppError(400, "您已提出過此設備的授權申請，目前正在等待管理員審核中。");
+    const existingGrant = await db().prepare("SELECT id FROM grants WHERE email=? AND UPPER(device_id)=UPPER(?) AND (grant_type='device' OR grant_type IS NULL) AND (end IS NULL OR end>=?)").bind(me.email, aslungId, new Date().toISOString()).first();
+    if(existingGrant) throw new AppError(400, "您目前已擁有此設備的有效資料授權，無須重複申請。");
+    await db().prepare("INSERT INTO grant_requests(email,request_type,lab_id,aslung_id,reason,status,created_at) VALUES(?,'device',NULL,?,?,'PENDING',?)").bind(me.email, dev.id, reason, new Date().toISOString()).run();
+  }
 } else if(p.action==="reviewGrantRequest"){
   requireAdmin();
   const reqId=Number(p.id);
@@ -660,7 +735,11 @@ export async function POST(r:Request){try{
   if(decision==="APPROVED"){
     const start=p.start?instant(String(p.start)):new Date(Date.now()-365*86400000).toISOString();
     const end=p.end?instant(String(p.end)):null;
-    await db().prepare("INSERT INTO grants(device_id,email,start,end) VALUES(?,?,?,?)").bind(req.aslung_id,req.email,start,end).run();
+    if(req.request_type === "lab"){
+      await db().prepare("INSERT INTO grants(grant_type,lab_id,device_id,email,start,end) VALUES('lab',?,NULL,?,?,?)").bind(req.lab_id,req.email,start,end).run();
+    } else {
+      await db().prepare("INSERT INTO grants(grant_type,device_id,lab_id,email,start,end) VALUES('device',?,NULL,?,?,?)").bind(req.aslung_id,req.email,start,end).run();
+    }
   }
   await db().prepare("UPDATE grant_requests SET status=?, reviewed_by=?, reviewed_at=? WHERE id=?").bind(decision,me.email,nowIso,reqId).run();
 } else if(p.action==="grantRequestDelete"){

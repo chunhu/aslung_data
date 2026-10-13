@@ -56,16 +56,33 @@ export function instant(v:unknown){
 export async function permitted(m:any,id:string,start:string,end:string){
  const device=await db().prepare("SELECT * FROM devices WHERE id=?").bind(id).first();if(!device)throw new AppError(404,"找不到 ASLUNG ID。");
  if(m.role!=="admin"){
-   const grants:any=await db().prepare("SELECT * FROM grants WHERE device_id=? AND email=?").bind(id,m.email).all();
+   // 1. 個別設備授權 (Direct Device Grant)
+   const grants:any=await db().prepare("SELECT * FROM grants WHERE (grant_type='device' OR grant_type IS NULL) AND device_id=? AND email=?").bind(id,m.email).all();
    const hasGrant = grants.results.some((g:any)=>start>=g.start&&(!g.end||end<=g.end));
-   if(!hasGrant){
-     const mName = String(m.name || "").trim();
-     const isMaintainer = await db().prepare(`
+   if (hasGrant) return device;
+
+   // 2. 地點授權 (Lab Grants)
+   const labGrants:any=await db().prepare("SELECT * FROM grants WHERE grant_type='lab' AND email=?").bind(m.email).all();
+   for (const lg of labGrants.results) {
+     if (start < lg.start || (lg.end && end > lg.end)) continue;
+     if (device.location && device.location === lg.lab_id) {
+       return device;
+     }
+     const locMatch = await db().prepare(`
        SELECT 1 FROM device_locations
-       WHERE aslung_id=? AND (TRIM(maintainer)=TRIM(?) OR TRIM(maintainer) IN (SELECT name FROM maintainers WHERE LOWER(email)=LOWER(?)))
-     `).bind(id, mName, m.email).first();
-     if(!isMaintainer) throw new AppError(403,"此設備或查詢期間未授權。");
+       WHERE aslung_id=? AND lab_id=?
+         AND start_time <= ? AND (end_time IS NULL OR end_time >= ?)
+     `).bind(id, lg.lab_id, end, start).first();
+     if (locMatch) return device;
    }
+
+   // 3. 負責維護人員 (Maintainer)
+   const mName = String(m.name || "").trim();
+   const isMaintainer = await db().prepare(`
+     SELECT 1 FROM device_locations
+     WHERE aslung_id=? AND (TRIM(maintainer)=TRIM(?) OR TRIM(maintainer) IN (SELECT name FROM maintainers WHERE LOWER(email)=LOWER(?)))
+   `).bind(id, mName, m.email).first();
+   if(!isMaintainer) throw new AppError(403,"此設備或查詢期間未授權。");
  }
  return device;
 }
