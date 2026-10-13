@@ -9,16 +9,21 @@ export async function identity(r?: Request){
  let email = "";
  let userId = "";
  if (r) {
-   const auth = r.headers.get("authorization");
-   if (auth && auth.startsWith("Bearer ")) {
-     const token = auth.substring(7);
+   const auth = r.headers.get("authorization") || r.headers.get("x-api-key");
+   if (auth) {
+     let token = auth.trim();
+     if (token.toLowerCase().startsWith("bearer ")) {
+       token = token.slice(7).trim();
+     } else if (token.toLowerCase().startsWith("bearer:")) {
+       token = token.slice(7).trim();
+     }
      const tk: any = await db().prepare("SELECT email FROM api_tokens WHERE id=?").bind(token).first();
      if (!tk) throw new AppError(401, "無效的 API 存取權杖。");
      email = tk.email;
    }
  }
  if (!email) {
-   const u=await getSessionUser();if(!u)throw new AppError(401,"請先登入。");
+   const u=await getSessionUser();if(!u)throw new AppError(401,"請先登入或提供有效的 API 存取權杖。");
    email = u.email;
    userId = u.userId;
  }
@@ -35,7 +40,19 @@ export async function admin(){const m=await identity();if(m.role!=="admin")throw
 export function fail(e:unknown){if(e instanceof AppError)return Response.json({error:e.message},{status:e.status,headers:{"Cache-Control":"no-store"}});console.error(e);return Response.json({error: e instanceof Error ? e.message : "服務暫時無法使用，請稍後重試。"}, {status:500});}
 export function writeGuard(r:Request){const origin=r.headers.get("origin");if(!process.env.APP_ORIGIN||origin!==process.env.APP_ORIGIN)throw new AppError(403,"請從網站內送出操作。");}
 export function required(v:unknown,max=160){if(typeof v!=="string"||!v.trim()||v.length>max)throw new AppError(400,"請完整填寫欄位。");return v.trim();}
-export function instant(v:unknown){const s=required(v);if(!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})$/.test(s)||!Number.isFinite(Date.parse(s)))throw new AppError(400,"時間格式不正確。");return new Date(s).toISOString();}
+export function instant(v:unknown){
+  let s=required(v);
+  s = s.replace(/\s+(\d{2}:\d{2})$/, "+$1");
+  if (/^\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}/.test(s)) {
+    s = s.replace(" ", "T");
+  }
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?$/.test(s)) {
+    s = s + "+08:00";
+  }
+  if(!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})$/.test(s)||!Number.isFinite(Date.parse(s)))
+    throw new AppError(400,"時間格式不正確。請提供包含時區的 ISO 8601 格式，例如 2026-10-01T00:00:00+08:00（URL 請使用 %2B08:00）或 2026-09-30T16:00:00Z。");
+  return new Date(s).toISOString();
+}
 export async function permitted(m:any,id:string,start:string,end:string){
  const device=await db().prepare("SELECT * FROM devices WHERE id=?").bind(id).first();if(!device)throw new AppError(404,"找不到 ASLUNG ID。");
  if(m.role!=="admin"){
