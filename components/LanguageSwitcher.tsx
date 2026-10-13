@@ -49,7 +49,7 @@ export default function LanguageSwitcher() {
     <div className="flex items-center gap-2">
       <div id="google_translate_element" style={{ position: "absolute", left: "-9999px", top: "-9999px", width: "1px", height: "1px", overflow: "hidden" }}></div>
       <Select value={lang} onValueChange={changeLanguage}>
-        <SelectTrigger className="w-28 h-8 text-xs bg-white/50 border-slate-200">
+        <SelectTrigger className="w-24 sm:w-28 h-8 text-xs bg-white/50 border-slate-200">
           <SelectValue placeholder="Language" />
         </SelectTrigger>
         <SelectContent>

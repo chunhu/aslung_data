@@ -122,6 +122,30 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
   const [deviceOnlineFilter, setDeviceOnlineFilter] = useState<string>("ALL");
   const [deviceLocationFilter, setDeviceLocationFilter] = useState<string>("ALL");
   const [deviceGrantFilter, setDeviceGrantFilter] = useState<string>("ALL");
+  const [isEn, setIsEn] = useState(false);
+
+  useEffect(() => {
+    const checkEn = () => {
+      const match = typeof document !== "undefined" ? document.cookie.match(/(^|;) ?googtrans=([^;]*)(;|$)/) : null;
+      const isEnglish = (match && match[2] && decodeURIComponent(match[2]).endsWith("/en")) ||
+        (typeof document !== "undefined" && (document.documentElement.lang === "en" || document.documentElement.classList.contains("translated-ltr")));
+      setIsEn(!!isEnglish);
+    };
+    checkEn();
+    const timer = setInterval(checkEn, 1500);
+    return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (modal && typeof window !== "undefined") {
+      try {
+        const select = document.querySelector(".goog-te-combo") as HTMLSelectElement | null;
+        if (select && select.value) {
+          select.dispatchEvent(new Event("change"));
+        }
+      } catch {}
+    }
+  }, [modal]);
   const allTimeZones = useMemo(() => {
     if (typeof Intl === 'undefined' || !Intl.supportedValuesOf) {
       return [{ tz: "Asia/Taipei", label: "(UTC+08:00) Asia / Taipei" }];
@@ -563,20 +587,13 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
 
 
  return <SidebarProvider id="sidebar-provider" style={{"--sidebar-width":"245px"} as React.CSSProperties}><Toaster richColors position="top-center"/>
- {signedIn && <Sidebar className="nav-rail"><SidebarResizer /><SidebarHeader className="brand"><div className="brand-mark"><Activity size={24}/></div><div><strong>ASLUNG</strong><span>DATA MANAGEMENT</span></div></SidebarHeader><SidebarContent><div className="nav-caption">工作空間</div><SidebarMenu className="px-4">{nav.filter(n=>!signedIn||!state||admin||["realtime","data","alerts","files","connection"].includes(n.id)).map(n=><SidebarMenuItem key={n.id}><SidebarMenuButton className="nav-button" isActive={section===n.id} onClick={()=>{setSection(n.id);setSearch("")}}><n.icon/><span>{n.name}</span></SidebarMenuButton></SidebarMenuItem>)}</SidebarMenu><div className="rail-note"><LockKeyhole size={18}/><strong>依會員授權存取</strong><p>設備與資料期間由管理員指定。</p></div></SidebarContent><SidebarFooter className="rail-footer"><div className="avatar">{state?.me.name?.slice(0,1)??"A"}</div><div className="identity"><strong>{state?.me.name??"ASLUNG 工作空間"}</strong><span>{state?(admin?"管理員":"會員"):"請登入後使用"}</span>{signedIn&&<button className="block text-xs underline mt-1" onClick={()=>setModal("password")}>變更密碼</button>}</div>{signedIn&&<Button variant="ghost" size="icon" aria-label="登出" onClick={async()=>{try{await request("/api/auth/logout",{method:"POST"});window.location.assign("/login")}catch(e){toast.error((e as Error).message)}}}><LogOut size={17}/></Button>}</SidebarFooter></Sidebar>}
- <main className="workspace">{signedIn && <header className="topbar"><div className="flex items-center gap-3"><SidebarTrigger title="顯示/隱藏側邊欄"/><span className="breadcrumb">工作空間 <span>/</span> <strong>{labels[section]}</strong></span></div><div className="top-meta flex items-center gap-3"><FontSizeAdjuster /><LanguageSwitcher />
-<Select value={tz} onValueChange={v => { setTz(v); localStorage.setItem("aslung_tz", v); }}>
-  <SelectTrigger className="w-56 h-8 text-xs bg-white/50 border-slate-200"><SelectValue/></SelectTrigger>
-  <SelectContent>
-    {allTimeZones.map(t => <SelectItem key={t.tz} value={t.tz}>{t.label}</SelectItem>)}
-  </SelectContent>
-</Select>
-</div></header>}
+ {signedIn && <Sidebar className="nav-rail"><SidebarResizer /><SidebarHeader className="brand"><div className="brand-mark"><Activity size={24}/></div><div><strong>ASLUNG</strong><span>DATA MANAGEMENT</span></div></SidebarHeader><SidebarContent><div className="nav-caption">工作空間</div><SidebarMenu className="px-4">{nav.filter(n=>!signedIn||!state||admin||["realtime","data","alerts","files","connection"].includes(n.id)).map(n=><SidebarMenuItem key={n.id}><SidebarMenuButton className="nav-button" isActive={section===n.id} onClick={()=>{setSection(n.id);setSearch("")}}><n.icon/><span>{n.name}</span></SidebarMenuButton></SidebarMenuItem>)}</SidebarMenu><div className="px-4 py-2 lg:hidden"><div className="text-[11px] text-slate-400 mb-1.5 flex items-center gap-1"><Clock size={12}/> 時區設定 (Timezone)</div><Select value={tz} onValueChange={v => { setTz(v); localStorage.setItem("aslung_tz", v); }}><SelectTrigger className="w-full h-8 text-xs bg-slate-800 text-slate-200 border-slate-700"><SelectValue/></SelectTrigger><SelectContent>{allTimeZones.map(t => <SelectItem key={t.tz} value={t.tz}>{t.label}</SelectItem>)}</SelectContent></Select></div><div className="rail-note"><LockKeyhole size={18}/><strong>依會員授權存取</strong><p>設備與資料期間由管理員指定。</p></div></SidebarContent><SidebarFooter className="rail-footer"><div className="avatar">{state?.me.name?.slice(0,1)??"A"}</div><div className="identity"><strong>{state?.me.name??"ASLUNG 工作空間"}</strong><span>{state?(admin?"管理員":"會員"):"請登入後使用"}</span>{signedIn&&<button className="block text-xs underline mt-1" onClick={()=>setModal("password")}>變更密碼</button>}</div>{signedIn&&<Button variant="ghost" size="icon" aria-label="登出" onClick={async()=>{try{await request("/api/auth/logout",{method:"POST"});window.location.assign("/login")}catch(e){toast.error((e as Error).message)}}}><LogOut size={17}/></Button>}</SidebarFooter></Sidebar>}
+ <main className="workspace">{signedIn && <header className="topbar"><div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1"><SidebarTrigger title="顯示/隱藏側邊欄"/><span className="breadcrumb min-w-0 truncate whitespace-nowrap"><span className="hidden sm:inline">工作空間 <span>/</span> </span><strong>{labels[section]}</strong></span></div><div className="top-meta flex items-center gap-2 sm:gap-3 shrink-0"><div className="hidden sm:flex"><FontSizeAdjuster /></div><LanguageSwitcher /><div className="hidden lg:flex timezone"><Select value={tz} onValueChange={v => { setTz(v); localStorage.setItem("aslung_tz", v); }}><SelectTrigger className="w-56 h-8 text-xs bg-white/50 border-slate-200"><SelectValue/></SelectTrigger><SelectContent>{allTimeZones.map(t => <SelectItem key={t.tz} value={t.tz}>{t.label}</SelectItem>)}</SelectContent></Select></div></div></header>}
   <div className="main-inner"><div className="page-heading"><div><p className="eyebrow">ASLUNG DATA HUB</p><h1>{labels[section]}</h1><p className="subheading">{{realtime:"檢視所有授權設備的最後回報狀態與數值。",data:"選擇設備與期間，查詢並下載您有權限的量測資料。",devices:"建立設備識別資料，作為資料查詢與授權的依據。",members:"管理可登入工作空間的會員帳號。",permissions:"指定每位會員可存取的設備與資料期間。",locations:"追蹤設備分配至各實驗室或國外的擺放位置歷史紀錄。",labs:"管理實驗室、國外站點與各監測地點的基本資料與座標。",maintainers:"管理儀器負責人與維護人員聯絡信箱，支援 Google 試算表同步。",alerts:admin?"自訂定時檢查設備狀態，當設備斷線超過門檻時自動發送通知信給維護者。":"檢視被授權及您所列管設備的連線監控狀態與斷線告警日誌。",files:admin?"上傳管理檔案，並指定授權特定成員下載與檢視。":"檢視與下載管理員授權給您的專屬檔案資料。",connection:"透過 JSON 交換資料，連接 AWS EC2 量測資料來源。"}[section]}</p></div>{signedIn&&state&&<Button variant="outline" disabled={loading} onClick={()=>void load()}><RefreshCw size={15} className={loading?"animate-spin":""}/>重新整理</Button>}</div>
  {!signedIn?<section className="panel welcome"><div className="welcome-icon"><ShieldCheck size={38}/></div><p className="eyebrow">安全資料存取</p><h2>登入您的 ASLUNG 工作空間</h2><p>使用 Email 與密碼登入，查看您的設備與資料授權。<br/>管理員可建立 ASLUNG ID、開通會員與指定資料期間。</p><Button asChild size="lg"><a href={signInUrl} target="_top">使用 Email 登入</a></Button><div className="welcome-foot"><LockKeyhole size={14}/>帳號由管理員建立；請使用您的 Email 與密碼登入。</div></section>:error?<section className="panel"><Blank title="無法開啟工作空間" description={error} icon={LockKeyhole}/><div className="text-center pb-8"><Button onClick={()=>void load()}>重試</Button></div></section>:!state?<div className="panel p-8 space-y-5"><Skeleton className="h-9 w-48"/><Skeleton className="h-32 w-full"/></div>:<>
  <div className="stats"><div><span>{admin?"可存取設備":"可存取與列管設備"}</span><strong>{devices.length.toString().padStart(2,"0")}</strong><Database/></div><div><span>{admin?"有效會員":"帳號權限"}</span><strong>{admin?members.filter(m=>m.active&&m.role==="member").length.toString().padStart(2,"0"):"會員"}</strong><Users/></div><div><span>{admin?"資料授權":"授權期間"}</span><strong>{admin?grants.length.toString().padStart(2,"0"):"依設備設定"}</strong><ShieldCheck/></div>{admin&&<div><span>資料來源</span><strong className="source-stat">AWS EC2</strong><span className={state.connected?"status ok":"status pending"}>{state.connected?"已設定連線":"待串接"}</span></div>}</div>
  {section==="realtime"&&<><section className="panel results"><div className="results-heading"><div><h2>設備即時線上狀態</h2><p className="flex items-center gap-2"><span>顯示授權設備的最新一筆量測紀錄（{realtimeInterval > 0 ? `每 ${formatRealtimeInterval(realtimeInterval)}自動更新` : "已暫停自動更新"}）。</span>{realtimeRefreshedAt && <span className="text-[11px] text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded font-mono">最後更新：{formatInTimeZone(realtimeRefreshedAt, tz, "HH:mm:ss")}</span>}</p></div><div className="flex gap-2 items-center flex-wrap"><Input placeholder="搜尋 ID 或位置" className="w-44 bg-white h-9 text-xs" value={realtimeSearch} onChange={e=>setRealtimeSearch(e.target.value)} /><div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 px-2.5 h-9 rounded-md text-xs text-slate-600"><Clock size={13} className="text-slate-500 shrink-0" /><span className="whitespace-nowrap">預設更新時間：</span>{admin ? (<select value={realtimeInterval} className="bg-transparent font-medium text-slate-800 outline-none cursor-pointer pr-1" title="管理員可修改預設更新時間" onChange={async e => { const newSecs = Number(e.target.value); setRealtimeInterval(newSecs); try { await mutate({ action: "realtimeIntervalUpdate", interval: newSecs }); toast.success(`已將預設更新時間設為：${formatRealtimeInterval(newSecs)}`); } catch {} }}><option value="10">每 10 秒</option><option value="30">每 30 秒</option><option value="60">每 1 分鐘 (預設)</option><option value="120">每 2 分鐘</option><option value="300">每 5 分鐘</option><option value="600">每 10 分鐘</option><option value="0">暫停自動更新</option></select>) : (<span className="font-semibold text-slate-800">{formatRealtimeInterval(realtimeInterval)}</span>)}</div><Button variant="outline" size="sm" className="h-9" disabled={realtimeLoading} onClick={() => { void fetchRealtime(true); setRealtimeRefreshKey(k => k + 1); }}><RefreshCw size={14} className={realtimeLoading ? "animate-spin" : ""} />{realtimeLoading ? "更新中…" : "更新"}</Button></div></div>{!realtimeData?<div className="p-8"><Skeleton className="h-32 w-full"/></div>:realtimeData.length===0?<Blank title="沒有任何設備數據" description="尚無授權設備或設備未上傳過資料。"/>:(()=>{const filtered=(realtimeData||[]).filter(r=>{if(!realtimeSearch)return true;const s=realtimeSearch.toLowerCase();const loc=locations.find(l=>l.aslung_id===r.aslung_id&&l.active)?.lab_id||"";return String(r.aslung_id).toLowerCase().includes(s)||loc.toLowerCase().includes(s);});return <div className="table-scroll"><Table><TableHeader><TableRow><TableHead className="w-12 text-center font-semibold">序號</TableHead><TableHead>狀態</TableHead><TableHead>目前位置</TableHead><TableHead>timestamp</TableHead><TableHead>aslung_id</TableHead><TableHead>PM1_G3</TableHead><TableHead>PM2.5_G3</TableHead><TableHead>PM10_G3</TableHead><TableHead>temperature</TableHead><TableHead>rh</TableHead><TableHead>co2</TableHead><TableHead>PM1_GSA</TableHead><TableHead>PM2.5_GSA</TableHead><TableHead>PM10_GSA</TableHead></TableRow></TableHeader><TableBody>{filtered.length===0?<TableRow><TableCell colSpan={14} className="text-center py-8 text-slate-500">沒有符合搜尋條件的設備</TableCell></TableRow>:filtered.map((r,i)=>{const isOffline=Date.now()-new Date(r.timestamp).getTime()>3600000;const loc=locations.find(l=>l.aslung_id===r.aslung_id&&l.active)?.lab_id||devices.find(d=>d.id===r.aslung_id)?.location||locations.find(l=>l.aslung_id===r.aslung_id)?.lab_id||<span className="text-slate-400">—</span>;const dev=devices.find(d=>d.id===r.aslung_id);return <TableRow key={i}><TableCell className="text-center font-mono text-xs text-slate-500">{i+1}</TableCell><TableCell><span className={isOffline?"status pending":"status ok"}>{isOffline?"已斷線":"連線中"}</span></TableCell><TableCell>{loc}</TableCell><TableCell className="mono font-medium">{localTime(String(r.timestamp))}</TableCell><TableCell className="mono font-medium"><div className="flex items-center gap-1.5"><span>{String(r.aslung_id)}</span>{!admin&&dev?.is_maintained&&<span className="text-[10px] px-1.5 py-0.5 rounded font-sans font-medium bg-amber-50 text-amber-800 border border-amber-200">列管</span>}{!admin&&dev?.is_granted&&<span className="text-[10px] px-1.5 py-0.5 rounded font-sans font-medium bg-blue-50 text-blue-800 border border-blue-200">授權</span>}</div></TableCell><TableCell>{String(r.PM1_G3??"—")}</TableCell><TableCell>{String(r["PM2.5_G3"]??"—")}</TableCell><TableCell>{String(r.PM10_G3??"—")}</TableCell><TableCell>{String(r.temperature??"—")}</TableCell><TableCell>{String(r.rh??"—")}</TableCell><TableCell>{String(r.co2??"—")}</TableCell><TableCell>{String(r.PM1_GSA??"—")}</TableCell><TableCell>{String(r["PM2.5_GSA"]??"—")}</TableCell><TableCell>{String(r.PM10_GSA??"—")}</TableCell></TableRow>})}</TableBody></Table></div>})()}</section></>}
-  {section==="data"&&<><section className="panel query-panel"><div className="panel-title flex items-center justify-between"><div><span><Search size={18}/> 查詢條件</span><small className="ml-2">時間以所選時區 ({tz}) 計算</small></div>{!admin&&<Button type="button" variant="outline" size="sm" className="h-8 gap-1 text-teal-700 border-teal-300 hover:bg-teal-50" onClick={()=>{setRequestAslungId("");setRequestReason("");setModal("requestGrant")}}><KeyRound size={14}/>申請設備授權{grantRequests.filter(r=>r.status==="PENDING").length>0&&<span className="ml-1 px-1.5 py-0.2 rounded-full bg-amber-100 text-amber-800 text-[10px] font-bold">{grantRequests.filter(r=>r.status==="PENDING").length}</span>}</Button>}</div><form onSubmit={e=>{e.preventDefault();try{void query(parameters()).catch(()=>{})}catch(e){toast.error((e as Error).message)}}} className="query-form"><div><Label>ASLUNG ID</Label>{pick(id,setId,devices.map(d=>({value:d.id,label:d.id+(!admin&&d.is_maintained?" [列管]":!admin&&d.is_granted?" [授權]":"")+(d.description?" · "+d.description:d.name?" · "+d.name:"")})),admin?"選擇授權設備":devices.length?"選擇授權或列管設備":"尚未取得授權設備")}</div><div><Label htmlFor="start">開始時間</Label><Input id="start" type="datetime-local" required value={start} onChange={e=>setStart(e.target.value)}/></div><div><Label htmlFor="end">結束時間</Label><Input id="end" type="datetime-local" required value={end} onChange={e=>setEnd(e.target.value)}/></div><Button disabled={busy||!id} type="submit" className="h-11"><Search size={16}/>{busy?"處理中…":"查詢資料"}</Button></form>{chosen?.start&&<p className="permission-note"><ShieldCheck size={14}/> 授權資料期間：{localTime(chosen.start)} ～ {chosen.end ? localTime(chosen.end) : localTime(new Date().toISOString())}</p>}</section>
+ {section==="data"&&<><section className="panel query-panel"><div className="panel-title flex items-center justify-between"><div><span><Search size={18}/> 查詢條件</span><small className="ml-2">時間以所選時區 ({tz}) 計算</small></div>{!admin&&<Button type="button" variant="outline" size="sm" className="h-8 gap-1 text-teal-700 border-teal-300 hover:bg-teal-50" onClick={()=>{setRequestAslungId("");setRequestReason("");setModal("requestGrant")}}><KeyRound size={14}/>{isEn ? "Request Device Access" : "申請設備授權"}{grantRequests.filter(r=>r.status==="PENDING").length>0&&<span className="ml-1 px-1.5 py-0.2 rounded-full bg-amber-100 text-amber-800 text-[10px] font-bold">{grantRequests.filter(r=>r.status==="PENDING").length}</span>}</Button>}</div><form onSubmit={e=>{e.preventDefault();try{void query(parameters()).catch(()=>{})}catch(e){toast.error((e as Error).message)}}} className="query-form"><div><Label>ASLUNG ID</Label>{pick(id,setId,devices.map(d=>({value:d.id,label:d.id+(!admin&&d.is_maintained?" [列管]":!admin&&d.is_granted?" [授權]":"")+(d.description?" · "+d.description:d.name?" · "+d.name:"")})),admin?"選擇授權設備":devices.length?"選擇授權或列管設備":"尚未取得授權設備")}</div><div><Label htmlFor="start">開始時間</Label><Input id="start" type="datetime-local" required value={start} onChange={e=>setStart(e.target.value)}/></div><div><Label htmlFor="end">結束時間</Label><Input id="end" type="datetime-local" required value={end} onChange={e=>setEnd(e.target.value)}/></div><Button disabled={busy||!id} type="submit" className="h-11"><Search size={16}/>{busy?"處理中…":"查詢資料"}</Button></form>{chosen?.start&&<p className="permission-note"><ShieldCheck size={14}/> 授權資料期間：{localTime(chosen.start)} ～ {chosen.end ? localTime(chosen.end) : localTime(new Date().toISOString())}</p>}</section>
   <section className="panel results"><div className="results-heading"><div><h2>量測資料 <span>{page?.data.length??0} 筆／本頁</span></h2><p>{queried?queried.id+" · "+localTime(queried.start)+" ～ "+localTime(queried.end):"查詢後顯示所選期間的量測紀錄"}</p></div><div className="flex gap-2"><Button variant="outline" disabled={busy||!page||!queried} onClick={()=>void download("csv")}><Download size={15}/>CSV</Button><Button variant="outline" disabled={busy||!page||!queried} onClick={()=>void download("json")}><FileJson size={15}/>JSON</Button></div></div>
   <Tabs defaultValue="table"><TabsList variant="line" className="mx-6"><TabsTrigger value="table">資料表</TabsTrigger><TabsTrigger value="json">JSON 預覽</TabsTrigger></TabsList><TabsContent value="table">{!page?<Blank title={devices.length?"尚未查詢資料":"尚無可存取設備"} description={devices.length?"選擇 ASLUNG ID 與期間，按下「查詢資料」。":admin?"先在 ASLUNG ID 管理建立設備，再設定資料來源。":"您目前尚無已授權的設備。您可以點擊右上角「申請設備授權」輸入 ASLUNG ID 向管理員申請存取權限。"} icon={Search}/>:page.data.length===0?<Blank title="此期間沒有量測資料" description="請調整日期範圍後重新查詢。"/>:<div className="table-scroll"><Table><TableHeader><TableRow>{columns.map(k=><TableHead key={k}>{k}</TableHead>)}</TableRow></TableHeader><TableBody>{page.data.map((r,i)=><TableRow key={i}>{columns.map(k=><TableCell key={k} className={k==="timestamp"?"mono":""}>{k==="timestamp"?localTime(String(r[k])):typeof r[k]==="object"?JSON.stringify(r[k]):String(r[k]??"—")}</TableCell>)}</TableRow>)}</TableBody></Table></div>}</TabsContent><TabsContent value="json"><pre className="json-box">{page?JSON.stringify({aslung_id:queried?.id,start:queried?.start,end:queried?.end,...page},null,2):"// 查詢完成後，將在此顯示實際 JSON 資料。"}</pre></TabsContent></Tabs>{page?.has_more&&queried&&<div className="table-footer"><span>尚有更多資料；下載會自動合併所有分頁。</span><Button variant="outline" disabled={busy} onClick={()=>void query(queried,page.next_cursor!).catch(()=>{})}>下一頁</Button></div>}</section>
  <div className="source-note"><Server size={18}/><div><strong>{state.connected?"EC2 MySQL 資料庫已連線":"AWS EC2 尚未串接"}</strong><p>{state.connected?"查詢結果直接來自既有資料來源；連線是否正常將於查詢時確認。":"會員、設備與授權可以先行設定。完成 API 串接後，即可查詢與下載實際資料。"}</p></div><Button variant="ghost" onClick={()=>setSection("connection")}>查看串接方式</Button></div></>}
@@ -674,7 +691,7 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
  </>}
  <footer className="workspace-footer"><span>ASLUNG · 資料管理平台</span><span><ShieldCheck size={13}/> 伺服器端權限驗證</span></footer></div></main>
  <Dialog open={!!modal} onOpenChange={v=>{if(!busy&&!v)setModal("")}}>
-  <DialogContent className="bg-white sm:max-w-lg">
+  <DialogContent className="bg-white sm:max-w-lg max-h-[88vh] overflow-y-auto">
     <DialogHeader>
       <DialogTitle>
         {modal==="device" ? (editDevice?"編輯 ASLUNG ID":"建立 ASLUNG ID")
@@ -688,7 +705,7 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
         : modal==="maintainer" ? (editMaintainer ? "編輯維護人員" : "新增維護人員")
         : modal==="maintainerSync" ? "同步 Google 試算表維護人員名單"
         : modal==="alertSettings" ? "斷線告警監控與郵件設定"
-        : modal==="requestGrant" ? "申請設備資料授權"
+        : modal==="requestGrant" ? (isEn ? "Request Device Data Access" : "申請設備資料授權")
         : modal==="reviewGrant" ? "審核設備授權申請"
         : modal==="password" ? "變更密碼"
         : grantId ? "編輯資料授權紀錄" : "新增資料授權紀錄"}
@@ -703,7 +720,7 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
         : modal==="maintainer" ? "維護人員姓名將與設備追蹤之負責人欄位自動關聯。"
         : modal==="maintainerSync" ? "直接從 Google 試算表 (gid=603688252) 同步維護人員聯絡資料。"
         : modal==="alertSettings" ? "設定每隔多久檢查一次設備斷線狀況，以及寄送告警的斷線門檻與 SMTP 伺服器。"
-        : modal==="requestGrant" ? "輸入欲申請存取的 ASLUNG ID 與說明，管理員核准後即可查詢與下載該設備數據。"
+        : modal==="requestGrant" ? (isEn ? "Enter the ASLUNG ID and purpose to request data access. Once approved by the administrator, you can query and download data." : "輸入欲申請存取的 ASLUNG ID 與說明，管理員核准後即可查詢與下載該設備數據。")
         : modal==="reviewGrant" ? "確認並指定核准開通的資料存取期間，完成後會員即可立即查詢該設備。"
         : modal==="importCsv" ? "請參考下方的資料格式說明後上傳檔案或貼上資料。"
         : modal==="password" ? "變更後將登出所有裝置，請使用新密碼重新登入。"
@@ -1293,27 +1310,27 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
         </div>
       </> : modal==="requestGrant"?<>
         <div className="bg-teal-50/80 p-3.5 rounded-lg border border-teal-200 mb-4 text-xs text-teal-900 space-y-1">
-          <p className="font-semibold flex items-center gap-1.5"><ShieldCheck size={14}/> 申請說明：</p>
-          <p>• 請輸入您欲查詢的設備 ASLUNG ID（例如 <code>aslung_01</code>）。</p>
-          <p>• 送出後系統將通知管理員進行審核，核准後即可在此查詢與下載該設備的監測數據。</p>
+          <p className="font-semibold flex items-center gap-1.5"><ShieldCheck size={14}/> {isEn ? "Application Notes:" : "申請說明："}</p>
+          <p>{isEn ? "• Please enter the ASLUNG ID of the device you want to query (e.g. aslung_01)." : "• 請輸入您欲查詢的設備 ASLUNG ID（例如 aslung_01）。"}</p>
+          <p>{isEn ? "• After submitting, the administrator will review your request. Once approved, you can view and download data here." : "• 送出後系統將通知管理員進行審核，核准後即可在此查詢與下載該設備的監測數據。"}</p>
         </div>
-        <Label htmlFor="req-aslung-id">ASLUNG ID (設備編號)</Label>
+        <Label htmlFor="req-aslung-id">{isEn ? "ASLUNG ID (Device Identifier)" : "ASLUNG ID (設備編號)"}</Label>
         <Input
           id="req-aslung-id"
           name="aslungId"
           required
           maxLength={80}
-          placeholder="例如：aslung_01"
+          placeholder={isEn ? "e.g., aslung_01" : "例如：aslung_01"}
           value={requestAslungId}
           onChange={e=>setRequestAslungId(e.target.value.toUpperCase())}
           className="font-mono uppercase font-semibold"
         />
-        <Label htmlFor="req-reason" className="mt-3">申請事由 / 說明 (選填)</Label>
+        <Label htmlFor="req-reason" className="mt-3">{isEn ? "Purpose / Reason (Optional)" : "申請事由 / 說明 (選填)"}</Label>
         <Textarea
           id="req-reason"
           name="reason"
           maxLength={500}
-          placeholder="請簡述您的使用需求或研究用途，以利管理員快速審核..."
+          placeholder={isEn ? "Briefly describe your research purpose or usage for faster review..." : "請簡述您的使用需求或研究用途，以利管理員快速審核..."}
           rows={3}
           value={requestReason}
           onChange={e=>setRequestReason(e.target.value)}
@@ -1321,8 +1338,8 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
         {grantRequests.length > 0 && (
           <div className="mt-4 border-t pt-3">
             <h4 className="text-xs font-bold text-slate-700 mb-2 flex items-center justify-between">
-              <span>我的申請紀錄 ({grantRequests.length})</span>
-              <span className="text-[11px] text-slate-400 font-normal">依申請時間排序</span>
+              <span>{isEn ? `My Requests (${grantRequests.length})` : `我的申請紀錄 (${grantRequests.length})`}</span>
+              <span className="text-[11px] text-slate-400 font-normal">{isEn ? "Ordered by submission time" : "依申請時間排序"}</span>
             </h4>
             <div className="max-h-48 overflow-y-auto space-y-2 pr-1">
               {grantRequests.map(gr => (
@@ -1331,7 +1348,7 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
                     <div className="flex items-center gap-2">
                       <span className="font-mono font-bold text-slate-800">{gr.aslung_id}</span>
                       <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${gr.status === "APPROVED" ? "bg-emerald-100 text-emerald-800 border border-emerald-300" : gr.status === "REJECTED" ? "bg-red-100 text-red-800 border border-red-300" : "bg-amber-100 text-amber-800 border border-amber-300"}`}>
-                        {gr.status === "APPROVED" ? "已核准" : gr.status === "REJECTED" ? "已拒絕" : "待審核"}
+                        {gr.status === "APPROVED" ? (isEn ? "Approved" : "已核准") : gr.status === "REJECTED" ? (isEn ? "Rejected" : "已拒絕") : (isEn ? "Pending" : "待審核")}
                       </span>
                     </div>
                     {gr.reason && <p className="text-slate-600 text-[11px] mt-0.5 truncate">{gr.reason}</p>}
@@ -1343,8 +1360,8 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
                       variant="ghost"
                       size="icon-xs"
                       className="text-slate-400 hover:text-red-600 shrink-0"
-                      title="撤回申請"
-                      onClick={() => setConfirmation({ action: "grantRequestDelete", id: gr.id, title: "撤回此授權申請？", description: `確定要撤回對設備 ${gr.aslung_id} 的申請？` })}
+                      title={isEn ? "Withdraw request" : "撤回申請"}
+                      onClick={() => setConfirmation({ action: "grantRequestDelete", id: gr.id, title: isEn ? "Withdraw this request?" : "撤回此授權申請？", description: isEn ? `Are you sure you want to withdraw the request for device ${gr.aslung_id}?` : `確定要撤回對設備 ${gr.aslung_id} 的申請？` })}
                     >
                       <Trash2 size={13} />
                     </Button>
@@ -1408,14 +1425,14 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
       </>}
       <div className="modal-actions">
         {modal==="deviceQr" ? (
-          <Button type="button" variant="outline" onClick={()=>setModal("")}>關閉</Button>
+          <Button type="button" variant="outline" onClick={()=>setModal("")}>{isEn ? "Close" : "關閉"}</Button>
         ) : (
           <>
-            <Button type="button" variant="outline" disabled={busy} onClick={()=>setModal("")}>取消</Button>
+            <Button type="button" variant="outline" disabled={busy} onClick={()=>setModal("")}>{isEn ? "Cancel" : "取消"}</Button>
             {modal==="importCsv"?<div className="flex gap-2">
               <Button type="button" variant="outline" disabled={busy} onClick={()=>{document.getElementById("csv-upload")?.click();}}><Upload size={14} className="mr-1"/>從檔案上傳</Button>
               <Button disabled={busy} type="submit">{busy?"匯入中…":"匯入貼上資料"}</Button>
-            </div>:<Button disabled={busy||(modal==="grant"&&(!grantDevice||!grantEmail))||(modal==="requestGrant"&&!requestAslungId.trim())} type="submit">{modal==="fileUpload"?(busy?"上傳中…":"上傳並指派授權"):modal==="fileGrant"?(busy?"儲存中…":"儲存授權設定"):modal==="requestGrant"?(busy?"送出中…":"送出申請"):modal==="reviewGrant"?(busy?"審核中…":"確認核准開通"):modal==="labSync"||modal==="maintainerSync"?(busy?"同步中…":"開始同步"):(busy?"儲存中…":"儲存")}</Button>}
+            </div>:<Button disabled={busy||(modal==="grant"&&(!grantDevice||!grantEmail))||(modal==="requestGrant"&&!requestAslungId.trim())} type="submit">{modal==="fileUpload"?(busy?"上傳中…":"上傳並指派授權"):modal==="fileGrant"?(busy?"儲存中…":"儲存授權設定"):modal==="requestGrant"?(busy?(isEn?"Submitting...":"送出中…"):(isEn?"Submit Request":"送出申請")):modal==="reviewGrant"?(busy?"審核中…":"確認核准開通"):modal==="labSync"||modal==="maintainerSync"?(busy?"同步中…":"開始同步"):(busy?"儲存中…":"儲存")}</Button>}
           </>
         )}
       </div>
