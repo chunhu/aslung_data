@@ -64,7 +64,7 @@ export async function permitted(m:any,id:string,start:string,end:string){
    // 2. 地點授權 (Lab Grants)
    const labGrants:any=await db().prepare("SELECT * FROM grants WHERE grant_type='lab' AND email=?").bind(m.email).all();
    for (const lg of labGrants.results) {
-     if (start < lg.start || (lg.end && end > lg.end)) continue;
+
      const locMatch = await db().prepare(`
        SELECT 1 FROM device_locations
        WHERE aslung_id=? AND lab_id=?

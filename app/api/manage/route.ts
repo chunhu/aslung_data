@@ -129,28 +129,20 @@ export async function GET(){try{
         if (locHistory.length > 0) {
           for (const loc of locHistory) {
             if (loc.active === 1 && !loc.end_time) isActiveAtLab = true;
-            const locStart = loc.start_time;
-            const locEnd = loc.end_time || null;
-            const rStart = lg.start && lg.start > locStart ? lg.start : locStart;
-            let rEnd = null;
-            if (lg.end && locEnd) {
-              rEnd = lg.end < locEnd ? lg.end : locEnd;
-            } else if (lg.end) {
-              rEnd = lg.end;
-            } else if (locEnd) {
-              rEnd = locEnd;
-            }
-            if (!rEnd || rStart <= rEnd) {
-              ranges.push({ start: rStart, end: rEnd, active: loc.active === 1 && !loc.end_time });
-            }
+            ranges.push({
+              start: loc.start_time,
+              end: loc.end_time || null,
+              active: loc.active === 1 && !loc.end_time
+            });
           }
         } else {
           isActiveAtLab = true;
           ranges.push({ start: lg.start, end: lg.end || null, active: true });
         }
 
-        const effectiveStart = ranges.length > 0 ? ranges[ranges.length - 1].start : lg.start;
-        const effectiveEnd = ranges.length > 0 ? ranges[ranges.length - 1].end : lg.end;
+        const latestRange = ranges.length > 0 ? ranges[ranges.length - 1] : null;
+        const effectiveStart = latestRange ? latestRange.start : lg.start;
+        const effectiveEnd = latestRange ? latestRange.end : lg.end;
 
         labGrantedDevs.push({
           ...d,
