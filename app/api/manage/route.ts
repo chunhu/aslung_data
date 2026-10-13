@@ -138,16 +138,34 @@ export async function GET(){try{
      `).bind(...maintainerNames).all()).results as any[];
    }
 
-   // Merge devices (deduplicate by id, add flags)
+   // Merge devices (deduplicate by id, add flags & grant source)
    const devMap = new Map<string, any>();
    for (const d of grantedDevs) {
-     devMap.set(d.id, { ...d, is_granted: true, is_maintained: false });
+     devMap.set(d.id, { ...d, is_granted: true, is_maintained: false, grant_source: "device" });
+   }
+   for (const d of labGrantedDevs) {
+     if (devMap.has(d.id)) {
+       const existing = devMap.get(d.id);
+       existing.is_granted = true;
+       existing.grant_lab_id = d.grant_lab_id;
+       existing.grant_lab_name = d.grant_lab_name;
+       existing.grant_source = "both";
+     } else {
+       devMap.set(d.id, {
+         ...d,
+         is_granted: true,
+         is_maintained: false,
+         grant_source: "lab",
+         grant_lab_id: d.grant_lab_id,
+         grant_lab_name: d.grant_lab_name
+       });
+     }
    }
    for (const d of maintainedDevs) {
      if (devMap.has(d.id)) {
        devMap.get(d.id).is_maintained = true;
      } else {
-       devMap.set(d.id, { ...d, is_granted: false, is_maintained: true });
+       devMap.set(d.id, { ...d, is_granted: false, is_maintained: true, grant_source: "maintainer" });
      }
    }
    devices = Array.from(devMap.values()).sort((a, b) => a.id.localeCompare(b.id));
