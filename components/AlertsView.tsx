@@ -5,6 +5,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Button } from "@/components/ui/button";
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table";
 import { toast } from "sonner";
+import { formatOfflineDuration } from "@/lib/utils";
 
 export interface AlertSettings {
   id: number;
@@ -300,8 +301,8 @@ export default function AlertsView({
                         <div key={it.aslung_id} className="text-xs bg-white p-1.5 rounded border border-slate-200 flex items-center justify-between">
                           <span className="font-mono font-bold text-slate-800">{it.aslung_id}</span>
                           <span className="text-slate-500 truncate max-w-[100px]" title={it.lab_id}>{it.lab_id}</span>
-                          <span className="text-red-600 font-semibold">
-                            {it.offline_mins === 99999 ? '>7天' : `${Math.floor(it.offline_mins / 60)}小時${it.offline_mins % 60}分`}
+                          <span className="text-red-600 font-semibold" title={it.last_seen ? `最後上傳：${localTime(it.last_seen)}（斷線約 ${it.offline_mins} 分鐘）` : "從未上傳數據"}>
+                            {formatOfflineDuration(it.offline_mins, false, it.last_seen)}
                           </span>
                         </div>
                       ))}
@@ -587,8 +588,8 @@ export default function AlertsView({
                               <TableCell className="text-xs">{log.lab_id || "—"}</TableCell>
                               <TableCell className="font-medium">{log.maintainer}</TableCell>
                               <TableCell className="font-mono text-xs text-slate-600">{log.email}</TableCell>
-                              <TableCell className="text-xs text-red-600 font-semibold font-mono">
-                                {log.offline_mins === 99999 ? '>7天' : `${log.offline_mins} 分鐘`}
+                              <TableCell className="text-xs text-red-600 font-semibold font-mono" title={log.last_seen ? `最後上傳：${localTime(log.last_seen)}（斷線約 ${log.offline_mins} 分鐘）` : "從未上傳數據"}>
+                                {formatOfflineDuration(log.offline_mins, false, log.last_seen)}
                               </TableCell>
                               <TableCell className="font-mono text-xs text-slate-500">
                                 {log.last_seen ? localTime(log.last_seen) : "從未上傳"}

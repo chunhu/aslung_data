@@ -1,6 +1,7 @@
 import nodemailer from "nodemailer";
 import { db, syncDeviceStatusesAndLocations } from "@/lib/server";
 import { getPool } from "@/lib/data";
+import { formatOfflineDuration } from "@/lib/utils";
 
 export interface AlertResult {
   checkId?: number;
@@ -282,7 +283,7 @@ export async function checkAndSendOfflineAlerts(options: { force?: boolean } = {
             <td style="padding: 8px 12px; font-weight: bold; font-family: monospace;">${it.aslung_id}</td>
             <td style="padding: 8px 12px;">${it.lab_id}</td>
             <td style="padding: 8px 12px; color: #dc2626; font-weight: bold;">
-              ${it.offline_mins >= 99999 ? "無資料" : `斷線約 ${it.offline_mins} 分鐘 (${(it.offline_mins/60).toFixed(1)} 小時)`}
+              ${it.offline_mins >= 99999 && !it.last_seen ? "從未上傳" : `斷線約 ${formatOfflineDuration(it.offline_mins, false, it.last_seen)}`}
             </td>
             <td style="padding: 8px 12px; font-family: monospace; font-size: 12px; color: #64748b;">
               ${it.last_seen ? new Date(it.last_seen).toLocaleString("zh-TW", { timeZone: "Asia/Taipei" }) : "從未上傳"}
