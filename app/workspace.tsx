@@ -192,7 +192,56 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
       localStorage.setItem("aslung_tz", saved);
     }
     setTz(saved);
-  }, []); useEffect(() => { if (typeof window !== "undefined") { const sp = new URLSearchParams(window.location.search); const urlId = sp.get("id") || sp.get("device") || sp.get("aslung_id"); if (urlId) { setId(urlId); setSearch(urlId); } } }, []);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const validSections = ["realtime", "data", "devices", "members", "permissions", "locations", "labs", "maintainers", "alerts", "files", "connection"];
+    const hash = window.location.hash.replace(/^#/, "");
+    const saved = localStorage.getItem("aslung_section");
+    const target = (hash && validSections.includes(hash))
+      ? hash
+      : (saved && validSections.includes(saved))
+        ? saved
+        : null;
+
+    if (target && target !== "data") {
+      setSection(target);
+    }
+    if (target && !hash) {
+      window.history.replaceState(null, "", `#${target}`);
+    }
+
+    const onHashChange = () => {
+      const h = window.location.hash.replace(/^#/, "");
+      if (h && validSections.includes(h)) {
+        setSection(h);
+        localStorage.setItem("aslung_section", h);
+      }
+    };
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
+
+  useEffect(() => {
+    if (section && typeof window !== "undefined") {
+      localStorage.setItem("aslung_section", section);
+      if (window.location.hash !== `#${section}`) {
+        window.history.replaceState(null, "", `#${section}`);
+      }
+    }
+  }, [section]);
+
+  useEffect(() => {
+    if (state && state.me.role !== "admin") {
+      const allowed = ["realtime", "data", "alerts", "files", "connection"];
+      if (!allowed.includes(section)) {
+        setSection("data");
+      }
+    }
+  }, [state, section]);
+
+  useEffect(() => { if (typeof window !== "undefined") { const sp = new URLSearchParams(window.location.search); const urlId = sp.get("id") || sp.get("device") || sp.get("aslung_id"); if (urlId) { setId(urlId); setSearch(urlId); } } }, []);
 
   const today = useCallback(() => {
     try { return formatInTimeZone(new Date(), tz, "yyyy-MM-dd"); } catch { return "2024-01-01"; }
