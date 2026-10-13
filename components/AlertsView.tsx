@@ -111,9 +111,16 @@ export default function AlertsView({
     }
   }
 
+  const myMaintainerName = (me?.name || "").trim();
+  const myMaintainerNickname = ((me as any)?.nickname || "").trim();
+
   const inUseDevices = devices.filter((d) => {
     const isStatusOk = d.status === "DEPLOYED";
-    return isStatusOk && activeLocMap.has(d.id);
+    if (!isStatusOk || !activeLocMap.has(d.id)) return false;
+    if (admin) return true;
+    const activeLoc = activeLocMap.get(d.id);
+    const mName = (activeLoc?.maintainer || "").trim();
+    return mName === myMaintainerName || (myMaintainerNickname && mName === myMaintainerNickname);
   });
 
   const offlineGroups = new Map<string, Array<{ aslung_id: string; lab_id: string; offline_mins: number; last_seen: string | null }>>();
@@ -272,7 +279,10 @@ export default function AlertsView({
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {Array.from(offlineGroups.entries()).map(([mName, items]) => {
+            {(admin
+              ? Array.from(offlineGroups.entries())
+              : Array.from(offlineGroups.entries()).filter(([mName]) => mName.trim() === myMaintainerName || (myMaintainerNickname && mName.trim() === myMaintainerNickname))
+            ).map(([mName, items]) => {
               const mInfo = maintainers.find((x) => x.name.trim() === mName.trim());
               const targetEmail = mInfo ? (alertSettings?.use_test_email && mInfo.email_test ? mInfo.email_test : mInfo.email) : "尚未指定信箱";
               return (
@@ -521,7 +531,8 @@ export default function AlertsView({
           </DialogHeader>
 
           {selectedCheckDetail && (() => {
-            const checkLogs = alertLogs.filter(
+            const filteredLogs = admin ? alertLogs : alertLogs.filter((l) => l.maintainer.trim() === myMaintainerName || (myMaintainerNickname && l.maintainer.trim() === myMaintainerNickname));
+            const checkLogs = filteredLogs.filter(
               (l) => l.check_id === selectedCheckDetail.id || (!l.check_id && Math.abs(new Date(l.created_at).getTime() - new Date(selectedCheckDetail.created_at).getTime()) < 5000)
             );
 

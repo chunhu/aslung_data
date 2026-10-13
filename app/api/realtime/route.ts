@@ -14,9 +14,25 @@ export async function GET(r: Request) {
             const devs: any = await db().prepare("SELECT id FROM devices").all();
             deviceIds = devs.results.map((d: any) => d.id);
         } else {
-            const grants: any = await db().prepare("SELECT device_id FROM grants WHERE email=? AND start <= ? AND (end IS NULL OR end >= ?)").bind(m.email, now, now).all();
-            const grantedIds: string[] = grants.results.map((g: any) => g.device_id);
+            // 1. 個別設備授權 (Direct Device Grants)
+            const grants: any = await db().prepare("SELECT device_id FROM grants WHERE email=? AND (grant_type='device' OR grant_type IS NULL) AND start <= ? AND (end IS NULL OR end >= ?)").bind(m.email, now, now).all();
+            const grantedIds: string[] = grants.results.map((g: any) => g.device_id).filter(Boolean);
 
+            // 2. 地點授權 (Lab Grants)
+            const labGrants: any = await db().prepare("SELECT lab_id FROM grants WHERE email=? AND grant_type='lab' AND start <= ? AND (end IS NULL OR end >= ?)").bind(m.email, now, now).all();
+            const labDevIds: string[] = [];
+            for (const lg of labGrants.results) {
+                const devs: any = await db().prepare(`
+                    SELECT DISTINCT d.id FROM devices d
+                    LEFT JOIN device_locations dl ON dl.aslung_id = d.id
+                    WHERE d.location = ? OR dl.lab_id = ?
+                `).bind(lg.lab_id, lg.lab_id).all();
+                for (const d of devs.results) {
+                    if (d.id) labDevIds.push(d.id);
+                }
+            }
+
+            // 3. 維護人員列管設備
             const mName = String(m.name || "").trim();
             const maintainerRows = (await db().prepare("SELECT name FROM maintainers WHERE LOWER(email)=LOWER(?)").bind(m.email).all()).results as any[];
             const maintainerNames = Array.from(new Set([mName, ...maintainerRows.map(r => String(r.name || "").trim())].filter(Boolean)));
@@ -28,10 +44,10 @@ export async function GET(r: Request) {
                     SELECT DISTINCT aslung_id FROM device_locations
                     WHERE TRIM(maintainer) IN (${placeholders})
                 `).bind(...maintainerNames).all();
-                maintainedIds = maintainedDevs.results.map((r: any) => r.aslung_id);
+                maintainedIds = maintainedDevs.results.map((r: any) => r.aslung_id).filter(Boolean);
             }
 
-            deviceIds = Array.from(new Set([...grantedIds, ...maintainedIds]));
+            deviceIds = Array.from(new Set([...grantedIds, ...labDevIds, ...maintainedIds]));
         }
 
         const pool = getPool();
