@@ -841,7 +841,7 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
   maintainers: isEn ? "Maintainers" : "維護人員名單",
   alerts: isEn ? "Alert Monitoring" : "斷線告警監控",
   files: isEn ? "Files" : "檔案專區",
-  connection: isEn ? "API Guide & Connection" : "系統連線狀態"
+  connection: isEn ? "Data Integration" : "資料串接"
  };
  const nav=[{id:"realtime",name:labels.realtime,icon:RadioTower},{id:"data",name:labels.data,icon:Activity},{id:"devices",name:labels.devices,icon:Database},{id:"members",name:labels.members,icon:Users},{id:"permissions",name:labels.permissions,icon:ShieldCheck},{id:"locations",name:labels.locations,icon:MapPin},{id:"labs",name:labels.labs,icon:Building2},{id:"maintainers",name:labels.maintainers,icon:UserCheck},{id:"alerts",name:labels.alerts,icon:BellRing},{id:"files",name:labels.files,icon:FolderDown},{id:"connection",name:labels.connection,icon:Code2}];
  const statusCounts = useMemo(() => {

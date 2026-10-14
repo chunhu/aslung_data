@@ -1,44 +1,66 @@
 #!/bin/bash
+set -Eeuo pipefail
 
-# --- START TIME ---
-START_TIME=$(date +%s)
-echo "--- 開始執行部署作業: $(date +"%Y-%m-%d %H:%M:%S") ---"
+DEPLOY_STARTED_AT=$(date +%s)
+CURRENT_STAGE="初始化"
+STAGE_NAMES=()
+STAGE_SECONDS=()
 
-# 進入專案根目錄 (腳本在 scripts 子目錄中)
-cd "$(dirname "$0")/.." || exit
+on_error() {
+    local exit_code=$1
+    echo "--- 部署失敗：${CURRENT_STAGE}（結束碼 ${exit_code}）---" >&2
+    echo "已耗時：$(($(date +%s) - DEPLOY_STARTED_AT)) 秒；請查看上方錯誤，尚未完成部署。" >&2
+    exit "$exit_code"
+}
+trap 'on_error "$?"' ERR
 
-echo "--- 正在檢查 GitHub 更新 ---"
-git fetch origin main
+run_stage() {
+    CURRENT_STAGE=$1
+    shift
+    local stage_started elapsed
+    stage_started=$(date +%s)
+    echo "--- ${CURRENT_STAGE} ---"
+    "$@"
+    elapsed=$(($(date +%s) - stage_started))
+    STAGE_NAMES+=("$CURRENT_STAGE")
+    STAGE_SECONDS+=("$elapsed")
+    echo "[階段耗時] ${CURRENT_STAGE}：${elapsed} 秒"
+}
 
-LOCAL=$(git rev-parse HEAD)
-REMOTE=$(git rev-parse origin/main)
+FORCE_REBUILD=0
+if [[ $# -gt 1 || ($# -eq 1 && $1 != "--force") ]]; then
+    echo "用法：bash scripts/deploy.sh [--force]" >&2
+    exit 2
+fi
+if [[ ${1:-} == "--force" ]]; then FORCE_REBUILD=1; fi
 
-if [ "$LOCAL" = "$REMOTE" ]; then
-    echo "目前已是最新版本 ($LOCAL)。"
-    read -p "是否要強制重新建置與重啟服務 (Force Rebuild)? (y/n) " choice
-    case "$choice" in 
-      y|Y ) echo "開始強制重布...";;
-      * ) echo "已取消"; exit 0;;
-    esac
-else
-    echo "發現新版本 ($REMOTE)。"
-    echo "本地版本: $LOCAL"
-    echo "開始自動更新與部署..."
+echo "--- 開始執行部署作業：$(date +"%Y-%m-%d %H:%M:%S") ---"
+cd "$(dirname "$0")/.."
+run_stage "檢查 GitHub 更新" git fetch origin main
+LOCAL_COMMIT=$(git rev-parse HEAD)
+REMOTE_COMMIT=$(git rev-parse origin/main)
+
+if [[ "$LOCAL_COMMIT" == "$REMOTE_COMMIT" && "$FORCE_REBUILD" -eq 0 ]]; then
+    echo "目前已是最新版本（${LOCAL_COMMIT}）。"
+    if [[ ! -t 0 ]]; then
+        echo "沒有執行建置。需要重新建置時請加 --force（仍會使用快取）。"
+        exit 0
+    fi
+    read -r -p "是否重新建置與重啟服務？(y/n) " choice
+    case "$choice" in y|Y) ;; *) echo "已取消"; exit 0 ;; esac
 fi
 
-echo "--- 正在從 GitHub 拉取最新程式碼 ---"
-git pull origin main
+# Refuse a divergent history instead of creating a deployment-time merge.
+run_stage "更新程式碼" git pull --ff-only origin main
+# BuildKit plain output exposes COPY, compilation, image export and cache hits.
+run_stage "Docker 映像建置" sudo docker compose --progress plain build app
+# Keep the current container running while building, then wait for the new
+# container's Compose healthcheck before reporting a successful deployment.
+run_stage "容器更新與健康檢查" sudo docker compose up -d --no-build --wait --wait-timeout 180 app
 
-echo "--- 正在進行專案建置與重啟服務 ---"
-# 備註：本專案使用 Docker Compose 進行部署，容器內部會自動執行 pnpm install 與 next build。
-# 資料庫為原生 SQLite，啟動時會自動確保 Table 結構 (無需 Prisma generate/db push)。
-# 若您未使用 Docker 而是直接使用 PM2，可將以下這行改為 pnpm install && pnpm build && pm2 restart all
-sudo docker compose up -d --build
-
-# --- END TIME ---
-END_TIME=$(date +%s)
-DURATION=$((END_TIME - START_TIME))
-
-echo "--- 部署完成！ ---"
-echo "完成時間: $(date +"%Y-%m-%d %H:%M:%S")"
-echo "總耗時: $DURATION 秒"
+echo "--- 部署完成，服務健康檢查通過 ---"
+for index in "${!STAGE_NAMES[@]}"; do
+    printf '  %s：%s 秒\n' "${STAGE_NAMES[$index]}" "${STAGE_SECONDS[$index]}"
+done
+echo "完成時間：$(date +"%Y-%m-%d %H:%M:%S")"
+echo "總耗時：$(($(date +%s) - DEPLOY_STARTED_AT)) 秒"

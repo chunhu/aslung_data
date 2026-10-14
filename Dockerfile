@@ -1,15 +1,22 @@
+# syntax=docker/dockerfile:1
 FROM node:24-bookworm-slim AS deps
 WORKDIR /app
 RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-RUN corepack pnpm install --frozen-lockfile
+RUN --mount=type=cache,id=aslung-pnpm-store,target=/pnpm/store,sharing=locked \
+    install_started=$(date +%s) && \
+    corepack pnpm install --frozen-lockfile --store-dir /pnpm/store && \
+    echo "[build timing] pnpm install: $(($(date +%s) - install_started)) seconds"
 
 FROM node:24-bookworm-slim AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
-RUN node node_modules/next/dist/bin/next build --webpack
+RUN --mount=type=cache,id=aslung-next-cache,target=/app/.next/cache,sharing=locked \
+    build_started=$(date +%s) && \
+    node node_modules/next/dist/bin/next build --webpack && \
+    echo "[build timing] Next.js build: $(($(date +%s) - build_started)) seconds"
 
 FROM node:24-bookworm-slim AS runner
 WORKDIR /app
@@ -19,7 +26,7 @@ COPY --from=builder --chown=aslung:aslung /app/.next/standalone ./
 COPY --from=builder --chown=aslung:aslung /app/.next/static ./.next/static
 COPY --from=builder --chown=aslung:aslung /app/public ./public
 COPY --from=builder --chown=aslung:aslung /app/scripts ./scripts
-COPY --from=builder --chown=aslung:aslung /app/lib/store.mjs /app/lib/passwords.mjs ./lib/
+COPY --from=builder --chown=aslung:aslung /app/lib/store.mjs /app/lib/passwords.mjs /app/lib/registration.mjs /app/lib/countries.mjs ./lib/
 RUN mkdir -p /app/data /app/backups && chown -R aslung:aslung /app/data /app/backups
 USER aslung
 EXPOSE 3000
