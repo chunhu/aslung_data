@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import {ADMIN_REALTIME_INTERVALS, normalizeRealtimeInterval} from "@/lib/realtime-settings.mjs";
 import {randomUUID} from "node:crypto";
 import {hashPassword,validPassword} from "@/lib/passwords.mjs";
 import {admin,identity,db,config,fail,writeGuard,required,instant,AppError,syncDeviceStatusesAndLocations,getSiteStats} from "@/lib/server";
@@ -249,9 +250,7 @@ export async function GET(){try{
    check_interval_mins: 60, offline_threshold_mins: 60, use_test_email: 0, smtp_host: "", smtp_port: 587, smtp_user: "", smtp_pass: "", smtp_from: "", realtime_interval_secs: 60,
    ...(alertSettingsRaw || {})
  };
- if (alertSettings.realtime_interval_secs === undefined || alertSettings.realtime_interval_secs === null) {
-   alertSettings.realtime_interval_secs = 60;
- }
+ alertSettings.realtime_interval_secs = normalizeRealtimeInterval(alertSettings.realtime_interval_secs, true);
 
  const siteStats=getSiteStats();
  return Response.json({
@@ -686,8 +685,10 @@ export async function POST(r:Request){try{
   }
 } else if(p.action==="realtimeIntervalUpdate"){
   requireAdmin();
-  const raw=Number(p.interval);
-  const secs=raw===0?0:Math.max(5,Math.min(86400,isNaN(raw)?60:raw));
+  const secs = p.interval;
+  if (typeof secs !== "number" || (secs !== 0 && !ADMIN_REALTIME_INTERVALS.includes(secs))) {
+    throw new AppError(400, "請選擇 1 至 30 分鐘的更新頻率，或暫停自動更新。");
+  }
   await db().prepare(`
     INSERT INTO alert_settings (id, realtime_interval_secs) VALUES (1, ?)
     ON CONFLICT(id) DO UPDATE SET realtime_interval_secs = excluded.realtime_interval_secs
