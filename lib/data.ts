@@ -10,16 +10,20 @@ export function getPool() {
       password: process.env.MYSQL_PASSWORD || 'datasel',
       database: process.env.MYSQL_DATABASE || 'rcec_lung',
       waitForConnections: true,
-      connectionLimit: 10,
+      connectionLimit: 15,
       queueLimit: 0,
       timezone: '+00:00', // UTC
       decimalNumbers: true,
+      enableKeepAlive: true,
+      keepAliveInitialDelay: 10000,
+      idleTimeout: 60000,
+      connectTimeout: 10000,
     });
   }
   return pool;
 }
 
-export async function fetchPage(id: string, start: string, end: string, cursor: string) {
+export async function fetchPage(id: string, start: string, end: string, cursor: string, limit = 1000) {
   const p = getPool();
   
   const startTime = new Date(start).toISOString().slice(0, 19).replace('T', ' ');
@@ -62,14 +66,25 @@ export async function fetchPage(id: string, start: string, end: string, cursor: 
     params.push(cursorTime, cursorTime, cursorId);
   }
 
-  sql += ` ORDER BY time ASC, id ASC LIMIT 1000`;
+  sql += ` ORDER BY time ASC, id ASC LIMIT ?`;
+  params.push(limit);
 
   let rows: any[];
   try {
     [rows] = await p.query(sql, params) as [any[], any];
   } catch (err: any) {
-    console.error("MySQL Error:", err);
-    throw new AppError(502, "無法連線至 EC2 MySQL 資料庫或查詢失敗。");
+    if (err?.code === 'ECONNRESET' || err?.code === 'PROTOCOL_CONNECTION_LOST') {
+      console.warn("MySQL connection reset, retrying query once for", id);
+      try {
+        [rows] = await p.query(sql, params) as [any[], any];
+      } catch (retryErr: any) {
+        console.error("MySQL Retry Error:", retryErr);
+        throw new AppError(502, "無法連線至 EC2 MySQL 資料庫或查詢失敗。");
+      }
+    } else {
+      console.error("MySQL Error:", err);
+      throw new AppError(502, "無法連線至 EC2 MySQL 資料庫或查詢失敗。");
+    }
   }
 
   const data = rows.map(r => {
@@ -81,7 +96,7 @@ export async function fetchPage(id: string, start: string, end: string, cursor: 
     };
   });
 
-  const has_more = data.length === 1000;
+  const has_more = data.length === limit;
   let next_cursor = null;
   if (has_more) {
     const last = rows[rows.length - 1];

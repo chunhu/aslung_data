@@ -161,7 +161,16 @@ export async function checkAndSendOfflineAlerts(options: { force?: boolean } = {
     await Promise.all(batch.map(async (id) => {
       try {
         const sql = `SELECT time, ch2 AS \`PM2.5_G3\`, ch4 AS temperature, ch5 AS rh FROM rawdata WHERE uid = ? ORDER BY time DESC LIMIT 1`;
-        const [rows]: any = await pool.query(sql, [id]);
+        let rows: any[];
+        try {
+          [rows] = await pool.query(sql, [id]) as [any[], any];
+        } catch (queryErr: any) {
+          if (queryErr?.code === 'ECONNRESET' || queryErr?.code === 'PROTOCOL_CONNECTION_LOST') {
+            [rows] = await pool.query(sql, [id]) as [any[], any];
+          } else {
+            throw queryErr;
+          }
+        }
         if (rows.length > 0) {
           const r = rows[0];
           const t = r.time instanceof Date ? r.time : new Date(r.time + 'Z');

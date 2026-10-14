@@ -51,7 +51,25 @@ type FileItem={id:string;name:string;size:number;mime_type:string;description?:s
 type Page={data:Record<string,unknown>[];next_cursor:string|null;has_more:boolean};
 const pick=(value:string,onChange:(s:string)=>void,items:{value:string;label:string}[],placeholder:string)=><Select value={value} onValueChange={onChange}><SelectTrigger className="w-full h-11 bg-white"><SelectValue placeholder={placeholder}/></SelectTrigger><SelectContent>{items.map(x=><SelectItem key={x.value} value={x.value}>{x.label}</SelectItem>)}</SelectContent></Select>;
 function Blank({title,description,icon:Icon=Database}:{title:string;description:string;icon?:typeof Database}){return <Empty className="empty-area"><EmptyHeader><EmptyMedia variant="icon"><Icon/></EmptyMedia><EmptyTitle>{title}</EmptyTitle><EmptyDescription className="text-sm">{description}</EmptyDescription></EmptyHeader></Empty>;}
-async function request(url:string,init?:RequestInit){const r=await fetch(url,init);const p:any=await r.json();if(!r.ok)throw new Error(p.error??"操作失敗，請稍後重試。");return p;}
+async function request(url: string, init?: RequestInit) {
+  const r = await fetch(url, init);
+  if (r.status === 401) {
+    if (typeof window !== "undefined") {
+      window.location.href = "/login";
+    }
+    throw new Error("登入階段已過期，請重新登入。");
+  }
+  const text = await r.text();
+  let p: any = null;
+  try {
+    p = text ? JSON.parse(text) : {};
+  } catch {
+    if (!r.ok) throw new Error(`伺服器回應錯誤 (${r.status} ${r.statusText || ""})`.trim());
+    throw new Error("伺服器回應格式錯誤");
+  }
+  if (!r.ok) throw new Error(p.error ?? `操作失敗 (${r.status})，請稍後重試。`);
+  return p;
+}
 
 
 function formatFileSize(bytes: number) {
@@ -482,7 +500,15 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
     try {
       const q = new URLSearchParams({ aslung_id: deviceId, start: sIso, end: eIso, format, download: "1" });
       const r = await fetch("/api/data?" + q);
-      if (!r.ok) throw new Error((await r.json() as any).error);
+      if (!r.ok) {
+        let errMsg = `下載失敗 (${r.status})`;
+        try {
+          const text = await r.text();
+          const j = text ? JSON.parse(text) : {};
+          if (j.error) errMsg = j.error;
+        } catch {}
+        throw new Error(errMsg);
+      }
       const href = URL.createObjectURL(await r.blob());
       const a = document.createElement("a");
       a.href = href;
@@ -571,8 +597,8 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
       toast.error("結束時間必須晚於開始時間。");
       return;
     }
-    if (new Date(eIso).getTime() - new Date(sIso).getTime() > 31 * 86400000) {
-      toast.error("為維持效能，批次下載區間不可超過 31 天。請縮短日期範圍。");
+    if (!admin && new Date(eIso).getTime() - new Date(sIso).getTime() > 31 * 86400000) {
+      toast.error("為維持效能，一般會員批次下載區間不可超過 31 天。請縮短日期範圍。");
       return;
     }
     if (!devices.length) {
@@ -623,8 +649,20 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
           const q = new URLSearchParams({ aslung_id: dev.id, start: devStart, end: devEnd, format, download: "1" });
           const res = await fetch("/api/data?" + q);
           if (!res.ok) {
-            const err = await res.json().catch(() => ({}));
-            throw new Error(err.error || "下載失敗");
+            let errMsg = `下載失敗 (${res.status})`;
+            try {
+              const text = await res.text();
+              const j = text ? JSON.parse(text) : {};
+              if (j.error) errMsg = j.error;
+            } catch {
+              errMsg = `${res.status} ${res.statusText || "伺服器錯誤"}`.trim();
+            }
+            if (res.status === 401) {
+              setBatchRunning(false);
+              toast.error("登入已過期或失效，請重新登入系統。");
+              throw new Error("登入已過期");
+            }
+            throw new Error(errMsg);
           }
           const content = await res.text();
           const lines = content.trim().split("\n");
@@ -644,6 +682,9 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
           skippedCount++;
           manifestText += `${i + 1}. ${dev.id}: 錯誤 (${e.message})\r\n`;
           setBatchLogs(prev => prev.map((l, idx) => idx === i ? { ...l, status: "error", message: e.message } : l));
+          if (e.message.includes("登入已過期")) {
+            break;
+          }
         }
       }
       setBatchProgress(Math.round(((i + 1) / devices.length) * 100));
@@ -660,18 +701,49 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
       setBatchZipFilename(zipName);
       setBatchRunning(false);
 
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = zipName;
-      a.click();
-      toast.success(`批次打包完成！已下載 ${successCount} 台設備資料。`);
+      if (successCount > 0) {
+        const a = document.createElement("a");
+        a.href = blobUrl;
+        a.download = zipName;
+        a.click();
+        toast.success(`批次打包完成！已下載 ${successCount} 台設備資料。`);
+      } else {
+        toast.warning("所選區間內設備無量測回報數據，已產出清單報告。");
+      }
     } catch (e: any) {
       setBatchRunning(false);
       toast.error("ZIP 封裝失敗：" + e.message);
     }
   }
 
-  async function download(format:string){setBusy(true);try{const p=parameters(),q=new URLSearchParams({aslung_id:p.id,start:p.start,end:p.end,format,download:"1"}),r=await fetch("/api/data?"+q);if(!r.ok)throw new Error((await r.json() as any).error);const href=URL.createObjectURL(await r.blob()),a=document.createElement("a");a.href=href;a.download=p.id+"_"+start.slice(0,10)+"_"+end.slice(0,10)+"."+format;a.click();setTimeout(()=>URL.revokeObjectURL(href),1000);toast.success("下載完成");}catch(e){toast.error((e as Error).message)}finally{setBusy(false)}}
+  async function download(format: string) {
+    setBusy(true);
+    try {
+      const p = parameters();
+      const q = new URLSearchParams({ aslung_id: p.id, start: p.start, end: p.end, format, download: "1" });
+      const r = await fetch("/api/data?" + q);
+      if (!r.ok) {
+        let errMsg = `下載失敗 (${r.status})`;
+        try {
+          const text = await r.text();
+          const j = text ? JSON.parse(text) : {};
+          if (j.error) errMsg = j.error;
+        } catch {}
+        throw new Error(errMsg);
+      }
+      const href = URL.createObjectURL(await r.blob());
+      const a = document.createElement("a");
+      a.href = href;
+      a.download = p.id + "_" + start.slice(0, 10) + "_" + end.slice(0, 10) + "." + format;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(href), 1000);
+      toast.success("下載完成");
+    } catch (e: any) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
  useEffect(()=>{const context=(document as any).modelContext;if(!context?.registerTool)return;const lifecycle=new AbortController();void Promise.resolve(context.registerTool({name:"query_aslung_data",title:"查詢 ASLUNG 量測資料",description:"依授權設備與 UTC 期間查詢一頁量測資料，並更新頁面結果。",inputSchema:{type:"object",properties:{aslung_id:{type:"string"},start:{type:"string"},end:{type:"string"}},required:["aslung_id","start","end"],additionalProperties:false},annotations:{readOnlyHint:true,untrustedContentHint:true},execute:async(input:any)=>{if(!input||typeof input.aslung_id!=="string"||!Number.isFinite(Date.parse(input.start))||!Number.isFinite(Date.parse(input.end))||Date.parse(input.start)>Date.parse(input.end))throw new Error("無效查詢參數");if(!devices.some(d=>d.id===input.aslung_id))throw new Error("未授權的設備");setSection("data");setId(input.aslung_id);const local=(v:string)=>formatInTimeZone(new Date(v), tz, "yyyy-MM-dd'T'HH:mm");setStart(local(input.start));setEnd(local(input.end));return query({id:input.aslung_id,start:new Date(input.start).toISOString(),end:new Date(input.end).toISOString()});}},{signal:lifecycle.signal})).catch(()=>{});return()=>lifecycle.abort();},[devices]);
  const labels: Record<string, string> = {
   realtime: isEn ? "Realtime Status" : "即時線上狀態",

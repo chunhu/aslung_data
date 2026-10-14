@@ -2,8 +2,8 @@ node_modules/
 .next/
 .env
 .env.local
-data/
-backups/
+/data/
+/backups/
 *.sqlite*
 *.tsbuildinfo
 .DS_Store
