@@ -1,5 +1,8 @@
 "use client";
 import JSZip from "jszip";
+import MemberProfileFields, {type MemberProfile} from "@/components/MemberProfileFields";
+import RegistrationReviews from "@/components/RegistrationReviews";
+import DeviceMultiSelect from "@/components/DeviceMultiSelect";
 import {ADMIN_REALTIME_INTERVALS, MEMBER_REALTIME_INTERVALS, normalizeRealtimeInterval} from "@/lib/realtime-settings.mjs";
 import {useState,useEffect,useCallback,useRef,useMemo} from "react";
 import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
@@ -34,6 +37,11 @@ type Device = {
   location: string;
   description: string;
   status: string;
+  invalid_range?: boolean;
+  selection_id?: string;
+  segment_id?: string;
+  deployment_start?: string;
+  deployment_end?: string | null;
   start?: string;
   end?: string;
   is_granted?: boolean;
@@ -44,13 +52,30 @@ type Device = {
   tracking_ranges?: TrackingRange[];
   is_active_at_lab?: boolean;
 };
-type Member={email:string;name:string;nickname?:string|null;role:string;active:number;login_count?:number;last_login_at?:string|null};
+type Member=MemberProfile&{email:string;name:string;nickname?:string|null;role:string;active:number;login_count?:number;last_login_at?:string|null};
 type Grant={id:number;grant_type?:string;device_id:string|null;lab_id:string|null;email:string;start:string;end:string|null;location_name?:string;city_name?:string;town_name?:string;lab_device_count?:number};
 type DeviceLocation={id:number;lab_id:string;aslung_id:string;maintainer?:string|null;start_time:string;end_time:string|null;active:number};
 type ApiToken={id:string;created_at:string};
-type FileItem={id:string;name:string;size:number;mime_type:string;description?:string|null;uploader_email:string;storage_path:string;download_count?:number;created_at:string}; type FileGrant={id:number;file_id:string;email:string;created_at:string}; type GrantRequest={id:number;email:string;request_type?:string;aslung_id:string;lab_id?:string|null;reason:string;status:string;reviewed_by?:string|null;reviewed_at?:string|null;created_at:string;member_name?:string;member_nickname?:string|null;location_name?:string;city_name?:string;town_name?:string}; type State={me:{email:string;name:string;role:string;login_count?:number;last_login_at?:string|null};devices:Device[];members:Member[];grants:Grant[];locations:DeviceLocation[];tokens:ApiToken[];files:FileItem[];fileGrants:FileGrant[];labs?:Lab[];maintainers?:Maintainer[];alertSettings?:AlertSettings;alertChecks?:AlertCheck[];alertLogs?:AlertLog[];grantRequests?:GrantRequest[];connected:boolean;totalLogins?:number;siteStats?:{totalViews:number;todayViews:number}};
+type FileItem={id:string;name:string;size:number;mime_type:string;description?:string|null;uploader_email:string;storage_path:string;download_count?:number;created_at:string}; type FileGrant={id:number;file_id:string;email:string;created_at:string}; type GrantRequest={id:number;email:string;request_type?:string;aslung_id:string;lab_id?:string|null;reason:string;status:string;reviewed_by?:string|null;reviewed_at?:string|null;created_at:string;member_name?:string;member_nickname?:string|null;location_name?:string;city_name?:string;town_name?:string}; type State={me:MemberProfile&{allowMaintainerNameMatch?:boolean;email:string;name:string;role:string;login_count?:number;last_login_at?:string|null};devices:Device[];downloadSegments:Device[];members:Member[];grants:Grant[];locations:DeviceLocation[];tokens:ApiToken[];files:FileItem[];fileGrants:FileGrant[];labs?:Lab[];maintainers?:Maintainer[];alertSettings?:AlertSettings;alertChecks?:AlertCheck[];alertLogs?:AlertLog[];grantRequests?:GrantRequest[];connected:boolean;totalLogins?:number;siteStats?:{totalViews:number;todayViews:number}};
 type Page={data:Record<string,unknown>[];next_cursor:string|null;has_more:boolean};
-const pick=(value:string,onChange:(s:string)=>void,items:{value:string;label:string}[],placeholder:string)=><Select value={value} onValueChange={onChange}><SelectTrigger className="w-full h-11 bg-white"><SelectValue placeholder={placeholder}/></SelectTrigger><SelectContent>{items.map(x=><SelectItem key={x.value} value={x.value}>{x.label}</SelectItem>)}</SelectContent></Select>;
+const pick = (value: string, onChange: (s: string) => void, items: {value: string; label: string}[], placeholder: string, compact = false) => {
+ const selected = items.find(item => item.value === value);
+ const shortLabel = (item: {value: string; label: string}) => item.label;
+ return <Select value={value} onValueChange={onChange}>
+   <SelectTrigger className={cn("w-full min-w-0 max-w-full h-11 bg-white", compact && "device-select-trigger")} aria-label={compact ? "ASLUNG ID" : undefined} title={selected?.label}>
+     <SelectValue key={compact ? value || "placeholder" : undefined} placeholder={placeholder} translate={compact && selected && value !== "__ALL__" ? "no" : undefined}>
+       {compact && selected ? <span translate={selected.value === "__ALL__" ? undefined : "no"}>{shortLabel(selected)}</span> : undefined}
+     </SelectValue>
+   </SelectTrigger>
+   <SelectContent position={compact ? "popper" : "item-aligned"} align="start" className={compact ? "device-select-content" : undefined}>
+     {items.map(item => <SelectItem key={item.value} value={item.value} textValue={item.label} title={item.label}>
+       {compact ? <span className="device-option">
+         <span className="device-option-id" translate={item.value === "__ALL__" ? undefined : "no"}>{shortLabel(item)}</span>
+       </span> : item.label}
+     </SelectItem>)}
+   </SelectContent>
+ </Select>;
+};
 function Blank({title,description,icon:Icon=Database}:{title:string;description:string;icon?:typeof Database}){return <Empty className="empty-area"><EmptyHeader><EmptyMedia variant="icon"><Icon/></EmptyMedia><EmptyTitle>{title}</EmptyTitle><EmptyDescription className="text-sm">{description}</EmptyDescription></EmptyHeader></Empty>;}
 async function request(url: string, init?: RequestInit) {
   const r = await fetch(url, init);
@@ -125,12 +150,13 @@ const formatRealtimeInterval = (s: number) => {
 
 export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInUrl:string}){
  const [state,setState]=useState<State|null>(null),[error,setError]=useState(""),[loading,setLoading]=useState(signedIn),[section,setSection]=useState("data"),[modal,setModal]=useState(""),[busy,setBusy]=useState(false),[confirmation,setConfirmation]=useState<any>(null);
- const [id,setId]=useState(""),[start,setStart]=useState(""),[end,setEnd]=useState(""),[page,setPage]=useState<Page|null>(null),[queried,setQueried]=useState<{id:string;start:string;end:string}|null>(null),[search,setSearch]=useState("");
+ const [selectedDownloadIds, setSelectedDownloadIds] = useState<string[]>([]);
+ const [id,setId]=useState(""),[start,setStart]=useState(""),[end,setEnd]=useState(""),[page,setPage]=useState<Page|null>(null),[queried,setQueried]=useState<{id:string;start:string;end:string;segment_id?:string}|null>(null),[search,setSearch]=useState("");
  const [grantDevice,setGrantDevice]=useState(""),[grantEmail,setGrantEmail]=useState(""),[grantId,setGrantId]=useState<number|null>(null),[grantType,setGrantType]=useState<"device"|"lab">("lab"),[grantLab,setGrantLab]=useState("");
   const [clippingWarning, setClippingWarning] = useState<{
     device: Device;
     original: { start: string; end: string };
-    clipped: { start: string; end: string };
+    clipped: { start: string; end: string; isoStart?: string; isoEnd?: string };
     actionType: "query" | "download";
     format?: string;
   } | null>(null);
@@ -394,11 +420,33 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
  const [realtimeRefreshedAt, setRealtimeRefreshedAt] = useState<Date|null>(null);
  const [realtimeInterval, setRealtimeInterval] = useState<number>(60);
  const admin=state?.me.role==="admin",devices=state?.devices??[],members=state?.members??[],grants=state?.grants??[],locations=state?.locations??[],tokens=state?.tokens??[],files=state?.files??[],fileGrants=state?.fileGrants??[],labs=state?.labs??[],maintainers=state?.maintainers??[],alertSettings=state?.alertSettings,alertChecks=state?.alertChecks??[],alertLogs=state?.alertLogs??[],grantRequests=state?.grantRequests??[];
+ const downloadDevices = useMemo(() => state?.downloadSegments ?? [], [state?.downloadSegments]);
+ useEffect(() => {
+   if (!id || id.startsWith("__") || downloadDevices.some(d => d.selection_id === id)) return;
+   const segment = downloadDevices.find(d => d.id === id);
+   if (segment?.selection_id) setId(segment.selection_id);
+ }, [id, downloadDevices]);
+ const batchSelection = id === "__ALL__" || id === "__MULTI__";
+ const selectedDeviceIds = id === "__ALL__" ? downloadDevices.filter(device=>!device.invalid_range).map(device => device.selection_id!)
+   : id === "__MULTI__" ? selectedDownloadIds : id ? [id] : [];
+ const deviceDownloadOptions = downloadDevices.map(device => ({
+   value: device.selection_id!,
+   deviceId: device.id,
+   disabled: device.invalid_range,
+   description: `${localTime(device.deployment_start || device.start || "")} ～ ${device.deployment_end ? localTime(device.deployment_end) : (isEn ? "Present" : "至今")}`,
+   label: (device.invalid_range ? (isEn ? "[Invalid dates] " : "【日期異常】") : "") + ((device.grant_lab_id || device.location) ? `${device.grant_lab_id || device.location}：${device.id}` : device.id)
+     + ((device.is_active_at_lab ?? (device.status === "DEPLOYED")) ? (isEn ? " (Operating)" : "（運作中）") : "")
+ }));
+ function selectDownloadDevices(values: string[]) {
+   setSelectedDownloadIds(values);
+   setId(values.length === 0 ? "" : values.length === 1 ? values[0]
+     : values.length === downloadDevices.filter(d=>!d.invalid_range).length ? "__ALL__" : "__MULTI__");
+ }
   const isMaintainer = useMemo(() => {
     if (!state?.me) return false;
     if (state.me.role === "admin") return true;
-    const myName = (state.me.name || "").trim();
-    const myNickname = ((state.me as any)?.nickname || "").trim();
+    const myName = state.me.allowMaintainerNameMatch ? (state.me.name || "").trim() : "";
+    const myNickname = state.me.allowMaintainerNameMatch ? ((state.me as any)?.nickname || "").trim() : "";
     const myEmail = (state.me.email || "").trim().toLowerCase();
     const inMaintainers = (state.maintainers || []).some(m => (m.name && (m.name.trim() === myName || (myNickname && m.name.trim() === myNickname))) || (m.email && m.email.trim().toLowerCase() === myEmail));
     const inLocations = (state.locations || []).some(l => l.maintainer && (l.maintainer.trim() === myName || (myNickname && l.maintainer.trim() === myNickname)));
@@ -459,12 +507,12 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
  useEffect(()=>{setPage(null);setQueried(null)},[id,start,end]);
 
   useEffect(() => {
-    if (!id || id === "__ALL__") return;
-    const dev = devices.find(d => d.id === id);
+    if (!id || id === "__ALL__" || id === "__MULTI__") return;
+    const dev = downloadDevices.find(d => d.selection_id === id);
     if (!dev) return;
 
     if (dev.tracking_ranges && dev.tracking_ranges.length > 0) {
-      const latest = dev.tracking_ranges[dev.tracking_ranges.length - 1];
+      const latest = {start: dev.tracking_ranges[0].start, end: dev.tracking_ranges.at(-1)?.end};
       const localStart = formatInTimeZone(new Date(latest.start), tz, "yyyy-MM-dd'T'HH:mm");
       let localEnd = "";
       if (latest.end) {
@@ -480,11 +528,12 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
       setStart(localStart);
       setEnd(localEnd);
     }
-  }, [id, devices, tz]);
-  async function mutate(p:any){setBusy(true);try{await request("/api/manage",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(p)});await load();setModal("");setConfirmation(null);if(p?.action==="deviceDeleteBulk")setSelectedDevices(new Set());if(p?.action==="deviceDelete")setSelectedDevices(prev=>{const s=new Set(prev);s.delete(p.id);return s;});if(p?.action==="locationDeleteBulk")setSelectedLocations(new Set());if(p?.action==="locationDelete")setSelectedLocations(prev=>{const s=new Set(prev);s.delete(Number(p.id));return s;});if(p?.action==="labDeleteBulk")setSelectedLabs(new Set());if(p?.action==="labDelete")setSelectedLabs(prev=>{const s=new Set(prev);s.delete(p.id);return s;});if(p?.action==="maintainerDeleteBulk")setSelectedMaintainers(new Set());if(p?.action==="maintainerDelete")setSelectedMaintainers(prev=>{const s=new Set(prev);s.delete(p.name);return s;});if(p?.action==="alertLogDeleteBulk"||p?.action==="alertLogClearAll")setSelectedAlertLogs(new Set());if(p?.action==="alertLogDelete")setSelectedAlertLogs(prev=>{const s=new Set(prev);s.delete(Number(p.id));return s;});if(p?.action==="alertCheckDeleteBulk"||p?.action==="alertCheckClearAll")setSelectedAlertChecks(new Set());if(p?.action==="alertCheckDelete")setSelectedAlertChecks(prev=>{const s=new Set(prev);s.delete(Number(p.id));return s;});if(p?.action==="memberDeleteBulk")setSelectedMembers(new Set());if(p?.action==="memberDelete")setSelectedMembers(prev=>{const s=new Set(prev);s.delete(p.email);return s;});toast.success("已儲存變更");return true;}catch(e){toast.error((e as Error).message);return false;}finally{setBusy(false)}}
- async function query(params:{id:string;start:string;end:string},cursor=""){setBusy(true);try{const q=new URLSearchParams({aslung_id:params.id,start:params.start,end:params.end,cursor});const p=await request("/api/data?"+q);setPage(p);setQueried(params);return {count:p.data.length,has_more:p.has_more};}catch(e){setPage(null);setQueried(null);toast.error((e as Error).message);throw e;}finally{setBusy(false)}}
- function parameters(){if(!id||!start||!end)throw new Error("請選擇 ASLUNG ID 和完整查詢期間。");const s=zoned(start),e=zoned(end);if(s>e)throw new Error("結束時間必須晚於開始時間。");return {id,start:s,end:e};}
+  }, [id, downloadDevices, tz]);
+  async function mutate(p:any){setBusy(true);try{const result=await request("/api/manage",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(p)});if(result.notice)toast.warning(result.notice);await load();setModal("");setConfirmation(null);if(p?.action==="deviceDeleteBulk")setSelectedDevices(new Set());if(p?.action==="deviceDelete")setSelectedDevices(prev=>{const s=new Set(prev);s.delete(p.id);return s;});if(p?.action==="locationDeleteBulk")setSelectedLocations(new Set());if(p?.action==="locationDelete")setSelectedLocations(prev=>{const s=new Set(prev);s.delete(Number(p.id));return s;});if(p?.action==="labDeleteBulk")setSelectedLabs(new Set());if(p?.action==="labDelete")setSelectedLabs(prev=>{const s=new Set(prev);s.delete(p.id);return s;});if(p?.action==="maintainerDeleteBulk")setSelectedMaintainers(new Set());if(p?.action==="maintainerDelete")setSelectedMaintainers(prev=>{const s=new Set(prev);s.delete(p.name);return s;});if(p?.action==="alertLogDeleteBulk"||p?.action==="alertLogClearAll")setSelectedAlertLogs(new Set());if(p?.action==="alertLogDelete")setSelectedAlertLogs(prev=>{const s=new Set(prev);s.delete(Number(p.id));return s;});if(p?.action==="alertCheckDeleteBulk"||p?.action==="alertCheckClearAll")setSelectedAlertChecks(new Set());if(p?.action==="alertCheckDelete")setSelectedAlertChecks(prev=>{const s=new Set(prev);s.delete(Number(p.id));return s;});if(p?.action==="memberDeleteBulk")setSelectedMembers(new Set());if(p?.action==="memberDelete")setSelectedMembers(prev=>{const s=new Set(prev);s.delete(p.email);return s;});toast.success("已儲存變更");return true;}catch(e){toast.error((e as Error).message);return false;}finally{setBusy(false)}}
+ async function query(params:{id:string;start:string;end:string;segment_id?:string},cursor=""){setBusy(true);try{const q=new URLSearchParams({aslung_id:params.id,start:params.start,end:params.end,cursor,...(params.segment_id ? {segment_id:params.segment_id} : {})});const p=await request("/api/data?"+q);setPage(p);setQueried(params);return {count:p.data.length,has_more:p.has_more};}catch(e){setPage(null);setQueried(null);toast.error((e as Error).message);throw e;}finally{setBusy(false)}}
+ function parameters(){if(!id||!start||!end)throw new Error("請選擇 ASLUNG ID 和完整查詢期間。");const s=zoned(start),e=zoned(end);if(s>e)throw new Error("結束時間必須晚於開始時間。");const selected=downloadDevices.find(d=>d.selection_id===id);if(!selected)throw new Error("請選擇可存取的追蹤區段。");return {id:selected.id,segment_id:selected.segment_id,start:s,end:e};}
    const checkDeviceRange = useCallback((dev: Device, qStartStr: string, qEndStr: string) => {
+    if (dev?.invalid_range) return {status: "OUT_OF_RANGE" as const};
     if (!dev || !dev.tracking_ranges || dev.tracking_ranges.length === 0) {
       return { status: "OK" as const, validStart: zoned(qStartStr), validEnd: zoned(qEndStr) };
     }
@@ -512,24 +561,25 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
       return { status: "OUT_OF_RANGE" as const };
     }
 
-    const best = overlaps[overlaps.length - 1];
+    const best = {start: overlaps[0].start, end: overlaps[overlaps.length - 1].end};
     const isPartiallyOutOfRange = new Date(best.start).getTime() > qS || new Date(best.end).getTime() < qE;
 
     if (isPartiallyOutOfRange) {
       return {
         status: "PARTIAL" as const,
         clippedStart: best.start,
-        clippedEnd: best.end
+        clippedEnd: best.end,
+        ranges: overlaps
       };
     }
 
-    return { status: "OK" as const, validStart: zoned(qStartStr), validEnd: zoned(qEndStr) };
+    return { status: "OK" as const, validStart: zoned(qStartStr), validEnd: zoned(qEndStr), ranges: overlaps };
   }, [zoned]);
 
-  async function executeDirectDownload(deviceId: string, sIso: string, eIso: string, format: string) {
+  async function executeDirectDownload(deviceId: string, sIso: string, eIso: string, format: string, segmentId?: string) {
     setBusy(true);
     try {
-      const q = new URLSearchParams({ aslung_id: deviceId, start: sIso, end: eIso, format, download: "1" });
+      const q = new URLSearchParams({ aslung_id: deviceId, start: sIso, end: eIso, format, download: "1", ...(segmentId ? {segment_id:segmentId} : {}) });
       const r = await fetch("/api/data?" + q);
       if (!r.ok) {
         let errMsg = `下載失敗 (${r.status})`;
@@ -543,7 +593,7 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
       const href = URL.createObjectURL(await r.blob());
       const a = document.createElement("a");
       a.href = href;
-      a.download = deviceId + "_" + sIso.slice(0, 10) + "_" + eIso.slice(0, 10) + "." + format;
+      a.download = deviceId + "_segment-" + segmentId + "_" + sIso.slice(0, 10) + "_" + eIso.slice(0, 10) + "." + format;
       a.click();
       setTimeout(() => URL.revokeObjectURL(href), 1000);
       toast.success("下載完成");
@@ -555,8 +605,8 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
   }
 
   function handleExecuteQuery() {
-    if (id === "__ALL__") {
-      toast.info("全部授權設備僅支援批次打包下載。請點選下方「打包下載」按鈕。");
+    if (batchSelection) {
+      void startBatchDownload("csv");
       return;
     }
     try {
@@ -573,7 +623,7 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
           setClippingWarning({
             device: chosen,
             original: { start, end },
-            clipped: { start: localS, end: localE },
+            clipped: { start: localS, end: localE, isoStart:check.clippedStart, isoEnd:check.clippedEnd },
             actionType: "query"
           });
           return;
@@ -586,7 +636,7 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
   }
 
   function handleExecuteDownload(format: string) {
-    if (id === "__ALL__") {
+    if (batchSelection) {
       void startBatchDownload(format);
       return;
     }
@@ -604,7 +654,7 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
           setClippingWarning({
             device: chosen,
             original: { start, end },
-            clipped: { start: localS, end: localE },
+            clipped: { start: localS, end: localE, isoStart:check.clippedStart, isoEnd:check.clippedEnd },
             actionType: "download",
             format
           });
@@ -618,6 +668,8 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
   }
 
   async function startBatchDownload(format: string) {
+    if (batchRunning) return;
+    const targets = downloadDevices.filter(device => selectedDeviceIds.includes(device.selection_id!));
     if (!start || !end) {
       toast.error("請選擇完整開始時間與結束時間。");
       return;
@@ -632,8 +684,8 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
       toast.error("為維持效能，一般會員批次下載區間不可超過 31 天。請縮短日期範圍。");
       return;
     }
-    if (!devices.length) {
-      toast.error("尚無可存取的設備。");
+    if (!targets.length) {
+      toast.error("請至少勾選一台可存取的設備。");
       return;
     }
 
@@ -643,8 +695,8 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
     setBatchBlobUrl("");
     setBatchZipFilename("");
 
-    const initialLogs = devices.map(d => ({
-      id: d.id,
+    const initialLogs = targets.map(d => ({
+      id: `${d.grant_lab_id || ""}：${d.id} #${d.segment_id}`,
       status: "waiting" as const,
       message: d.description || d.name || ""
     }));
@@ -663,21 +715,23 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
     let successCount = 0;
     let skippedCount = 0;
 
-    for (let i = 0; i < devices.length; i++) {
-      const dev = devices[i];
+    for (let i = 0; i < targets.length; i++) {
+      const dev = targets[i];
       setBatchLogs(prev => prev.map((l, idx) => idx === i ? { ...l, status: "fetching" } : l));
 
       const check = checkDeviceRange(dev, start, end);
       if (check.status === "OUT_OF_RANGE") {
         skippedCount++;
         const msg = dev.tracking_ranges && dev.tracking_ranges.length > 0 ? "所選期間未擺放於該站點" : "無有效授權紀錄";
-        manifestText += `${i + 1}. ${dev.id}: 略過 (${msg})\r\n`;
+        manifestText += `${i + 1}. ${dev.id} [${dev.grant_lab_id || "-"} / segment ${dev.segment_id}]: 略過 (${msg})\r\n`;
         setBatchLogs(prev => prev.map((l, idx) => idx === i ? { ...l, status: "skipped", message: msg } : l));
       } else {
         const devStart = check.status === "PARTIAL" ? check.clippedStart : sIso;
         const devEnd = check.status === "PARTIAL" ? check.clippedEnd : eIso;
+        const rangeDescription = (check.ranges || [{start:devStart,end:devEnd}])
+          .map(range => `${localTime(range.start)} ~ ${localTime(range.end)}`).join("；");
         try {
-          const q = new URLSearchParams({ aslung_id: dev.id, start: devStart, end: devEnd, format, download: "1" });
+          const q = new URLSearchParams({ aslung_id: dev.id, segment_id: dev.segment_id!, start: devStart, end: devEnd, format, download: "1" });
           const res = await fetch("/api/data?" + q);
           if (!res.ok) {
             let errMsg = `下載失敗 (${res.status})`;
@@ -700,28 +754,28 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
           const recordCount = format === "csv" ? Math.max(0, lines.length - 1) : 0;
           if (recordCount === 0 && format === "csv") {
             skippedCount++;
-            manifestText += `${i + 1}. ${dev.id}: 略過 (有效期間內無回報數據)\r\n`;
+            manifestText += `${i + 1}. ${dev.id} [${dev.grant_lab_id || "-"} / segment ${dev.segment_id}]: 略過 (有效期間內無回報數據)\r\n`;
             setBatchLogs(prev => prev.map((l, idx) => idx === i ? { ...l, status: "skipped", message: "此期間無數據" } : l));
           } else {
             successCount++;
-            const fName = `${dev.id}_${devStart.slice(0, 10)}_${devEnd.slice(0, 10)}.${format}`;
+            const fName = `${dev.id}_segment-${dev.segment_id}_${devStart.slice(0, 10)}_${devEnd.slice(0, 10)}.${format}`;
             zip.file(fName, content);
-            manifestText += `${i + 1}. ${dev.id}: 成功 (匯出 ${recordCount} 筆，有效在站區間: ${localTime(devStart)} ~ ${localTime(devEnd)})\r\n`;
-            setBatchLogs(prev => prev.map((l, idx) => idx === i ? { ...l, status: "success", count: recordCount, validRange: `${localTime(devStart).slice(0, 10)} ~ ${localTime(devEnd).slice(0, 10)}` } : l));
+            manifestText += `${i + 1}. ${dev.id} [${dev.grant_lab_id || "-"} / segment ${dev.segment_id}]: 成功 (匯出 ${recordCount} 筆，有效授權區間: ${rangeDescription})\r\n`;
+            setBatchLogs(prev => prev.map((l, idx) => idx === i ? { ...l, status: "success", count: recordCount, validRange: rangeDescription } : l));
           }
         } catch (e: any) {
           skippedCount++;
-          manifestText += `${i + 1}. ${dev.id}: 錯誤 (${e.message})\r\n`;
+          manifestText += `${i + 1}. ${dev.id} [${dev.grant_lab_id || "-"} / segment ${dev.segment_id}]: 錯誤 (${e.message})\r\n`;
           setBatchLogs(prev => prev.map((l, idx) => idx === i ? { ...l, status: "error", message: e.message } : l));
           if (e.message.includes("登入已過期")) {
             break;
           }
         }
       }
-      setBatchProgress(Math.round(((i + 1) / devices.length) * 100));
+      setBatchProgress(Math.round(((i + 1) / targets.length) * 100));
     }
 
-    manifestText += `\r\n總計完成：${successCount} 台成功，${skippedCount} 台略過。\r\n==================================================\r\n`;
+    manifestText += `\r\n總計完成：${successCount} 個區段成功，${skippedCount} 個區段略過。\r\n==================================================\r\n`;
     zip.file("download_manifest.txt", manifestText);
 
     try {
@@ -751,7 +805,7 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
     setBusy(true);
     try {
       const p = parameters();
-      const q = new URLSearchParams({ aslung_id: p.id, start: p.start, end: p.end, format, download: "1" });
+      const q = new URLSearchParams({ aslung_id: p.id, start: p.start, end: p.end, format, download: "1", ...(p.segment_id ? {segment_id:p.segment_id} : {}) });
       const r = await fetch("/api/data?" + q);
       if (!r.ok) {
         let errMsg = `下載失敗 (${r.status})`;
@@ -765,7 +819,7 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
       const href = URL.createObjectURL(await r.blob());
       const a = document.createElement("a");
       a.href = href;
-      a.download = p.id + "_" + start.slice(0, 10) + "_" + end.slice(0, 10) + "." + format;
+      a.download = p.id + "_segment-" + p.segment_id + "_" + start.slice(0, 10) + "_" + end.slice(0, 10) + "." + format;
       a.click();
       setTimeout(() => URL.revokeObjectURL(href), 1000);
       toast.success("下載完成");
@@ -859,7 +913,7 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
     setDeviceGrantFilter("ALL");
     setSearch("");
   };
- const chosen=devices.find(d=>d.id===id); let columns=Array.from(new Set((page?.data??[]).flatMap(Object.keys)));if(columns.includes("timestamp"))columns=["timestamp",...columns.filter(c=>c!=="timestamp")];
+ const chosen=downloadDevices.find(d=>d.selection_id===id); let columns=Array.from(new Set((page?.data??[]).flatMap(Object.keys)));if(columns.includes("timestamp"))columns=["timestamp",...columns.filter(c=>c!=="timestamp")];
  
  const parseAndImportCsv = async (text: string) => {
     const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l);
@@ -1062,29 +1116,25 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
 
 
  return <SidebarProvider id="sidebar-provider" style={{"--sidebar-width":"245px"} as React.CSSProperties}><Toaster richColors position="top-center"/>
- {signedIn && <Sidebar className="nav-rail"><SidebarResizer /><SidebarHeader className="brand"><div className="brand-mark"><Activity size={24}/></div><div><strong>ASLUNG</strong><span>DATA MANAGEMENT</span></div></SidebarHeader><SidebarContent><div className="nav-caption">工作空間</div><SidebarMenu className="px-4">{nav.filter(n=>state && (admin || ["realtime","data","files","connection"].includes(n.id) || (n.id==="alerts" && isMaintainer))).map(n=><SidebarMenuItem key={n.id}><SidebarMenuButton className="nav-button" isActive={section===n.id} onClick={()=>{setSection(n.id);setSearch("")}}><n.icon/><span>{n.name}</span></SidebarMenuButton></SidebarMenuItem>)}</SidebarMenu><div className="px-4 py-2 lg:hidden"><div className="text-[11px] text-slate-400 mb-1.5 flex items-center gap-1"><Clock size={12}/> 時區設定 (Timezone)</div><Select value={tz} onValueChange={v => { setTz(v); localStorage.setItem("aslung_tz", v); }}><SelectTrigger className="w-full h-8 text-xs bg-slate-800 text-slate-200 border-slate-700"><SelectValue/></SelectTrigger><SelectContent>{allTimeZones.map(t => <SelectItem key={t.tz} value={t.tz}>{t.label}</SelectItem>)}</SelectContent></Select></div><div className="rail-note"><LockKeyhole size={18}/><strong>依會員授權存取</strong><p>設備與資料期間由管理員指定。</p></div></SidebarContent><SidebarFooter className="rail-footer"><div className="avatar">{state?.me.name?.slice(0,1)??"A"}</div><div className="identity"><strong>{state?.me.name??"ASLUNG 工作空間"}</strong><span>{state?(admin?"管理員":"會員"):"請登入後使用"}</span>{signedIn&&<button className="block text-xs underline mt-1" onClick={()=>setModal("password")}>變更密碼</button>}</div>{signedIn&&<Button variant="ghost" size="icon" aria-label="登出" onClick={async()=>{try{await request("/api/auth/logout",{method:"POST"});window.location.assign("/login")}catch(e){toast.error((e as Error).message)}}}><LogOut size={17}/></Button>}</SidebarFooter></Sidebar>}
+ {signedIn && <Sidebar className="nav-rail"><SidebarResizer /><SidebarHeader className="brand"><div className="brand-mark"><Activity size={24}/></div><div><strong>ASLUNG</strong><span>DATA MANAGEMENT</span></div></SidebarHeader><SidebarContent><div className="nav-caption">工作空間</div><SidebarMenu className="px-4">{nav.filter(n=>state && (admin || ["realtime","data","files","connection"].includes(n.id) || (n.id==="alerts" && isMaintainer))).map(n=><SidebarMenuItem key={n.id}><SidebarMenuButton className="nav-button" isActive={section===n.id} onClick={()=>{setSection(n.id);setSearch("")}}><n.icon/><span>{n.name}</span></SidebarMenuButton></SidebarMenuItem>)}</SidebarMenu><div className="px-4 py-2 lg:hidden"><div className="text-[11px] text-slate-400 mb-1.5 flex items-center gap-1"><Clock size={12}/> 時區設定 (Timezone)</div><Select value={tz} onValueChange={v => { setTz(v); localStorage.setItem("aslung_tz", v); }}><SelectTrigger className="w-full h-8 text-xs bg-slate-800 text-slate-200 border-slate-700"><SelectValue/></SelectTrigger><SelectContent>{allTimeZones.map(t => <SelectItem key={t.tz} value={t.tz}>{t.label}</SelectItem>)}</SelectContent></Select></div><div className="rail-note"><LockKeyhole size={18}/><strong>依會員授權存取</strong><p>設備與資料期間由管理員指定。</p></div></SidebarContent><SidebarFooter className="rail-footer"><div className="avatar">{state?.me.name?.slice(0,1)??"A"}</div><div className="identity"><strong>{state?.me.name??"ASLUNG 工作空間"}</strong><span>{state?(admin?"管理員":"會員"):"請登入後使用"}</span>{signedIn&&<button className="block text-xs underline mt-1" onClick={()=>setModal("password")}>變更密碼</button>}{signedIn&&<button className="block text-xs underline mt-1" onClick={()=>setModal("profile")}>{isEn?"My collaboration profile":"我的合作資料"}</button>}</div>{signedIn&&<Button variant="ghost" size="icon" aria-label="登出" onClick={async()=>{try{await request("/api/auth/logout",{method:"POST"});window.location.assign("/login")}catch(e){toast.error((e as Error).message)}}}><LogOut size={17}/></Button>}</SidebarFooter></Sidebar>}
  <main className="workspace">{signedIn && <header className="topbar"><div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1"><SidebarTrigger title="顯示/隱藏側邊欄"/><span className="breadcrumb min-w-0 truncate whitespace-nowrap"><span className="hidden sm:inline">工作空間 <span>/</span> </span><strong>{labels[section]}</strong></span></div><div className="top-meta flex items-center gap-2 sm:gap-3 shrink-0"><div className="hidden sm:flex"><FontSizeAdjuster /></div><LanguageSwitcher /><div className="hidden lg:flex timezone"><Select value={tz} onValueChange={v => { setTz(v); localStorage.setItem("aslung_tz", v); }}><SelectTrigger className="w-56 h-8 text-xs bg-white/50 border-slate-200"><SelectValue/></SelectTrigger><SelectContent>{allTimeZones.map(t => <SelectItem key={t.tz} value={t.tz}>{t.label}</SelectItem>)}</SelectContent></Select></div></div></header>}
   <div className="main-inner"><div className="page-heading"><div><p className="eyebrow">ASLUNG DATA HUB</p><h1>{labels[section]}</h1><p className="subheading">{{realtime:"檢視所有授權設備的最後回報狀態與數值。",data:"選擇設備與期間，查詢並下載您有權限的量測資料。",devices:"建立設備識別資料，作為資料查詢與授權的依據。",members:"管理可登入工作空間的會員帳號。",permissions:"指定每位會員可存取的設備與資料期間。",locations:"追蹤設備分配至各實驗室或國外的擺放位置歷史紀錄。",labs:"管理實驗室、國外站點與各監測地點的基本資料與座標。",maintainers:"管理儀器負責人與維護人員聯絡信箱，支援 Google 試算表同步。",alerts:admin?"自訂定時檢查設備狀態，當設備斷線超過門檻時自動發送通知信給維護者。":"檢視被授權及您所列管設備的連線監控狀態與斷線告警日誌。",files:admin?"上傳管理檔案，並指定授權特定成員下載與檢視。":"檢視與下載管理員授權給您的專屬檔案資料。",connection:isEn ? "Connect to AWS EC2 data source, query JSON API, and view complete documentation." : "透過 JSON 交換資料，連接 AWS EC2 量測資料來源與完整的 API 使用指南。"}[section]}</p></div>{signedIn&&state&&<Button variant="outline" disabled={loading} onClick={()=>void load()}><RefreshCw size={15} className={loading?"animate-spin":""}/>重新整理</Button>}</div>
  {!signedIn?<section className="panel welcome"><div className="welcome-icon"><ShieldCheck size={38}/></div><p className="eyebrow">安全資料存取</p><h2>登入您的 ASLUNG 工作空間</h2><p>使用 Email 與密碼登入，查看您的設備與資料授權。<br/>管理員可建立 ASLUNG ID、開通會員與指定資料期間。</p><Button asChild size="lg"><a href={signInUrl} target="_top">使用 Email 登入</a></Button><div className="welcome-foot"><LockKeyhole size={14}/>帳號由管理員建立；請使用您的 Email 與密碼登入。</div></section>:error?<section className="panel"><Blank title="無法開啟工作空間" description={error} icon={LockKeyhole}/><div className="text-center pb-8"><Button onClick={()=>void load()}>重試</Button></div></section>:!state?<div className="panel p-8 space-y-5"><Skeleton className="h-9 w-48"/><Skeleton className="h-32 w-full"/></div>:<>
  <div className="stats"><div><span>{admin?"可存取設備":"可存取與列管設備"}</span><strong>{devices.length.toString().padStart(2,"0")}</strong><Database/></div><div><span>{admin?"有效會員":"帳號權限"}</span><strong>{admin?members.filter(m=>m.active&&m.role==="member").length.toString().padStart(2,"0"):"會員"}</strong><Users/></div><div><span>{admin?"資料授權":"授權期間"}</span><strong>{admin?grants.length.toString().padStart(2,"0"):"依設備設定"}</strong><ShieldCheck/></div><div><span>網站瀏覽次數</span><strong className="source-stat" title={`累計瀏覽：${state?.siteStats?.totalViews ?? 0} 次，今日：${state?.siteStats?.todayViews ?? 0} 次`}>{(state?.siteStats?.totalViews ?? 0).toLocaleString()} <span className="text-xs font-normal text-slate-500">次</span></strong><span className="status ok" title="今日造訪人次">今日 {state?.siteStats?.todayViews ?? 0} 次</span></div></div>
  {section==="realtime"&&<><section className="panel results"><div className="results-heading"><div><h2>設備即時線上狀態</h2><p className="flex items-center gap-2"><span>顯示授權設備的最新一筆量測紀錄（{realtimeInterval > 0 ? `每 ${formatRealtimeInterval(realtimeInterval)}自動更新` : "已暫停自動更新"}）。</span>{realtimeRefreshedAt && <span className="text-[11px] text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded font-mono">最後更新：{formatInTimeZone(realtimeRefreshedAt, tz, "HH:mm:ss")}</span>}</p></div><div className="flex gap-2 items-center flex-wrap"><Input placeholder="搜尋 ID 或位置" className="w-44 bg-white h-9 text-xs" value={realtimeSearch} onChange={e=>setRealtimeSearch(e.target.value)} /><div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 px-2.5 h-9 rounded-md text-xs text-slate-600"><Clock size={13} className="text-slate-500 shrink-0" /><span className="whitespace-nowrap">{admin ? "預設更新時間：" : "更新頻率："}</span><select value={realtimeInterval} className="bg-transparent font-medium text-slate-800 outline-none cursor-pointer pr-1" aria-label={admin ? "預設更新時間" : "個人更新頻率"} title={admin ? "修改全站預設更新時間" : "只影響此帳號在本瀏覽器的畫面"} disabled={busy || !state} onChange={e => { void updateRealtimeInterval(Number(e.target.value)); }}>{(admin ? ADMIN_REALTIME_INTERVALS : MEMBER_REALTIME_INTERVALS).map(seconds => <option key={seconds} value={seconds}>每 {formatRealtimeInterval(seconds)}</option>)}<option value="0">暫停自動更新</option></select></div><Button variant="outline" size="sm" className="h-9" disabled={realtimeLoading} onClick={() => { void fetchRealtime(true); }}><RefreshCw size={14} className={realtimeLoading ? "animate-spin" : ""} />{realtimeLoading ? "更新中…" : "更新"}</Button></div></div>{!realtimeData?<div className="p-8"><Skeleton className="h-32 w-full"/></div>:realtimeData.length===0?<Blank title="沒有任何設備數據" description="尚無授權設備或設備未上傳過資料。"/>:(()=>{const filtered=(realtimeData||[]).filter(r=>{if(!admin){const dev=devices.find(d=>d.id===r.aslung_id);if(!dev)return false;if(dev.grant_source==="lab"&&!dev.is_active_at_lab&&!dev.is_maintained)return false;}if(!realtimeSearch)return true;const s=realtimeSearch.toLowerCase();const loc=locations.find(l=>l.aslung_id===r.aslung_id&&l.active)?.lab_id||"";return String(r.aslung_id).toLowerCase().includes(s)||loc.toLowerCase().includes(s);});return <div className="table-scroll"><Table><TableHeader><TableRow><TableHead className="w-12 text-center font-semibold">序號</TableHead><TableHead>狀態</TableHead><TableHead>目前位置</TableHead><TableHead>timestamp</TableHead><TableHead>aslung_id</TableHead><TableHead>PM1_G3</TableHead><TableHead>PM2.5_G3</TableHead><TableHead>PM10_G3</TableHead><TableHead>temperature</TableHead><TableHead>rh</TableHead><TableHead>co2</TableHead><TableHead>PM1_GSA</TableHead><TableHead>PM2.5_GSA</TableHead><TableHead>PM10_GSA</TableHead></TableRow></TableHeader><TableBody>{filtered.length===0?<TableRow><TableCell colSpan={14} className="text-center py-8 text-slate-500">沒有符合搜尋條件的設備</TableCell></TableRow>:filtered.map((r,i)=>{const isOffline=Date.now()-new Date(r.timestamp).getTime()>3600000;const loc=locations.find(l=>l.aslung_id===r.aslung_id&&l.active)?.lab_id||devices.find(d=>d.id===r.aslung_id)?.location||locations.find(l=>l.aslung_id===r.aslung_id)?.lab_id||<span className="text-slate-400">—</span>;const dev=devices.find(d=>d.id===r.aslung_id);return <TableRow key={i}><TableCell className="text-center font-mono text-xs text-slate-500">{i+1}</TableCell><TableCell><span className={isOffline?"status pending":"status ok"}>{isOffline?"已斷線":"連線中"}</span></TableCell><TableCell>{loc}</TableCell><TableCell className="mono font-medium">{localTime(String(r.timestamp))}</TableCell><TableCell className="mono font-medium"><div className="flex items-center gap-1.5"><span>{String(r.aslung_id)}</span>{!admin&&dev?.is_maintained&&<span className="text-[10px] px-1.5 py-0.5 rounded font-sans font-medium bg-amber-50 text-amber-800 border border-amber-200">列管</span>}{!admin&&dev?.is_granted&&<span className="text-[10px] px-1.5 py-0.5 rounded font-sans font-medium bg-blue-50 text-blue-800 border border-blue-200">授權</span>}</div></TableCell><TableCell>{String(r.PM1_G3??"—")}</TableCell><TableCell>{String(r["PM2.5_G3"]??"—")}</TableCell><TableCell>{String(r.PM10_G3??"—")}</TableCell><TableCell>{String(r.temperature??"—")}</TableCell><TableCell>{String(r.rh??"—")}</TableCell><TableCell>{String(r.co2??"—")}</TableCell><TableCell>{String(r.PM1_GSA??"—")}</TableCell><TableCell>{String(r["PM2.5_GSA"]??"—")}</TableCell><TableCell>{String(r.PM10_GSA??"—")}</TableCell></TableRow>})}</TableBody></Table></div>})()}</section></>}
- {section==="data"&&<><section className="panel query-panel"><div className="panel-title flex items-center justify-between"><div><span><Search size={18}/> 查詢條件</span><small className="ml-2">時間以所選時區 ({tz}) 計算</small></div>{!admin&&<Button type="button" variant="outline" size="sm" className="h-8 gap-1 text-teal-700 border-teal-300 hover:bg-teal-50" onClick={()=>{setRequestType("lab");setRequestAslungId("");setRequestLabId("");setRequestReason("");setModal("requestGrant")}}><KeyRound size={14}/>{isEn ? "Request Data Access" : "申請資料授權"}{grantRequests.filter(r=>r.status==="PENDING").length>0&&<span className="ml-1 px-1.5 py-0.2 rounded-full bg-amber-100 text-amber-800 text-[10px] font-bold">{grantRequests.filter(r=>r.status==="PENDING").length}</span>}</Button>}</div><form onSubmit={e=>{e.preventDefault();handleExecuteQuery();}} className="query-form"><div><Label>ASLUNG ID</Label>{pick(id,setId,[
-  ...(devices.length > 1 ? [{ value: "__ALL__", label: `📦 【全部授權設備】(一鍵打包全部 ${devices.length} 台為 ZIP 壓縮檔)` }] : []),
-  ...devices.map(d=>({value:d.id,label:d.id+(!admin?(d.grant_source==="lab"?` [地點授權: ${d.grant_lab_id||""}${d.grant_lab_name?" "+d.grant_lab_name:""}]`:d.grant_source==="both"?` [雙重授權: ${d.grant_lab_id||""}]`:d.is_maintained?" [列管]":d.is_granted?" [設備授權]":""):"")+(d.description?" · "+d.description:d.name?" · "+d.name:"")}))
-],admin?"選擇授權設備":devices.length?"選擇授權或列管設備":"尚未取得授權設備")}</div><div><Label htmlFor="start">開始時間</Label><Input id="start" type="datetime-local" required value={start} onChange={e=>setStart(e.target.value)}/></div><div><Label htmlFor="end">結束時間</Label><Input id="end" type="datetime-local" required value={end} onChange={e=>setEnd(e.target.value)}/></div><Button disabled={busy||!id} type="submit" className="h-11"><Search size={16}/>{busy?"處理中…":"查詢資料"}</Button></form>{id === "__ALL__" ? (
+ {section==="data"&&<><section className="panel query-panel"><div className="panel-title flex items-center justify-between"><div><span><Search size={18}/> 查詢條件</span><small className="ml-2">時間以所選時區 ({tz}) 計算</small></div>{!admin&&<Button type="button" variant="outline" size="sm" className="h-8 gap-1 text-teal-700 border-teal-300 hover:bg-teal-50" onClick={()=>{setRequestType("lab");setRequestAslungId("");setRequestLabId("");setRequestReason("");setModal("requestGrant")}}><KeyRound size={14}/>{isEn ? "Request Data Access" : "申請資料授權"}{grantRequests.filter(r=>r.status==="PENDING").length>0&&<span className="ml-1 px-1.5 py-0.2 rounded-full bg-amber-100 text-amber-800 text-[10px] font-bold">{grantRequests.filter(r=>r.status==="PENDING").length}</span>}</Button>}</div><form onSubmit={e=>{e.preventDefault();handleExecuteQuery();}} className="query-form"><div><Label>ASLUNG ID</Label><p className="mb-1 text-xs text-slate-500">{isEn ? `${new Set(downloadDevices.map(d=>d.id)).size} devices / ${downloadDevices.length} tracking segments` : `${new Set(downloadDevices.map(d=>d.id)).size} 台設備／${downloadDevices.length} 個追蹤區段`}</p><DeviceMultiSelect options={deviceDownloadOptions} value={selectedDeviceIds} onValueChange={selectDownloadDevices} disabled={busy || batchRunning} isEnglish={isEn}/></div><div><Label htmlFor="start">開始時間</Label><Input id="start" type="datetime-local" required value={start} onChange={e=>setStart(e.target.value)}/></div><div><Label htmlFor="end">結束時間</Label><Input id="end" type="datetime-local" required value={end} onChange={e=>setEnd(e.target.value)}/></div><Button key={batchSelection ? "batch-submit" : "single-submit"} disabled={busy||batchRunning||!id} type="submit" className="h-11"><Search size={16}/>{busy?"處理中…":batchSelection?"打包下載 CSV (ZIP)":"查詢資料"}</Button></form>{batchSelection ? (
   <div className="permission-note bg-teal-50/70 border border-teal-200 text-teal-900 p-3 rounded-lg text-xs space-y-1 mt-3">
     <div className="flex items-center gap-1.5 font-bold">
       <FolderDown size={15} className="text-teal-700" />
-      <span>已選擇：全部授權設備（共 {devices.length} 台設備）</span>
+      <span>已選擇：{id === "__ALL__" ? "下載所有授權資料" : "指定設備打包下載"}（{new Set(downloadDevices.filter(d=>selectedDeviceIds.includes(d.selection_id!)).map(d=>d.id)).size} 台設備／{selectedDeviceIds.length} 個追蹤區段）</span>
     </div>
-    <p className="text-slate-600">請設定開始與結束時間，並點選右上方「打包下載 CSV (ZIP)」按鈕。系統將自動為每台設備獨立建立資料檔並封裝為單一 ZIP 壓縮檔。</p>
   </div>
 ) : chosen ? (
   <div className="permission-note space-y-1.5 text-xs bg-slate-50 border p-3 rounded-lg mt-3">
     <div className="flex items-center gap-2 flex-wrap">
       <ShieldCheck size={15} className="text-teal-600 shrink-0" />
       <span className="font-semibold text-slate-800">
-        {chosen.grant_source === "lab" ? `授權來源：地點授權【${chosen.grant_lab_id || ""}${chosen.grant_lab_name ? " " + chosen.grant_lab_name : ""}】` : `授權來源：個別設備授權`}
+        {chosen.grant_source === "lab" ? `授權來源：地點授權【${chosen.grant_lab_id || ""}${chosen.grant_lab_name ? " " + chosen.grant_lab_name : ""}】` : `追蹤區段：${chosen.grant_lab_id || ""}：${chosen.id} #${chosen.segment_id}`}
       </span>
       {chosen.is_active_at_lab ? (
         <span className="text-[10px] px-1.5 py-0.2 rounded font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">現役運作中</span>
@@ -1094,9 +1144,9 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
     </div>
     {chosen.tracking_ranges && chosen.tracking_ranges.length > 0 ? (
       <div className="text-slate-600 pl-5 leading-relaxed">
-        <span className="font-medium text-slate-700">實際在站服役期間：</span>
+        <span className="font-medium text-slate-700">可下載資料期間：</span>
         {chosen.tracking_ranges.map((tr, idx) => (
-          <span key={idx} className="font-mono ml-1 text-slate-800 font-semibold bg-white px-1.5 py-0.5 rounded border border-slate-200">
+          <span key={idx} className="inline-block max-w-full whitespace-normal break-words font-mono ml-1 text-slate-800 font-semibold bg-white px-1.5 py-0.5 rounded border border-slate-200">
             {localTime(tr.start)} ～ {tr.end ? localTime(tr.end) : "至今 (無期限)"}
             {idx < (chosen.tracking_ranges?.length || 0) - 1 ? "、" : ""}
           </span>
@@ -1110,11 +1160,11 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
   </div>
 ) : null}</section>
   <section className="panel results"><div className="results-heading"><div><h2>量測資料 <span>{page?.data.length??0} 筆／本頁</span></h2><p>{queried?queried.id+" · "+localTime(queried.start)+" ～ "+localTime(queried.end):"查詢後顯示所選期間的量測紀錄"}</p></div><div className="flex gap-2">
-  <Button variant="outline" disabled={busy||(id!=="__ALL__"&&(!page||!queried))} onClick={()=>handleExecuteDownload("csv")}>
-    <Download size={15}/>{id==="__ALL__" ? "打包下載 CSV (ZIP)" : "CSV"}
+  <Button key={batchSelection ? "batch-csv" : "single-csv"} variant="outline" disabled={busy||batchRunning||(!batchSelection&&(!page||!queried))} onClick={()=>handleExecuteDownload("csv")}>
+    <Download size={15}/>{batchSelection ? "打包下載 CSV (ZIP)" : "CSV"}
   </Button>
-  <Button variant="outline" disabled={busy||(id!=="__ALL__"&&(!page||!queried))} onClick={()=>handleExecuteDownload("json")}>
-    <FileJson size={15}/>{id==="__ALL__" ? "打包下載 JSON (ZIP)" : "JSON"}
+  <Button key={batchSelection ? "batch-json" : "single-json"} variant="outline" disabled={busy||batchRunning||(!batchSelection&&(!page||!queried))} onClick={()=>handleExecuteDownload("json")}>
+    <FileJson size={15}/>{batchSelection ? "打包下載 JSON (ZIP)" : "JSON"}
   </Button>
 </div></div>
   <Tabs defaultValue="table"><TabsList variant="line" className="mx-6"><TabsTrigger value="table">資料表</TabsTrigger><TabsTrigger value="json">JSON 預覽</TabsTrigger></TabsList><TabsContent value="table">{!page?<Blank title={devices.length?"尚未查詢資料":"尚無可存取設備"} description={devices.length?"選擇 ASLUNG ID 與期間，按下「查詢資料」。":admin?"先在 ASLUNG ID 管理建立設備，再設定資料來源。":"您目前尚無已授權的設備。您可以點擊右上角「申請設備授權」輸入 ASLUNG ID 向管理員申請存取權限。"} icon={Search}/>:page.data.length===0?<Blank title="此期間沒有量測資料" description="請調整日期範圍後重新查詢。"/>:<div className="table-scroll"><Table><TableHeader><TableRow>{columns.map(k=><TableHead key={k}>{k}</TableHead>)}</TableRow></TableHeader><TableBody>{page.data.map((r,i)=><TableRow key={i}>{columns.map(k=><TableCell key={k} className={k==="timestamp"?"mono":""}>{k==="timestamp"?localTime(String(r[k])):typeof r[k]==="object"?JSON.stringify(r[k]):String(r[k]??"—")}</TableCell>)}</TableRow>)}</TableBody></Table></div>}</TabsContent><TabsContent value="json"><pre className="json-box">{page?JSON.stringify({aslung_id:queried?.id,start:queried?.start,end:queried?.end,...page},null,2):"// 查詢完成後，將在此顯示實際 JSON 資料。"}</pre></TabsContent></Tabs>{page?.has_more&&queried&&<div className="table-footer"><span>尚有更多資料；下載會自動合併所有分頁。</span><Button variant="outline" disabled={busy} onClick={()=>void query(queried,page.next_cursor!).catch(()=>{})}>下一頁</Button></div>}</section>
@@ -1190,7 +1240,7 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
       </div>
     </div>
     {!filtered.length?<div className="p-8 text-center"><Blank title={hasActiveDeviceFilters?"沒有符合篩選條件的設備":"建立第一個 ASLUNG ID"} description={hasActiveDeviceFilters?"目前設定的狀態或搜尋條件下查無設備，請嘗試調整條件或點擊下方按鈕重設。":"建立設備 ID，並為會員指定資料權限。"}/>{hasActiveDeviceFilters&&<div className="mt-4"><Button variant="outline" size="sm" onClick={resetDeviceFilters}><RotateCcw size={14} className="mr-1.5"/>重設所有篩選</Button></div>}</div>:<Table><TableHeader><TableRow><TableHead className="w-12 text-center font-semibold">序號</TableHead><TableHead><input type="checkbox" checked={selectedDevices.size === filtered.length && filtered.length > 0} onChange={e => { if(e.target.checked) setSelectedDevices(new Set(filtered.map(d=>d.id))); else setSelectedDevices(new Set()); }} /></TableHead><TableHead>ASLUNG ID</TableHead><TableHead>狀態</TableHead><TableHead>最後上線</TableHead><TableHead>目前位置</TableHead><TableHead>備註</TableHead><TableHead>授權會員</TableHead><TableHead>操作</TableHead></TableRow></TableHeader><TableBody>{filtered.map((d,idx)=><TableRow key={d.id}><TableCell className="text-center font-mono text-xs text-slate-500">{idx+1}</TableCell><TableCell><input type="checkbox" checked={selectedDevices.has(d.id)} onChange={e => { const s = new Set(selectedDevices); if(e.target.checked) s.add(d.id); else s.delete(d.id); setSelectedDevices(s); }} /></TableCell><TableCell className="mono font-semibold">{d.id}</TableCell><TableCell><select value={d.status||"DEPLOYED"} className={`text-xs px-2.5 py-1 rounded font-medium border cursor-pointer outline-none transition-colors ${d.status==="DEPLOYED"?"bg-emerald-50 text-emerald-800 border-emerald-200":d.status==="STANDBY"?"bg-amber-50 text-amber-800 border-amber-200 font-semibold":d.status==="MAINTENANCE"?"bg-orange-50 text-orange-800 border-orange-200":d.status==="RETIRED"?"bg-slate-100 text-slate-500 border-slate-200":"bg-red-50 text-red-700 border-red-200"}`} title="點擊可快速切換設備狀態" onChange={async e=>{const newStatus=e.target.value;setState(prev=>prev?{...prev,devices:prev.devices.map(item=>item.id===d.id?{...item,status:newStatus}:item)}:prev);await mutate({action:"deviceStatus",id:d.id,status:newStatus});}}><option value="DEPLOYED">使用中</option><option value="STANDBY">待命中</option><option value="MAINTENANCE">維修中</option><option value="RETIRED">已報廢</option><option value="LOST">遺失</option></select></TableCell><TableCell>{(() => { const r = (realtimeData||[]).find(x => x.aslung_id === d.id); if(!r) return <span className="text-slate-400">無資料</span>; const isOffline = Date.now()-new Date(r.timestamp).getTime()>86400000; return <span className={isOffline?"text-red-500":"text-green-600"}>{isOffline?"已離線":"連線中"}</span>; })()}</TableCell><TableCell>{(() => { const activeLoc = locations.find(l=>l.aslung_id===d.id&&l.active&&!l.end_time); if(activeLoc) return <span className="font-semibold text-slate-800">{activeLoc.lab_id}</span>; const locName = d.location || locations.find(l=>l.aslung_id===d.id)?.lab_id; if(locName) return <span className="text-slate-600 flex items-center gap-1.5" title={`最新紀錄地點：${locName}`}><span>{locName}</span><span className="text-[11px] text-slate-400 bg-slate-100 px-1 py-0.5 rounded font-normal">前次</span></span>; return <span className="text-slate-400">無</span>; })()}</TableCell><TableCell className="text-slate-500">{d.description||"—"}</TableCell><TableCell>{grants.filter(g=>g.device_id===d.id).length} 位</TableCell><TableCell><div className="flex gap-2"><Button variant="ghost" size="icon-xs" title="查看 / 列印 QR Code" onClick={()=>{setQrDevice(d);setModal("deviceQr")}}><QrCode size={15}/></Button><Button variant="ghost" size="icon-xs" title="編輯" onClick={()=>{setEditDevice(d); setLiveQrId(d.id); setModal("device")}}><Pencil size={15}/></Button><Button variant="outline" size="sm" onClick={()=>{setTransferDevice(d);setModal("transfer")}}><ArrowRightLeft size={14} className="mr-1"/>移轉位置</Button><Button variant="outline" size="sm" onClick={()=>{setGrantDevice(d.id);setModal("grant")}}><ShieldCheck size={14} className="mr-1"/>設定授權</Button><Button variant="ghost" size="icon-xs" title="刪除" className="text-red-500 hover:text-red-600 hover:bg-red-50 ml-1" onClick={()=>setConfirmation({action:"deviceDelete",id:d.id,title:"刪除此設備？",description:"將一併刪除此設備所有的「資料授權紀錄」與「位置追蹤紀錄」，且無法復原。確認刪除？"})}><Trash2 size={15}/></Button></div></TableCell></TableRow>)}</TableBody></Table>}</section>}
- {section==="members"&&admin&&<section className="panel"><div className="list-heading"><h2>會員帳號 <span className="count">{members.length}</span></h2><div className="flex gap-2">{selectedMembers.size > 0 && <Button variant="destructive" onClick={()=>{setConfirmation({action:"memberDeleteBulk",emails:Array.from(selectedMembers),title:`刪除所選 ${selectedMembers.size} 位會員？`,description:`將一併刪除所選 ${selectedMembers.size} 位會員的帳號資料、登入憑證與設備授權紀錄，且無法復原。確認刪除？`});}}><Trash2 size={16} className="mr-1"/>大量刪除 ({selectedMembers.size})</Button>}<Button onClick={()=>{setEditMember(null);setModal("member")}}><Plus size={16}/>新增會員</Button></div></div><Table><TableHeader><TableRow><TableHead className="w-12 text-center font-semibold">序號</TableHead><TableHead className="w-10"><input type="checkbox" checked={members.filter(m=>m.email!==state?.me.email).length>0 && selectedMembers.size===members.filter(m=>m.email!==state?.me.email).length} onChange={e=>{if(e.target.checked) setSelectedMembers(new Set(members.filter(m=>m.email!==state?.me.email).map(m=>m.email))); else setSelectedMembers(new Set());}} /></TableHead><TableHead>會員姓名</TableHead><TableHead>帳號 (暱稱)</TableHead><TableHead>Email</TableHead><TableHead>角色</TableHead><TableHead>狀態</TableHead><TableHead>登入次數</TableHead><TableHead>最後登入時間</TableHead><TableHead>操作</TableHead></TableRow></TableHeader><TableBody>{members.map((m,idx)=>{const isMe=m.email===state?.me.email; return <TableRow key={m.email}><TableCell className="text-center font-mono text-xs text-slate-500">{idx+1}</TableCell><TableCell><input type="checkbox" disabled={isMe} checked={selectedMembers.has(m.email)} onChange={e=>{const s=new Set(selectedMembers); if(e.target.checked) s.add(m.email); else s.delete(m.email); setSelectedMembers(s);}} /></TableCell><TableCell className="font-semibold">{m.name}{isMe&&<span className="ml-1 text-[11px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-800 font-normal">您</span>}</TableCell><TableCell className="font-medium">{m.nickname || <span className="text-slate-400">-</span>}</TableCell><TableCell>{m.email.endsWith("@local.aslung")?<span className="text-slate-400">無</span>:m.email}</TableCell><TableCell>{m.role==="admin"?"管理員":"會員"}</TableCell><TableCell><span className={m.active?"status ok":"status pending"}>{m.active?"已開通":"已停用"}</span></TableCell><TableCell className="font-mono text-sm">{m.login_count || 0} 次</TableCell><TableCell className="text-xs text-slate-500">{m.last_login_at ? localTime(m.last_login_at) : <span className="text-slate-400">從未登入</span>}</TableCell><TableCell><div className="flex gap-2 items-center"><Button variant="ghost" size="icon-xs" title="編輯" onClick={()=>{setEditMember(m); setModal("member")}}><Pencil size={15}/></Button>{!isMe && <Button variant="outline" size="sm" onClick={()=>setConfirmation({action:"memberRole",email:m.email,role:m.role==="admin"?"member":"admin",title:m.role==="admin"?"降為一般會員？":"升級為管理員？",description:m.role==="admin"?"此帳號將無法再管理系統。":"此帳號將能管理系統設定與其他帳號。"})}>{m.role==="admin"?"降為會員":"設為管理員"}</Button>}{m.role==="member"&&<Button variant="outline" size="sm" onClick={()=>setConfirmation({action:"memberStatus",email:m.email,active:!m.active,title:m.active?"停用會員？":"恢復會員？",description:m.active?"此會員將無法查詢或下載資料，既有授權仍保留。":"此會員可重新使用已指派的設備授權。"})}>{m.active?"停用":"恢復"}</Button>}{!isMe && <Button variant="ghost" size="icon-xs" title="刪除會員" className="text-red-500 hover:text-red-600 hover:bg-red-50 ml-1" onClick={()=>setConfirmation({action:"memberDelete",email:m.email,title:`刪除會員「${m.name}」？`,description:`確定要刪除會員「${m.name}」(${m.nickname||m.email})？此操作將一併移除該會員的所有設備資料授權與登入紀錄，且無法復原。確認刪除？`})}><Trash2 size={15}/></Button>}</div></TableCell></TableRow>;})}</TableBody></Table><p className="panel-footnote">管理員建立帳號後，請自行將帳號暱稱與初始密碼交給會員；此操作不會寄送邀請信。會員可於登入後變更密碼。</p></section>}
+ {section==="members"&&admin&&<><RegistrationReviews members={members} mailConfigured={!!alertSettings?.smtp_host&&!!alertSettings?.smtp_from} onMailSettings={()=>setModal("alertSettings")} busy={busy} isEnglish={isEn} onReview={(email,decision,note)=>mutate({action:"memberReview",email,decision,note})} onGrant={email=>{setGrantEmail(email);setGrantType("lab");setGrantLab("");setGrantDevice("");setGrantId(null);setModal("grant");}}/><section className="panel"><div className="list-heading"><h2>會員帳號 <span className="count">{members.length}</span></h2><div className="flex gap-2">{selectedMembers.size > 0 && <Button variant="destructive" onClick={()=>{setConfirmation({action:"memberDeleteBulk",emails:Array.from(selectedMembers),title:`刪除所選 ${selectedMembers.size} 位會員？`,description:`將一併刪除所選 ${selectedMembers.size} 位會員的帳號資料、登入憑證與設備授權紀錄，且無法復原。確認刪除？`});}}><Trash2 size={16} className="mr-1"/>大量刪除 ({selectedMembers.size})</Button>}<Button onClick={()=>{setEditMember(null);setModal("member")}}><Plus size={16}/>新增會員</Button></div></div><Table><TableHeader><TableRow><TableHead className="w-12 text-center font-semibold">序號</TableHead><TableHead className="w-10"><input type="checkbox" checked={members.filter(m=>m.email!==state?.me.email).length>0 && selectedMembers.size===members.filter(m=>m.email!==state?.me.email).length} onChange={e=>{if(e.target.checked) setSelectedMembers(new Set(members.filter(m=>m.email!==state?.me.email).map(m=>m.email))); else setSelectedMembers(new Set());}} /></TableHead><TableHead>會員姓名</TableHead><TableHead>帳號 (暱稱)</TableHead><TableHead>Email</TableHead><TableHead>角色</TableHead><TableHead>狀態</TableHead><TableHead>登入次數</TableHead><TableHead>最後登入時間</TableHead><TableHead>操作</TableHead></TableRow></TableHeader><TableBody>{members.map((m,idx)=>{const isMe=m.email===state?.me.email; return <TableRow key={m.email}><TableCell className="text-center font-mono text-xs text-slate-500">{idx+1}</TableCell><TableCell><input type="checkbox" disabled={isMe} checked={selectedMembers.has(m.email)} onChange={e=>{const s=new Set(selectedMembers); if(e.target.checked) s.add(m.email); else s.delete(m.email); setSelectedMembers(s);}} /></TableCell><TableCell className="font-semibold">{m.name}{isMe&&<span className="ml-1 text-[11px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-800 font-normal">您</span>}</TableCell><TableCell className="font-medium">{m.nickname || <span className="text-slate-400">-</span>}</TableCell><TableCell>{m.email.endsWith("@local.aslung")?<span className="text-slate-400">無</span>:m.email}</TableCell><TableCell>{m.role==="admin"?"管理員":"會員"}</TableCell><TableCell><span className={m.active?"status ok":"status pending"}>{m.registration_status==="pending_email"?"待驗證 Email":m.registration_status==="pending_review"?"待審核":m.registration_status==="rejected"?"未通過":m.active?"已開通":"已停用"}</span></TableCell><TableCell className="font-mono text-sm">{m.login_count || 0} 次</TableCell><TableCell className="text-xs text-slate-500">{m.last_login_at ? localTime(m.last_login_at) : <span className="text-slate-400">從未登入</span>}</TableCell><TableCell><div className="flex gap-2 items-center"><Button variant="ghost" size="icon-xs" title="編輯" onClick={()=>{setEditMember(m); setModal("member")}}><Pencil size={15}/></Button>{!isMe && (!m.registration_status||m.registration_status==="approved") && <Button variant="outline" size="sm" onClick={()=>setConfirmation({action:"memberRole",email:m.email,role:m.role==="admin"?"member":"admin",title:m.role==="admin"?"降為一般會員？":"升級為管理員？",description:m.role==="admin"?"此帳號將無法再管理系統。":"此帳號將能管理系統設定與其他帳號。"})}>{m.role==="admin"?"降為會員":"設為管理員"}</Button>}{m.role==="member"&&(!m.registration_status||m.registration_status==="approved")&&<Button variant="outline" size="sm" onClick={()=>setConfirmation({action:"memberStatus",email:m.email,active:!m.active,title:m.active?"停用會員？":"恢復會員？",description:m.active?"此會員將無法查詢或下載資料，既有授權仍保留。":"此會員可重新使用已指派的設備授權。"})}>{m.active?"停用":"恢復"}</Button>}{!isMe && <Button variant="ghost" size="icon-xs" title="刪除會員" className="text-red-500 hover:text-red-600 hover:bg-red-50 ml-1" onClick={()=>setConfirmation({action:"memberDelete",email:m.email,title:`刪除會員「${m.name}」？`,description:`確定要刪除會員「${m.name}」(${m.nickname||m.email})？此操作將一併移除該會員的所有設備資料授權與登入紀錄，且無法復原。確認刪除？`})}><Trash2 size={15}/></Button>}</div></TableCell></TableRow>;})}</TableBody></Table><p className="panel-footnote">管理員建立帳號後，請自行將帳號暱稱與初始密碼交給會員；此操作不會寄送邀請信。會員可於登入後變更密碼及補填合作資料。自行註冊的申請請由上方清單審核。</p></section></>}
   {section==="locations"&&admin&&(()=>{const filteredLocations=locations.filter(l=>(l.aslung_id+" "+l.lab_id+" "+(l.maintainer||"")).toLowerCase().includes(search.toLowerCase()));return <section className="panel"><div className="list-heading"><div className="flex items-center gap-4"><h2>設備追蹤 <span className="count">{locations.length}</span></h2><Input className="w-64 h-9 bg-white" placeholder="搜尋 ID、地點或負責人..." value={search} onChange={e=>setSearch(e.target.value)} /></div><div className="flex gap-2"><input id="loc-csv-upload" type="file" accept=".csv,.tsv,.txt" className="hidden" onChange={handleLocationCsvUpload} />{selectedLocations.size > 0 && <Button variant="destructive" onClick={()=>{setConfirmation({action:"locationDeleteBulk",ids:Array.from(selectedLocations),title:`刪除所選 ${selectedLocations.size} 筆追蹤紀錄？`,description:`將一併刪除所選 ${selectedLocations.size} 筆設備擺放位置歷史紀錄，且無法復原。確認刪除？`})}}><Trash2 size={16} className="mr-1"/>大量刪除 ({selectedLocations.size})</Button>}<Button variant="secondary" onClick={()=>setModal("locationSync")}><CloudDownload size={16} className="mr-1"/>同步 Google 試算表</Button><Button variant="outline" onClick={()=>setModal("locationImport")}><FileSpreadsheet size={16} className="mr-1"/>貼上 / 匯入試算表</Button><Button onClick={()=>{setEditLocation(null);setModal("location")}}><Plus size={16}/>新增紀錄</Button></div></div>{!filteredLocations.length?<Blank title={search?"沒有符合的追蹤紀錄":"尚無位置追蹤紀錄"} description={search?"請嘗試其他關鍵字。":"新增第一筆設備擺放位置。"} icon={MapPin}/>:<Table><TableHeader><TableRow><TableHead className="w-12 text-center font-semibold">序號</TableHead><TableHead><input type="checkbox" checked={selectedLocations.size === filteredLocations.length && filteredLocations.length > 0} onChange={e => { if(e.target.checked) setSelectedLocations(new Set(filteredLocations.map(l=>l.id))); else setSelectedLocations(new Set()); }} /></TableHead><TableHead>Lab ID (地點)</TableHead><TableHead>ASLUNG ID</TableHead><TableHead>負責人 / 維護者</TableHead><TableHead>開始時間</TableHead><TableHead>結束時間</TableHead><TableHead>狀態</TableHead><TableHead>操作</TableHead></TableRow></TableHeader><TableBody>{filteredLocations.map((l,idx)=><TableRow key={l.id}><TableCell className="text-center font-mono text-xs text-slate-500">{idx+1}</TableCell><TableCell><input type="checkbox" checked={selectedLocations.has(l.id)} onChange={e => { const s = new Set(selectedLocations); if(e.target.checked) s.add(l.id); else s.delete(l.id); setSelectedLocations(s); }} /></TableCell><TableCell className="font-semibold">{l.lab_id}</TableCell><TableCell className="mono">{l.aslung_id}</TableCell><TableCell>{(()=>{const m=maintainers.find(x=>x.name===l.maintainer);if(!l.maintainer)return <span className="text-slate-400">—</span>;if(!m)return <span className="font-medium text-slate-700">{l.maintainer}</span>;return <div className="flex items-center gap-1.5"><span className="font-semibold text-slate-800">{m.name}</span>{m.email&&<a href={`mailto:${m.email}`} title={`寄信給 ${m.name} (${m.email})`} className="text-teal-600 hover:text-teal-800 transition-colors inline-flex items-center"><Mail size={13}/></a>}</div>;})()}</TableCell><TableCell>{localTime(l.start_time)}</TableCell><TableCell>{l.end_time?localTime(l.end_time):"—"}</TableCell><TableCell><span className={l.active?"status ok":"status pending"}>{l.active?"使用中":"已移出"}</span></TableCell><TableCell><div className="flex gap-2"><Button size="sm" variant="outline" onClick={()=>{setEditLocation(l); setModal("location")}}>編輯</Button><Button size="sm" variant="outline" onClick={()=>{setConfirmation({action:"locationDelete",id:l.id,title:"刪除此紀錄？",description:"確認後將無法復原。"})}}>刪除</Button></div></TableCell></TableRow>)}</TableBody></Table>}</section>})()}
   {section==="labs"&&admin&&<LabsView labs={labs} locations={locations} search={search} setSearch={setSearch} selectedLabs={selectedLabs} setSelectedLabs={setSelectedLabs} setEditLab={setEditLab} setModal={setModal} setConfirmation={setConfirmation} />}
   {section==="maintainers"&&admin&&<MaintainersView maintainers={maintainers} devices={devices} locations={locations} realtimeData={realtimeData} search={search} setSearch={setSearch} selectedMaintainers={selectedMaintainers} setSelectedMaintainers={setSelectedMaintainers} setEditMaintainer={setEditMaintainer} setModal={setModal} setConfirmation={setConfirmation} />}
@@ -1219,13 +1269,14 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
  </>}
  <footer className="workspace-footer"><span>ASLUNG · 資料管理平台</span><span className="flex items-center gap-1.5"><Eye size={12} className="text-teal-600"/> 網站瀏覽次數：<strong>{(state?.siteStats?.totalViews ?? 0).toLocaleString()}</strong> 次<span className="text-slate-400 font-normal">（今日 <strong>{state?.siteStats?.todayViews ?? 0}</strong> 次）</span></span><span><ShieldCheck size={13}/> 伺服器端權限驗證</span></footer></div></main>
  <Dialog open={!!modal} onOpenChange={v=>{if(!busy&&!v)setModal("")}}>
-  <DialogContent className="bg-white sm:max-w-lg max-h-[88vh] overflow-y-auto">
+  {modal&&<DialogContent className="bg-white sm:max-w-lg max-h-[88vh] overflow-y-auto">
     <DialogHeader>
       <DialogTitle>
         {modal==="device" ? (editDevice?"編輯 ASLUNG ID":"建立 ASLUNG ID")
         : modal==="deviceQr" ? "設備 QR Code 標籤"
         : modal==="transfer" ? "移轉設備位置" : modal==="transferBulk" ? "大量移轉設備位置" : modal==="qrScanner" ? "掃描 ASLUNG ID QR Code"
         : modal==="importCsv" ? "大量匯入 CSV"
+        : modal==="profile" ? (isEn?"My collaboration profile":"我的合作資料")
         : modal==="member" ? (editMember ? "編輯會員" : "新增會員")
         : modal==="fileUpload" ? "上傳新檔案並指定授權" : modal==="fileGrant" ? "設定檔案授權成員" : modal==="locationSync" ? "同步 Google 試算表設備追蹤" : modal==="locationImport" ? "匯入 / 貼上設備追蹤紀錄" : modal==="location" ? (editLocation ? "編輯位置紀錄" : "新增位置紀錄")
         : modal==="lab" ? (editLab ? "編輯地點 (Lab ID)" : "建立新地點 (Lab ID)")
@@ -1241,6 +1292,7 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
       <DialogDescription>
         {modal==="device" ? "ID 應與 EC2 資料來源的設備識別碼一致，系統將自動生成設備 QR Code 標籤。"
         : modal==="deviceQr" ? "包含 ASLUNG ID 設備編號的實體標籤，可直接下載 PNG 圖檔或列印貼在設備上。"
+        : modal==="profile" ? (isEn?"Update your country, institution and collaboration project. Data permissions are assigned by the administrator.":"補填國家、機構與合作計畫；資料存取權限由管理員另行設定。")
         : modal==="member" ? (editMember ? "修改會員的基本資料與登入密碼。" : "設定會員帳號與初始密碼；會員登入後可變更密碼。")
         : modal==="fileUpload" ? "上傳檔案至系統，並指定特定會員可檢視與下載。" : modal==="fileGrant" ? "勾選授權可檢視與下載此檔案的會員清單。" : modal==="locationSync" ? "直接從線上 Google 試算表同步設備擺放位置與歷史紀錄，自動保留手動新增的紀錄。" : modal==="locationImport" ? "支援直接複製貼上 Google 試算表表格，或上傳 CSV 檔案批次匯入。" : modal==="location" ? "記錄設備（包含國外站點）目前的擺放位置與期間。"
         : modal==="lab" ? "設定實驗室或站點的代碼、縣市、區鄉鎮與座標資料。"
@@ -1300,6 +1352,8 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
               }
             }
           })();
+        } else if (modal === "profile") {
+          void mutate({action:"profileUpdate",...p});
         } else if (modal === "member" && editMember) {
           void mutate({action:"memberEdit", ...p});
         } else if (modal === "fileUpload") {
@@ -1414,7 +1468,7 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
       </> : modal==="qrScanner"?<>
         <div id="reader" className="w-full overflow-hidden rounded-md bg-slate-100 min-h-[300px]"></div>
         <p className="text-center text-sm text-slate-500 mt-4">請將相機對準設備的 QR Code</p>
-      </> : modal==="member"?<>
+      </> : modal==="profile"?<MemberProfileFields profile={state?.me} isEnglish={isEn}/> : modal==="member"?<>
 
         {editMember && <input type="hidden" name="originalEmail" value={editMember.email} />}
         <Label htmlFor="member-name">會員姓名</Label>
@@ -1425,6 +1479,7 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
         <Input id="email" name="email" type="email" maxLength={254} defaultValue={editMember?.email?.endsWith("@local.aslung") ? "" : editMember?.email||""}/>
         <Label htmlFor="initial-password">{editMember ? "新密碼 (若不修改請留空，至少 12 字元)" : "初始密碼（至少 12 字元）"}</Label>
         <Input id="initial-password" name="password" type="password" autoComplete="new-password" required={!editMember} minLength={12} maxLength={128}/>
+        <MemberProfileFields profile={editMember||{}} isEnglish={isEn}/>
       </> : modal==="password"?<>
         <Label htmlFor="current-password">目前密碼</Label>
         <Input id="current-password" name="currentPassword" type="password" autoComplete="current-password" required maxLength={128}/>
@@ -2100,7 +2155,7 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
         )}
       </div>
     </form>
-  </DialogContent>
+  </DialogContent>}
 </Dialog>
  <AlertDialog open={!!confirmation} onOpenChange={v=>{if(!busy&&!v)setConfirmation(null)}}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>{confirmation?.title}</AlertDialogTitle><AlertDialogDescription>{confirmation?.description}</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={busy}>取消</AlertDialogCancel><AlertDialogAction disabled={busy} onClick={e=>{e.preventDefault();void mutate(confirmation)}}>{busy?"處理中…":"確認"}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
  
@@ -2144,17 +2199,17 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
           className="bg-teal-700 hover:bg-teal-800"
           onClick={() => {
             if (!clippingWarning) return;
-            const { clipped, actionType, format } = clippingWarning;
+            const { clipped, actionType, format, device } = clippingWarning;
             setStart(clipped.start);
             setEnd(clipped.end);
             setClippingWarning(null);
             if (actionType === "query") {
               setTimeout(() => {
-                void query({ id, start: zoned(clipped.start), end: zoned(clipped.end) });
+                void query({ id: device.id, segment_id:device.segment_id, start: clipped.isoStart || zoned(clipped.start), end: clipped.isoEnd || zoned(clipped.end) });
               }, 100);
             } else if (actionType === "download" && format) {
               setTimeout(() => {
-                void executeDirectDownload(id, zoned(clipped.start), zoned(clipped.end), format);
+                void executeDirectDownload(device.id, clipped.isoStart || zoned(clipped.start), clipped.isoEnd || zoned(clipped.end), format, device.segment_id);
               }, 100);
             }
           }}
@@ -2171,7 +2226,7 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
       <DialogHeader>
         <DialogTitle className="flex items-center gap-2">
           <FolderDown size={20} className="text-teal-600" />
-          批次打包下載全部授權設備
+          批次打包下載所選設備
         </DialogTitle>
         <DialogDescription className="text-xs">
           共 {devices.length} 台設備 · 查詢區間：{start} ～ {end}

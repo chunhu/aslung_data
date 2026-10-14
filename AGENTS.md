@@ -7,3 +7,9 @@ This version has breaking changes — APIs, conventions, and file structure may 
 This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
 
 <!-- END:nextjs-agent-rules -->
+
+## Windows local cache location
+
+- Place this project's build and development caches under `K:\CodexCache\aslung_data`.
+- The `.next` junction points to `K:\CodexCache\aslung_data\next`.
+- Do not create new project caches on C:. If K: is unavailable, report it rather than falling back to C:.

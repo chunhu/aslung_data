@@ -12,14 +12,14 @@ test("password hashing rejects short input and verifies salted hashes",async()=>
  assert.equal(await verifyPassword("IncorrectPassword!123",hash),false);
  assert.equal(tokenHash("token").length,64);
 });
-test("store persists membership, enforces foreign keys and device-member uniqueness",async()=>{
+test("store persists membership, enforces foreign keys and unique member accounts",async()=>{
  const directory=mkdtempSync(join(tmpdir(),"aslung-test-"));process.env.DATABASE_PATH=join(directory,"test.sqlite");
  const {getConnection,getStore}=await import("../lib/store.mjs");const d=getConnection();
- d.prepare("INSERT INTO members VALUES(?,?,?,?,?,?)").run("test@example.com","id1","Test","member",1,"hash");
+ d.prepare("INSERT INTO members(email,user_id,name,role,active,password_hash) VALUES(?,?,?,?,?,?)").run("test@example.com","id1","Test","member",1,"hash");
  assert.equal((await getStore().prepare("SELECT * FROM members WHERE email=?").bind("test@example.com").first()).name,"Test");
  d.prepare("INSERT INTO devices(id,name) VALUES(?,?)").run("A1","Station");
- assert.throws(()=>d.prepare("INSERT INTO grants VALUES(?,?,?,?)").run("A1","unknown@example.com","start","end"),/FOREIGN KEY/);
- d.prepare("INSERT INTO grants VALUES(?,?,?,?)").run("A1","test@example.com","start","end");
- assert.throws(()=>d.prepare("INSERT INTO grants VALUES(?,?,?,?)").run("A1","test@example.com","start","end"),/UNIQUE/);
+ assert.throws(()=>d.prepare("INSERT INTO grants(device_id,email,start,end) VALUES(?,?,?,?)").run("A1","unknown@example.com","start","end"),/FOREIGN KEY/);
+ d.prepare("INSERT INTO grants(device_id,email,start,end) VALUES(?,?,?,?)").run("A1","test@example.com","start","end");
+ assert.throws(()=>d.prepare("INSERT INTO members(email,user_id,name,role,active,password_hash) VALUES(?,?,?,?,?,?)").run("test@example.com","id2","Duplicate","member",1,"hash"),/UNIQUE/);
  d.close();rmSync(directory,{recursive:true,force:true});
 });

@@ -1,8 +1,11 @@
+import {getConnection} from "@/lib/store.mjs";
+import {validateProfile,saveProfile,reviewRegistration,RegistrationError} from "@/lib/registration.mjs";
+import {registrationMailer} from "@/lib/registration-mail";
 import crypto from "node:crypto";
 import {ADMIN_REALTIME_INTERVALS, normalizeRealtimeInterval} from "@/lib/realtime-settings.mjs";
 import {randomUUID} from "node:crypto";
 import {hashPassword,validPassword} from "@/lib/passwords.mjs";
-import {admin,identity,db,config,fail,writeGuard,required,instant,AppError,syncDeviceStatusesAndLocations,getSiteStats} from "@/lib/server";
+import {downloadSegments,admin,identity,db,config,fail,writeGuard,required,instant,AppError,syncDeviceStatusesAndLocations,getSiteStats} from "@/lib/server";
 
 export const runtime="nodejs";
 export const dynamic="force-dynamic";
@@ -158,7 +161,7 @@ export async function GET(){try{
     }
 
     // 2. Devices maintained by this member (matched by name or maintainer email)
-    const mName = String(m.name || "").trim();
+    const mName = m.allowMaintainerNameMatch ? String(m.name || "").trim() : "";
     const maintainerRows = (await db().prepare("SELECT name FROM maintainers WHERE LOWER(email)=LOWER(?)").bind(m.email).all()).results as any[];
     const maintainerNames = Array.from(new Set([mName, ...maintainerRows.map(r => String(r.name || "").trim())].filter(Boolean)));
 
@@ -229,7 +232,7 @@ export async function GET(){try{
      }
    }
  }
- const members=isAdmin?(await db().prepare("SELECT email,name,nickname,role,active,login_count,last_login_at FROM members ORDER BY role,email").all()).results:[];
+ const members=isAdmin?(await db().prepare("SELECT m.email,m.name,m.nickname,m.role,m.active,m.login_count,m.last_login_at,p.country,p.institution,p.project_name,p.project_summary,p.requested_access,p.registration_status,p.registered_at,p.email_verified_at,p.reviewed_at,p.reviewed_by,p.review_note FROM members m LEFT JOIN member_profiles p ON p.email=m.email ORDER BY CASE WHEN p.registration_status='pending_review' THEN 0 ELSE 1 END,m.role,m.email").all()).results:[];
  const totalLogins=((await db().prepare("SELECT COALESCE(SUM(login_count), 0) as total FROM members").first()) as any)?.total || 0;
  const grants=isAdmin?(await db().prepare(`
   SELECT g.*, l.location_name, l.city_name, l.town_name,
@@ -253,10 +256,15 @@ export async function GET(){try{
  alertSettings.realtime_interval_secs = normalizeRealtimeInterval(alertSettings.realtime_interval_secs, true);
 
  const siteStats=getSiteStats();
+ const permittedSegments=await downloadSegments(m);
+ const segmentIds=new Set(permittedSegments.map((segment:any)=>segment.segment_id));
+ const visibleLocations=isAdmin?locations:locations.filter((location:any)=>segmentIds.has(String(location.id)));
+ const visibleNames=new Set(visibleLocations.map((location:any)=>String(location.maintainer||"").trim()).filter(Boolean));
+ const visibleMaintainers=isAdmin?maintainers:maintainers.filter((person:any)=>String(person.email||"").toLowerCase()===m.email.toLowerCase()||visibleNames.has(String(person.name||"").trim())).map((person:any)=>({name:person.name,email:person.email}));
  return Response.json({
-   me:{email:m.email,name:m.name,role:m.role,login_count:m.login_count||0,last_login_at:m.last_login_at||null},
-   devices,members,grants,locations,tokens,files,fileGrants,
-   labs,maintainers,alertSettings,alertChecks,alertLogs,grantRequests,totalLogins,siteStats,
+   me:{email:m.email,name:m.name,role:m.role,allowMaintainerNameMatch:m.allowMaintainerNameMatch,login_count:m.login_count||0,last_login_at:m.last_login_at||null,...(await db().prepare("SELECT * FROM member_profiles WHERE email=?").bind(m.email).first()||{})},
+   devices,downloadSegments:permittedSegments,members,grants,locations:visibleLocations,tokens,files,fileGrants,
+   labs,maintainers:visibleMaintainers,alertSettings:isAdmin?alertSettings:{realtime_interval_secs:alertSettings.realtime_interval_secs},alertChecks,alertLogs,grantRequests,totalLogins,siteStats,
    connected:!!(config().url&&config().token)
  },{headers:{"Cache-Control":"no-store"}});
 }catch(e){return fail(e)}}
@@ -264,7 +272,16 @@ export async function GET(){try{
 export async function POST(r:Request){try{
  writeGuard(r);const me=await identity(r);const isAdmin=me.role==="admin";const p=await r.json() as Record<string,unknown>;if(!p||typeof p!=="object"||Array.isArray(p))throw new AppError(400,"請提供正確的表單資料。");
  const requireAdmin=()=>{if(!isAdmin)throw new AppError(403,"權限不足。")};
-  if(p.action==="tokenCreate"){const token="aslung_"+crypto.randomBytes(24).toString("hex");await db().prepare("INSERT INTO api_tokens(id,email,created_at) VALUES(?,?,?)").bind(token,me.email,new Date().toISOString()).run();}else if(p.action==="tokenDelete"){await db().prepare("DELETE FROM api_tokens WHERE id=? AND email=?").bind(String(p.id),me.email).run();}else if(p.action==="device"){requireAdmin();const id=required(p.id,80);if(!/^[A-Za-z0-9_-]+$/.test(id))throw new AppError(400,"ASLUNG ID 只能使用英文、數字、底線與連字號。");const status=p.status?String(p.status):"DEPLOYED";await db().prepare("INSERT INTO devices(id,name,location,description,status) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET description=excluded.description, status=excluded.status").bind(id,"","",String(p.description??"").slice(0,1000),status).run();const labId=String(p.labId||"").trim();const currentLoc=await db().prepare("SELECT id, lab_id FROM device_locations WHERE aslung_id=? AND active=1").bind(id).first();if(status==="STANDBY"||status==="MAINTENANCE"||status==="RETIRED"||status==="LOST"){if(currentLoc){const now=new Date().toISOString();await db().prepare("UPDATE device_locations SET end_time=?, active=0 WHERE id=?").bind(now,currentLoc.id).run();}}else if(labId){if(!currentLoc||currentLoc.lab_id!==labId){const now=new Date().toISOString();if(currentLoc)await db().prepare("UPDATE device_locations SET end_time=?, active=0 WHERE id=?").bind(now,currentLoc.id).run();await db().prepare("INSERT INTO device_locations(lab_id,aslung_id,start_time,active) VALUES(?,?,?,1)").bind(labId,id,now).run();}}else if(currentLoc){const now=new Date().toISOString();await db().prepare("UPDATE device_locations SET end_time=?, active=0 WHERE id=?").bind(now,currentLoc.id).run();}await syncDeviceStatusesAndLocations();}else if(p.action==="deviceStatus"){requireAdmin();const id=required(p.id);const status=String(p.status||"STANDBY");if(status==="STANDBY"||status==="MAINTENANCE"||status==="RETIRED"||status==="LOST"){const now=new Date().toISOString();await db().prepare("UPDATE device_locations SET end_time=?, active=0 WHERE aslung_id=? AND active=1").bind(now,id).run();}await db().prepare("UPDATE devices SET status=? WHERE id=?").bind(status,id).run();await syncDeviceStatusesAndLocations();}
+  if(p.action==="memberReview"){
+    requireAdmin();const email=required(p.email,254).toLowerCase();
+    reviewRegistration(getConnection(),email,String(p.decision),me.email,String(p.note||""));
+    let notice="";
+    try{await registrationMailer().review(email,p.decision==="approve");}
+    catch{notice="審核結果已儲存，但通知信未寄出；請檢查 SMTP 設定 / Review saved, but the notification email could not be sent. Check SMTP settings.";}
+    return Response.json({ok:true,notice},{headers:{"Cache-Control":"no-store"}});
+  }else if(p.action==="profileUpdate"){
+    saveProfile(getConnection(),me.email,validateProfile(p,false));
+  }else if(p.action==="tokenCreate"){const token="aslung_"+crypto.randomBytes(24).toString("hex");await db().prepare("INSERT INTO api_tokens(id,email,created_at) VALUES(?,?,?)").bind(token,me.email,new Date().toISOString()).run();}else if(p.action==="tokenDelete"){await db().prepare("DELETE FROM api_tokens WHERE id=? AND email=?").bind(String(p.id),me.email).run();}else if(p.action==="device"){requireAdmin();const id=required(p.id,80);if(!/^[A-Za-z0-9_-]+$/.test(id))throw new AppError(400,"ASLUNG ID 只能使用英文、數字、底線與連字號。");const status=p.status?String(p.status):"DEPLOYED";await db().prepare("INSERT INTO devices(id,name,location,description,status) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET description=excluded.description, status=excluded.status").bind(id,"","",String(p.description??"").slice(0,1000),status).run();const labId=String(p.labId||"").trim();const currentLoc=await db().prepare("SELECT id, lab_id FROM device_locations WHERE aslung_id=? AND active=1").bind(id).first();if(status==="STANDBY"||status==="MAINTENANCE"||status==="RETIRED"||status==="LOST"){if(currentLoc){const now=new Date().toISOString();await db().prepare("UPDATE device_locations SET end_time=?, active=0 WHERE id=?").bind(now,currentLoc.id).run();}}else if(labId){if(!currentLoc||currentLoc.lab_id!==labId){const now=new Date().toISOString();if(currentLoc)await db().prepare("UPDATE device_locations SET end_time=?, active=0 WHERE id=?").bind(now,currentLoc.id).run();await db().prepare("INSERT INTO device_locations(lab_id,aslung_id,start_time,active) VALUES(?,?,?,1)").bind(labId,id,now).run();}}else if(currentLoc){const now=new Date().toISOString();await db().prepare("UPDATE device_locations SET end_time=?, active=0 WHERE id=?").bind(now,currentLoc.id).run();}await syncDeviceStatusesAndLocations();}else if(p.action==="deviceStatus"){requireAdmin();const id=required(p.id);const status=String(p.status||"STANDBY");if(status==="STANDBY"||status==="MAINTENANCE"||status==="RETIRED"||status==="LOST"){const now=new Date().toISOString();await db().prepare("UPDATE device_locations SET end_time=?, active=0 WHERE aslung_id=? AND active=1").bind(now,id).run();}await db().prepare("UPDATE devices SET status=? WHERE id=?").bind(status,id).run();await syncDeviceStatusesAndLocations();}
   else if(p.action==="deviceImport"){requireAdmin();const devices=p.devices;if(!Array.isArray(devices))throw new AppError(400,"參數錯誤");const insertDevice=db().prepare("INSERT INTO devices(id,name,location,description,status) VALUES(?,?,?,?,'STANDBY') ON CONFLICT(id) DO NOTHING");const checkLoc=db().prepare("SELECT id, lab_id FROM device_locations WHERE aslung_id=? AND active=1").bind("");const endLoc=db().prepare("UPDATE device_locations SET end_time=?, active=0 WHERE id=?");const insertLoc=db().prepare("INSERT INTO device_locations(lab_id,aslung_id,start_time,active) VALUES(?,?,?,1)");for(const d of devices){const id=typeof d==="string"?d:d.id;const labId=(d.labId||"").trim();if(typeof id==="string"&&/^[A-Za-z0-9_-]+$/.test(id)){insertDevice.bind(id,"","","").run();if(labId){const currentLoc=await db().prepare("SELECT id, lab_id FROM device_locations WHERE aslung_id=? AND active=1").bind(id).first();if(!currentLoc||currentLoc.lab_id!==labId){const now=new Date().toISOString();if(currentLoc)endLoc.bind(now,currentLoc.id).run();insertLoc.bind(labId,id,now).run();}}}}await syncDeviceStatusesAndLocations();} else if(p.action==="deviceDelete"){requireAdmin();const id=required(p.id);await db().prepare("DELETE FROM grants WHERE device_id=?").bind(id).run();await db().prepare("DELETE FROM device_locations WHERE aslung_id=?").bind(id).run();await db().prepare("DELETE FROM devices WHERE id=?").bind(id).run();} else if(p.action==="deviceDeleteBulk"){requireAdmin();const ids=((p.ids||p.aslungIds)??[]) as unknown[];if(!Array.isArray(ids)||ids.length===0)throw new AppError(400,"請選擇要刪除的設備。");await db().prepare("BEGIN").run();try{for(const id of ids){const deviceId=String(id);await db().prepare("DELETE FROM grants WHERE device_id=?").bind(deviceId).run();await db().prepare("DELETE FROM device_locations WHERE aslung_id=?").bind(deviceId).run();await db().prepare("DELETE FROM devices WHERE id=?").bind(deviceId).run();}await db().prepare("COMMIT").run();}catch(e){await db().prepare("ROLLBACK").run();throw e;}}
  else if(p.action==="member"){
  requireAdmin();
@@ -280,10 +297,15 @@ export async function POST(r:Request){try{
  
  if(!validPassword(p.password)) throw new AppError(400,"初始密碼需為 12 至 128 個字元。");
  const hash = await hashPassword(p.password);
+ const profile = validateProfile(p,false);
  
+ await db().prepare("BEGIN IMMEDIATE").run();
  try {
    await db().prepare("INSERT INTO members(email,user_id,name,nickname,role,active,password_hash) VALUES(?,?,?,?,'member',1,?)").bind(email,crypto.randomUUID(),required(p.name),nickname,hash).run();
+   saveProfile(getConnection(),email,profile);
+   await db().prepare("COMMIT").run();
  } catch(e) {
+   await db().prepare("ROLLBACK").run();
    if (String(e).includes("UNIQUE constraint failed: members.nickname")) {
      throw new AppError(400, "此帳號 (暱稱) 已被使用，請更換一個。");
    }
@@ -308,6 +330,7 @@ export async function POST(r:Request){try{
  }
 
  const name = required(p.name);
+ const profile=validateProfile(p,false);
  
  let hash = null;
  if (p.password) {
@@ -319,17 +342,22 @@ export async function POST(r:Request){try{
    await db().prepare("BEGIN").run(); await db().prepare("PRAGMA defer_foreign_keys=ON").run();
    
    if (hash) {
-     db().prepare("UPDATE members SET name=?, nickname=?, password_hash=? WHERE email=?").bind(name, nickname, hash, originalEmail).run();
+     await db().prepare("UPDATE members SET name=?, nickname=?, password_hash=? WHERE email=?").bind(name, nickname, hash, originalEmail).run();
    } else {
-     db().prepare("UPDATE members SET name=?, nickname=? WHERE email=?").bind(name, nickname, originalEmail).run();
+     await db().prepare("UPDATE members SET name=?, nickname=? WHERE email=?").bind(name, nickname, originalEmail).run();
    }
 
    if (newEmail !== originalEmail) {
-     db().prepare("UPDATE members SET email=? WHERE email=?").bind(newEmail, originalEmail).run();
-     db().prepare("UPDATE grants SET email=? WHERE email=?").bind(newEmail, originalEmail).run();
-     db().prepare("UPDATE sessions SET email=? WHERE email=?").bind(newEmail, originalEmail).run();
-     db().prepare("UPDATE api_tokens SET email=? WHERE email=?").bind(newEmail, originalEmail).run();
-     db().prepare("UPDATE file_grants SET email=? WHERE email=?").bind(newEmail, originalEmail).run();
+     await db().prepare("UPDATE members SET email=? WHERE email=?").bind(newEmail, originalEmail).run();
+     await db().prepare("UPDATE grants SET email=? WHERE email=?").bind(newEmail, originalEmail).run();
+     await db().prepare("UPDATE sessions SET email=? WHERE email=?").bind(newEmail, originalEmail).run();
+     await db().prepare("UPDATE api_tokens SET email=? WHERE email=?").bind(newEmail, originalEmail).run();
+     await db().prepare("UPDATE file_grants SET email=? WHERE email=?").bind(newEmail, originalEmail).run();
+   }
+   if(typeof p.country==="string")saveProfile(getConnection(),newEmail,profile);
+   if(newEmail!==originalEmail){
+     await db().prepare("UPDATE member_profiles SET email_verified_at=NULL,registration_status='pending_email',reviewed_at=NULL,reviewed_by=NULL,review_note='' WHERE email=? AND registration_status!='approved'").bind(newEmail).run();
+     await db().prepare("DELETE FROM email_verifications WHERE email=?").bind(newEmail).run();
    }
    await db().prepare("COMMIT").run();
  } catch(e) {
@@ -343,8 +371,8 @@ export async function POST(r:Request){try{
    throw e;
  }
 }
- else if(p.action==="memberRole"){requireAdmin();const email=required(p.email);if(email===me.email)throw new AppError(400,"無法修改自己的角色。");await db().prepare("UPDATE members SET role=? WHERE email=?").bind(p.role==="admin"?"admin":"member",email).run();}
- else if(p.action==="memberStatus"){requireAdmin();const email=required(p.email);if(email===me.email)throw new AppError(400,"無法停用自己的帳號。");await db().prepare("UPDATE members SET active=? WHERE email=?").bind(p.active?1:0,email).run();}
+ else if(p.action==="memberRole"){requireAdmin();const email=required(p.email);if(email===me.email)throw new AppError(400,"無法修改自己的角色。");const application:any=await db().prepare("SELECT registration_status FROM member_profiles WHERE email=?").bind(email).first();if(application&&application.registration_status!=="approved")throw new AppError(400,"請先完成 Email 驗證與帳號審核。");await db().prepare("UPDATE members SET role=? WHERE email=?").bind(p.role==="admin"?"admin":"member",email).run();}
+ else if(p.action==="memberStatus"){requireAdmin();const email=required(p.email);if(email===me.email)throw new AppError(400,"無法停用自己的帳號。");const application:any=await db().prepare("SELECT registration_status FROM member_profiles WHERE email=?").bind(email).first();if(p.active&&application&&application.registration_status!=="approved")throw new AppError(400,"請從註冊申請清單審核，並先完成 Email 驗證。");await db().prepare("UPDATE members SET active=? WHERE email=?").bind(p.active?1:0,email).run();}
  else if(p.action==="memberDelete"){
   requireAdmin();
   const email=required(p.email);
@@ -804,4 +832,4 @@ export async function POST(r:Request){try{
   }
 } else throw new AppError(400,"不支援此操作。");
  return Response.json({ok:true});
-}catch(e){if(e instanceof Error&&e.message.includes("UNIQUE constraint"))return Response.json({error:"此 ID 或名稱已存在。"},{status:409});return fail(e)}}
+}catch(e){if(e instanceof RegistrationError)return fail(new AppError(e.status,e.message));if(e instanceof Error&&e.message.includes("UNIQUE constraint"))return Response.json({error:"此 ID 或名稱已存在。"},{status:409});return fail(e)}}

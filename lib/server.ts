@@ -1,3 +1,4 @@
+import {buildDownloadSegments, intersectRanges, rangeTime} from "./download-segments.mjs";
 import crypto from "node:crypto";
 import {getStore, recordSiteVisit, getSiteStats} from "./store.mjs";
 export {recordSiteVisit, getSiteStats};
@@ -34,7 +35,8 @@ export async function identity(r?: Request){
    if(m.user_id&&m.user_id!==userId)throw new AppError(403,"帳號識別不符，請聯絡管理員。");
    if(!m.user_id)await db().prepare("UPDATE members SET user_id=? WHERE email=? AND user_id IS NULL").bind(userId,emailLower).run();
  }
- return {...m,user_id:userId || m.user_id};
+ const profile:any=await db().prepare("SELECT registered_at FROM member_profiles WHERE email=?").bind(m.email).first();
+ return {...m,user_id:userId || m.user_id,allowMaintainerNameMatch:!profile?.registered_at};
 }
 export async function admin(){const m=await identity();if(m.role!=="admin")throw new AppError(403,"只有管理員可以操作。");return m;}
 export function fail(e:unknown){if(e instanceof AppError)return Response.json({error:e.message},{status:e.status,headers:{"Cache-Control":"no-store"}});console.error(e);return Response.json({error: e instanceof Error ? e.message : "服務暫時無法使用，請稍後重試。"}, {status:500});}
@@ -53,40 +55,39 @@ export function instant(v:unknown){
     throw new AppError(400,"時間格式不正確。請提供包含時區的 ISO 8601 格式，例如 2026-10-01T00:00:00+08:00（URL 請使用 %2B08:00）或 2026-09-30T16:00:00Z。");
   return new Date(s).toISOString();
 }
-export async function permitted(m:any,id:string,start:string,end:string){
- const device=await db().prepare("SELECT * FROM devices WHERE id=?").bind(id).first();if(!device)throw new AppError(404,"找不到 ASLUNG ID。");
- if(m.role!=="admin"){
-   // 1. 個別設備授權 (Direct Device Grant)
-   const grants:any=await db().prepare("SELECT * FROM grants WHERE (grant_type='device' OR grant_type IS NULL) AND device_id=? AND email=?").bind(id,m.email).all();
-   const hasGrant = grants.results.some((g:any)=>start>=g.start&&(!g.end||end<=g.end));
-   if (hasGrant) return device;
-
-   // 2. 地點授權 (Lab Grants)
-   const labGrants:any=await db().prepare("SELECT * FROM grants WHERE grant_type='lab' AND email=?").bind(m.email).all();
-   for (const lg of labGrants.results) {
-
-     const locMatch = await db().prepare(`
-       SELECT 1 FROM device_locations
-       WHERE aslung_id=? AND lab_id=?
-         AND start_time <= ? AND (end_time IS NULL OR end_time >= ?)
-     `).bind(id, lg.lab_id, end, start).first();
-     if (locMatch) return device;
-
-     const hasAnyLoc = await db().prepare("SELECT 1 FROM device_locations WHERE aslung_id=? AND lab_id=?").bind(id, lg.lab_id).first();
-     if (!hasAnyLoc && device.location && device.location === lg.lab_id) {
-       return device;
-     }
-   }
-
-   // 3. 負責維護人員 (Maintainer)
-   const mName = String(m.name || "").trim();
-   const isMaintainer = await db().prepare(`
-     SELECT 1 FROM device_locations
-     WHERE aslung_id=? AND (TRIM(maintainer)=TRIM(?) OR TRIM(maintainer) IN (SELECT name FROM maintainers WHERE LOWER(email)=LOWER(?)))
-   `).bind(id, mName, m.email).first();
-   if(!isMaintainer) throw new AppError(403,"此設備或查詢期間未授權。");
+export async function downloadSegments(m:any){
+ const [devices,locations,grants,maintainers]=await Promise.all([
+   db().prepare("SELECT * FROM devices").all(),
+   db().prepare("SELECT * FROM device_locations").all(),
+   db().prepare("SELECT * FROM grants WHERE email=?").bind(m.email).all(),
+   db().prepare("SELECT name,email FROM maintainers WHERE LOWER(email)=LOWER(?)").bind(m.email).all()
+ ]);
+ return buildDownloadSegments(m,devices.results,locations.results,grants.results,maintainers.results);
+}
+export async function authorizedDataRanges(m:any,id:string,start:string,end:string,segmentId?:string|null){
+ const device=await db().prepare("SELECT * FROM devices WHERE id=?").bind(id).first();
+ if(!device)throw new AppError(404,"找不到 ASLUNG ID。");
+ let ranges:any[]=[];
+ if(segmentId){
+   const segment=(await downloadSegments(m)).find((s:any)=>s.segment_id===segmentId&&s.id===id);
+   if(!segment)throw new AppError(403,"此追蹤區段未授權或不存在。");
+   ranges=segment.tracking_ranges;
+ }else if(m.role==="admin")ranges=[{start,end}];
+ else{
+   const segments=(await downloadSegments(m)).filter((s:any)=>s.id===id);
+   ranges=segments.flatMap((s:any)=>s.tracking_ranges);
+   const direct=await db().prepare("SELECT start,end FROM grants WHERE email=? AND device_id=? AND (grant_type='device' OR grant_type IS NULL)").bind(m.email,id).all();
+   ranges.push(...direct.results);
  }
- return device;
+ const overlaps=intersectRanges(ranges,start,end);
+ if(!overlaps.length)throw new AppError(403,"此設備或查詢期間未授權。");
+ return overlaps as {start:string;end:string}[];
+}
+export async function permitted(m:any,id:string,start:string,end:string){
+ const ranges=await authorizedDataRanges(m,id,start,end);
+ if(ranges.length!==1||rangeTime(ranges[0].start,0)>Date.parse(start)||rangeTime(ranges[0].end,Infinity)<Date.parse(end))
+   throw new AppError(403,"查詢期間跨越未授權區間，請選擇追蹤區段或縮短期間。");
+ return db().prepare("SELECT * FROM devices WHERE id=?").bind(id).first();
 }
 
 export async function syncDeviceStatusesAndLocations(store = db()){

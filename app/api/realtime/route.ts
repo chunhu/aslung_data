@@ -42,7 +42,7 @@ export async function GET(r: Request) {
             }
 
             // 3. 維護人員列管設備 (僅回傳當前負責維護且服役中的設備)
-            const mName = String(m.name || "").trim();
+            const mName = m.allowMaintainerNameMatch ? String(m.name || "").trim() : "";
             const maintainerRows = (await db().prepare("SELECT name FROM maintainers WHERE LOWER(email)=LOWER(?)").bind(m.email).all()).results as any[];
             const maintainerNames = Array.from(new Set([mName, ...maintainerRows.map(r => String(r.name || "").trim())].filter(Boolean)));
 

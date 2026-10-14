@@ -1,4 +1,5 @@
-import {identity,fail,required,instant,permitted,AppError} from "@/lib/server";
+import {fetchRangesPage} from "@/lib/download-segments.mjs";
+import {identity,fail,required,instant,authorizedDataRanges,permitted,AppError} from "@/lib/server";
 import {fetchPage,toCsv} from "@/lib/data";
 
 export const runtime = "nodejs";
@@ -12,7 +13,13 @@ export async function GET(r: Request) {
         const end = instant(url.searchParams.get("end"));
         if (start > end) throw new AppError(400, "開始時間不能晚於結束時間。");
         const m = await identity(r);
-        await permitted(m, id, start, end);
+        const segmentId = url.searchParams.get("segment_id");
+        if (!segmentId) await permitted(m, id, start, end);
+        const ranges = await authorizedDataRanges(m, id, start, end, segmentId);
+        const pageFor = (cursor: string, limit = 1000) => segmentId
+          ? fetchRangesPage(ranges, cursor, limit,
+              (s: string, e: string, c: string, size: number) => fetchPage(id, s, e, c, size))
+          : fetchPage(id, start, end, cursor, limit);
 
         // 系統管理員不受 31 天時間限制；一般會員仍維持 31 天上限以維持系統效能
         if (m.role !== "admin") {
@@ -30,11 +37,12 @@ export async function GET(r: Request) {
             const pageSize = 5000;
             let safetyLimit = m.role === "admin" ? 50000 : 2000;
             while (safetyLimit > 0) {
-                const res = await fetchPage(id, start, end, currentCursor, pageSize);
+                const res = await pageFor(currentCursor, pageSize);
                 data = data.concat(res.data as Record<string,unknown>[]);
                 if (!res.has_more) break;
                 currentCursor = res.next_cursor as string;
                 safetyLimit--;
+                if (!safetyLimit) throw new AppError(413, "資料量超過單次匯出上限，請縮短期間後重試。");
             }
             if (format === "csv") {
                 return new Response(toCsv(data), {
@@ -44,7 +52,7 @@ export async function GET(r: Request) {
                     }
                 });
             } else {
-                return new Response(JSON.stringify({aslung_id: id, start, end, data}), {
+                return new Response(JSON.stringify({aslung_id: id, segment_id: segmentId, start, end, authorized_ranges: ranges, data}), {
                     headers: {
                         "Content-Type": "application/json; charset=utf-8",
                         "Content-Disposition": `attachment; filename="aslung_${id}_export.json"`
@@ -54,8 +62,8 @@ export async function GET(r: Request) {
         }
         
         const cursor = url.searchParams.get("cursor") || "";
-        const page = await fetchPage(id, start, end, cursor);
-        return Response.json(page, {headers: {"Cache-Control": "no-store"}});
+        const page = await pageFor(cursor);
+        return Response.json({aslung_id:id,start,end,segment_id:segmentId,authorized_ranges:ranges,...page}, {headers: {"Cache-Control": "no-store"}});
     } catch(e) {
         return fail(e);
     }

@@ -53,7 +53,7 @@ SQLite 保存於 data/aslung.sqlite，備份保存於 backups/。這些資料、
 - 已修正 SQLite 初始化時重複新增 nickname 的問題；兩項資料庫初始化／升級回歸測試通過。
 - 已將根版型的翻譯相容腳本改為 next/script beforeInteractive，登入頁不再出現 React 原生 script 警告。
 - 側邊選單等待會員權限載入後才顯示，避免重新整理時短暫顯示所有管理功能。
-- pnpm test：3 項通過、2 項失敗。既有 auth.test.mjs 用 6 個值寫入目前有 9 欄的 members；data.test.mjs 仍假設舊 HTTPS API，無法載入目前 MySQL 版本的模組。
+- 註冊、登入、資料庫升級、追蹤區段、下載及更新頻率的 25 項針對性測試通過；auth.test.mjs 已改用目前欄位。data.test.mjs 仍假設舊 HTTPS API，尚未更新為 MySQL 測試，因此不代表完整 pnpm test 已通過。
 - pnpm test:integration：同樣在舊的 members 測試資料寫入處失敗，尚未進入 HTTP 流程。
 
 驗證指令：
@@ -63,3 +63,11 @@ corepack pnpm test
 corepack pnpm build
 corepack pnpm test:integration
 ```
+
+## 本機編譯快取位置
+
+此工作站的 Next.js 快取統一放在 `K:\CodexCache\aslung_data\next`，專案 `.next` 透過連接目錄指向該處。後續快取使用 K 槽，不再新增至 C 槽。
+
+## 自行註冊
+
+註冊入口為 `/register`（中文）及 `/register?lang=en`（英文）。Email 驗證、合作資料、會員審核及 SMTP 設定說明見 [REGISTRATION.md](REGISTRATION.md)。

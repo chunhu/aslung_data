@@ -16,8 +16,14 @@ export async function POST(r:Request){try{
  const member=d.prepare("SELECT * FROM members WHERE email=? OR nickname=?").get(inputId, inputId) as any;
  dummy??=hashPassword(randomBytes(24).toString("hex"));
  const valid=await verifyPassword(p.password,member?.password_hash??await dummy);
- if(!member||!member.active||!valid)throw new AppError(401,"Email 或密碼不正確。");
- d.prepare("DELETE FROM login_attempts WHERE email=?").run(inputId);d.prepare("DELETE FROM sessions WHERE expires_at<?").run(now);
+ if(!member||!valid)throw new AppError(401,"Email 或密碼不正確 / Incorrect email or password.");
+ d.prepare("DELETE FROM login_attempts WHERE email=?").run(inputId);
+ if(!member.active){
+   const profile=d.prepare("SELECT registration_status FROM member_profiles WHERE email=?").get(member.email) as any;
+   const message=profile?.registration_status==="pending_email"?"請先驗證 Email；可至註冊頁重新寄送驗證信 / Please verify your email. You can resend the email on the registration page.":profile?.registration_status==="pending_review"?"Email 已驗證，帳號正在等待管理員審核 / Email verified. Your account is awaiting administrator approval.":profile?.registration_status==="rejected"?"申請未通過審核，請聯絡合作計畫窗口 / Application not approved. Please contact your project coordinator.":"帳號已停用，請聯絡管理員 / Account disabled. Please contact the administrator.";
+   throw new AppError(403,message);
+ }
+ d.prepare("DELETE FROM sessions WHERE expires_at<?").run(now);
  const token=randomBytes(32).toString("hex");
  d.prepare("INSERT INTO sessions(token_hash,email,expires_at) VALUES(?,?,?)").run(tokenHash(token),member.email,now+43200000);
  try {

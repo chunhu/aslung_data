@@ -48,8 +48,9 @@ export default function LoginForm(){
     </form>
     <p className="text-xs text-slate-500 mt-6 leading-6 flex gap-2">
       <LockKeyhole size={15} className="shrink-0 mt-1"/>
-      帳號由管理員建立。如忘記密碼，請聯絡管理員重設。
+      新使用者可申請帳號，經 Email 驗證及管理員審核後使用。如忘記密碼，請聯絡管理員重設。
     </p>
+    <div className="mt-4 flex flex-wrap gap-4 text-sm text-teal-700"><a href="/register" className="underline">申請會員帳號</a><a href="/register?lang=en" className="underline" translate="no">Register in English</a></div>
     {stats && (
       <div className="mt-6 pt-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-400">
         <span className="flex items-center gap-1.5"><Eye size={13} className="text-teal-600"/> 網站累計瀏覽：<strong className="text-slate-600 font-semibold">{stats.totalViews?.toLocaleString() ?? 0}</strong> 次</span>

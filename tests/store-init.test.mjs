@@ -21,7 +21,7 @@ for (const legacy of [false, true]) {
         ${setup}
         const {getConnection} = await import(${JSON.stringify(new URL("../lib/store.mjs", import.meta.url).href)});
         const db = getConnection();
-        assert.equal(db.prepare("SELECT MAX(version) AS version FROM schema_version").get().version, 13);
+        assert.equal(db.prepare("SELECT MAX(version) AS version FROM schema_version").get().version, 14);
         db.prepare("INSERT INTO members(email,user_id,name,nickname,role,active,password_hash) VALUES(?,?,?,?,?,?,?)").run('new@example.com','new-id','New','new-admin','admin',1,'hash');
         assert.throws(() => db.prepare("INSERT INTO members(email,user_id,name,nickname,role,active,password_hash) VALUES(?,?,?,?,?,?,?)").run('duplicate@example.com','duplicate-id','Duplicate','new-admin','admin',1,'hash'), /UNIQUE/);
         ${legacy ? `assert.equal(db.prepare("SELECT name FROM members WHERE email='existing@example.com'").get().name, 'Existing');` : ""}
