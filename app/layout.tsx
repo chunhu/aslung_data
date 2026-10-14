@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Script from "next/script";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -17,8 +18,8 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="zh-Hant">
-      <head>
-        <script dangerouslySetInnerHTML={{
+      <body className="antialiased">
+        <Script id="translation-dom-compat" strategy="beforeInteractive" dangerouslySetInnerHTML={{
           __html: `
             if (typeof Node === 'function' && Node.prototype) {
               const originalRemoveChild = Node.prototype.removeChild;
@@ -38,8 +39,8 @@ export default function RootLayout({
             }
           `
         }} />
-</head>
-      <body className="antialiased">{children}</body>
+        {children}
+      </body>
     </html>
   );
 }

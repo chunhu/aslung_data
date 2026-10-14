@@ -7,3 +7,6 @@ node_modules/
 *.sqlite*
 *.tsbuildinfo
 .DS_Store
+
+# Project-local development runtime
+.tools/
