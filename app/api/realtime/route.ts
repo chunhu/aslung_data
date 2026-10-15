@@ -8,11 +8,19 @@ export async function GET(r: Request) {
     try {
         const m = await identity(r);
         const now = new Date().toISOString();
+        const extraParam = new URL(r.url).searchParams.get('extra_ids') || '';
+        if (extraParam && m.role !== 'admin') return Response.json({error:'只有管理員可以查詢未建檔設備。'}, {status:403});
+        const extraIds = Array.from(new Set(extraParam.split(',').filter(Boolean)));
+        if (extraParam.length > 12000 || extraIds.length > 200 || extraIds.some(id=>!/^[A-Za-z0-9_-]{1,80}$/.test(id)))
+            return Response.json({error:'未建檔設備查詢最多 200 台，請縮小搜尋範圍。'}, {status:400});
 
         let deviceIds: string[] = [];
+        const registeredIds = new Set<string>();
         if (m.role === "admin") {
             const devs: any = await db().prepare("SELECT id FROM devices").all();
             deviceIds = devs.results.map((d: any) => d.id);
+            deviceIds.forEach(id=>registeredIds.add(id));
+            deviceIds = Array.from(new Set([...deviceIds, ...extraIds]));
         } else {
             // 1. 個別設備授權 (Direct Device Grants)
             const grants: any = await db().prepare("SELECT device_id FROM grants WHERE email=? AND (grant_type='device' OR grant_type IS NULL) AND start <= ? AND (end IS NULL OR end >= ?)").bind(m.email, now, now).all();
@@ -83,6 +91,7 @@ export async function GET(r: Request) {
                         return {
                             timestamp: t.toISOString(),
                             aslung_id: r.aslung_id,
+                            ...(m.role === 'admin' && !registeredIds.has(r.aslung_id) ? {unregistered:true} : {}),
                             PM1_G3: r.PM1_G3,
                             'PM2.5_G3': r['PM2.5_G3'],
                             PM10_G3: r.PM10_G3,
