@@ -8,12 +8,13 @@ import {spawnSync} from 'node:child_process';
 const bash=process.env.BASH_PATH || (process.platform==='win32'
   ? ['C:/Program Files/Git/bin/bash.exe','C:/Program Files/Git/usr/bin/bash.exe'].find(existsSync) : 'bash');
 
-function deploy({fail='',upToDate=false,force=false}={}) {
+function deploy({fail='',upToDate=false,force=false,setup=false}={}) {
   const directory=mkdtempSync(join(tmpdir(),'aslung-deploy-'));
   const scripts=join(directory,'scripts'),bin=join(directory,'bin');
   mkdirSync(scripts);mkdirSync(bin);
   const script=join(scripts,'deploy.sh'),log=join(directory,'commands.log');
   copyFileSync(new URL('../scripts/deploy.sh',import.meta.url),script);
+  copyFileSync(new URL('../scripts/setup-autostart.sh',import.meta.url),join(scripts,'setup-autostart.sh'));
   writeFileSync(join(bin,'git'),`#!/bin/bash
 printf 'git %s\\n' "$*" >> "$DEPLOY_TEST_LOG"
 if [[ "$1" == fetch && "$DEPLOY_FAIL" == fetch ]]; then exit 17; fi
@@ -23,6 +24,10 @@ if [[ "$1" == rev-parse ]]; then
 fi
 `,{mode:0o755});
   writeFileSync(join(bin,'sudo'),'#!/bin/bash\nexec "$@"\n',{mode:0o755});
+  for(const command of ['systemctl','nginx'])writeFileSync(join(bin,command),`#!/bin/bash
+printf '${command} %s\\n' "$*" >> "$DEPLOY_TEST_LOG"
+if [[ "$DEPLOY_FAIL" == ${command} ]]; then exit 24; fi
+`,{mode:0o755});
   writeFileSync(join(bin,'docker'),`#!/bin/bash
 printf 'docker %s\\n' "$*" >> "$DEPLOY_TEST_LOG"
 if [[ "$*" == *" build "* && "$DEPLOY_FAIL" == build ]]; then exit 19; fi
@@ -33,7 +38,8 @@ if [[ "$*" == *" up "* && "$DEPLOY_FAIL" == health ]]; then exit 23; fi
     const result=spawnSync(bash,['-c','if command -v cygpath >/dev/null 2>&1; then DEPLOY_TEST_BIN=$(cygpath -u "$DEPLOY_TEST_BIN"); fi; export PATH="$DEPLOY_TEST_BIN:$PATH"; exec bash "$DEPLOY_TEST_SCRIPT" '+(force?'--force':'')],{
       cwd:directory,encoding:'utf8',timeout:15000,
       env:{...process.env,DEPLOY_TEST_BIN:bin.replaceAll('\\','/'),DEPLOY_TEST_SCRIPT:script.replaceAll('\\','/'),
-        DEPLOY_TEST_LOG:log.replaceAll('\\','/'),DEPLOY_FAIL:fail,DEPLOY_UP_TO_DATE:upToDate?'1':'0'}
+        DEPLOY_TEST_LOG:log.replaceAll('\\','/'),DEPLOY_FAIL:fail,DEPLOY_UP_TO_DATE:upToDate?'1':'0',
+        ...(setup?{DEPLOY_TEST_SCRIPT:join(scripts,'setup-autostart.sh').replaceAll('\\','/')}:{})}
     });
     assert.ifError(result.error);
     return {status:result.status,output:result.stdout+result.stderr,commands:existsSync(log)?readFileSync(log,'utf8'):''};
@@ -66,9 +72,28 @@ for(const [stage,code] of [['fetch',17],['pull',18],['build',19],['health',23]])
 
 test('unchanged checkout skips a noninteractive deployment unless --force is supplied',{skip:!bash},()=>{
   const skipped=deploy({upToDate:true});assert.equal(skipped.status,0,skipped.output);
+  assert.match(skipped.commands,/systemctl enable --now containerd.service docker.service nginx.service/);
   assert.doesNotMatch(skipped.commands,/docker /);
   const forced=deploy({upToDate:true,force:true});assert.equal(forced.status,0,forced.output);
   assert.match(forced.commands,/docker compose --progress plain build app/);
+});
+
+test('standalone boot setup resumes the app without fetching or building',{skip:!bash},()=>{
+  const result=deploy({setup:true});assert.equal(result.status,0,result.output);
+  assert.match(result.commands,/docker compose up -d --no-build --wait --wait-timeout 180 app/);
+  assert.doesNotMatch(result.commands,/git |docker .* build /);
+  assert.ok(result.commands.indexOf('nginx -t')<result.commands.indexOf('systemctl enable'),result.commands);
+});
+
+for(const stage of ['nginx','systemctl'])test(`boot setup failure in ${stage} prevents deployment`,{skip:!bash},()=>{
+  const result=deploy({fail:stage});assert.equal(result.status,24,result.output);
+  assert.doesNotMatch(result.commands,/git fetch|docker /);
+  assert.match(result.output,/部署失敗：設定開機自動啟動/);
+});
+
+test('standalone boot setup reports unhealthy container as failure',{skip:!bash},()=>{
+  const result=deploy({setup:true,fail:'health'});assert.equal(result.status,23,result.output);
+  assert.doesNotMatch(result.output,/網站健康檢查通過/);
 });
 
 test('runner library copies support the real backup CLI after registration migration',()=>{

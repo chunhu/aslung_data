@@ -158,6 +158,14 @@ export default function AlertsView({
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "檢查失敗");
       await load();
+      if (data.result?.skipped) {
+        toast.info(data.result.skipReason || "本次檢查已略過");
+        return;
+      }
+      if (data.result?.unknownCount) {
+        toast.warning(`檢查完成：${data.result.offlineCount || 0} 台斷線，另有 ${data.result.unknownCount} 台查詢失敗，未計入斷線。請查看日誌。`);
+        return;
+      }
       toast.success(`檢查完成！共發現 ${data.result?.offlineCount || 0} 台斷線設備，已處理 ${data.result?.notifiedMaintainers || 0} 位維護者的通知。`);
     } catch (e: any) {
       toast.error(e.message);
@@ -456,7 +464,7 @@ export default function AlertsView({
                         <TableCell>
                           {check.offline_count === 0 ? (
                             <span className="text-emerald-700 font-semibold inline-flex items-center gap-1 text-xs">
-                              <CheckCircle2 size={13} /> 全部正常 (0 台)
+                              <CheckCircle2 size={13} /> {check.status === "FAILED" || check.status === "PENDING" ? "未確認斷線（請查看摘要）" : "全部正常 (0 台)"}
                             </span>
                           ) : (
                             <span className="text-red-600 font-bold font-mono inline-flex items-center gap-1 text-xs">
@@ -466,10 +474,10 @@ export default function AlertsView({
                         </TableCell>
                         <TableCell>
                           {check.offline_count === 0 ? (
-                            <span className="text-slate-400 text-xs">無須發送</span>
+                            <span className="text-slate-400 text-xs">{check.status === "FAILED" ? "檢查異常" : check.status === "PENDING" ? "處理中" : "無須發送"}</span>
                           ) : (
                             <span className={`status ${check.status === 'SENT' ? 'ok' : check.status === 'SIMULATED' ? 'pending' : 'text-red-700 bg-red-100'}`}>
-                              {check.status === 'SENT' ? '已寄出' : check.status === 'SIMULATED' ? '模擬記錄' : '發送失敗'}
+                              {check.status === 'SENT' ? '已寄出' : check.status === 'SIMULATED' ? '模擬記錄' : check.status === 'PENDING' ? '處理中' : '檢查或寄送失敗'}
                             </span>
                           )}
                         </TableCell>
@@ -556,7 +564,11 @@ export default function AlertsView({
                   <div className="bg-slate-50 p-2.5 rounded-lg border">
                     <span className="text-slate-400 block mb-0.5">整體狀態</span>
                     <span className="font-semibold text-slate-800 text-xs">
-                      {selectedCheckDetail.offline_count === 0
+                      {selectedCheckDetail.status === "FAILED"
+                        ? "檢查或寄送失敗，請查看摘要"
+                        : selectedCheckDetail.status === "PENDING"
+                        ? "處理中（中斷時可能有部分未寄送）"
+                        : selectedCheckDetail.offline_count === 0
                         ? "全部正常連線"
                         : selectedCheckDetail.status === "SENT"
                         ? "已寄出通知信"
@@ -599,15 +611,15 @@ export default function AlertsView({
                               <TableCell className="text-xs">{log.lab_id || "—"}</TableCell>
                               <TableCell className="font-medium">{log.maintainer}</TableCell>
                               <TableCell className="font-mono text-xs text-slate-600">{log.email}</TableCell>
-                              <TableCell className="text-xs text-red-600 font-semibold font-mono" title={log.last_seen ? `最後上傳：${localTime(log.last_seen)}（斷線約 ${log.offline_mins} 分鐘）` : "從未上傳數據"}>
-                                {formatOfflineDuration(log.offline_mins, false, log.last_seen)}
+                              <TableCell className="text-xs text-red-600 font-semibold font-mono" title={log.status === "UNKNOWN" ? "查詢失敗，無法判定設備狀態" : log.last_seen ? `最後上傳：${localTime(log.last_seen)}（斷線約 ${log.offline_mins} 分鐘）` : "從未上傳數據"}>
+                                {log.status === "UNKNOWN" ? "狀態未知" : formatOfflineDuration(log.offline_mins, false, log.last_seen)}
                               </TableCell>
                               <TableCell className="font-mono text-xs text-slate-500">
-                                {log.last_seen ? localTime(log.last_seen) : "從未上傳"}
+                                {log.status === "UNKNOWN" ? "查詢失敗" : log.last_seen ? localTime(log.last_seen) : "從未上傳"}
                               </TableCell>
                               <TableCell>
                                 <span className={`status ${log.status === 'SENT' ? 'ok' : log.status === 'SIMULATED' ? 'pending' : 'text-red-700 bg-red-100'}`}>
-                                  {log.status === 'SENT' ? '已寄出' : log.status === 'SIMULATED' ? '模擬記錄' : '發送失敗'}
+                                  {log.status === 'SENT' ? '已寄出' : log.status === 'UNKNOWN' ? '未發送（狀態未知）' : log.status === 'SIMULATED' ? '模擬記錄' : '發送失敗'}
                                 </span>
                               </TableCell>
                               <TableCell className="text-xs text-slate-500 max-w-[160px] truncate" title={log.error_message || ''}>

@@ -1,11 +1,9 @@
 import { NextRequest } from "next/server";
 import { identity, db, fail, writeGuard, AppError } from "@/lib/server";
-import { checkAndSendOfflineAlerts, initAlertCron } from "@/lib/alerts";
+import { checkAndSendOfflineAlerts } from "@/lib/alerts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-initAlertCron();
 
 export async function GET(req: NextRequest) {
   try {

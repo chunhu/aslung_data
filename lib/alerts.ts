@@ -2,6 +2,7 @@ import nodemailer from "nodemailer";
 import { db, syncDeviceStatusesAndLocations } from "@/lib/server";
 import { getPool } from "@/lib/data";
 import { formatOfflineDuration } from "@/lib/utils";
+import { acquireAlertLock } from "./alert-lock";
 
 export interface AlertResult {
   checkId?: number;
@@ -10,6 +11,8 @@ export interface AlertResult {
   offlineCount: number;
   notifiedMaintainers: number;
   skipped?: boolean;
+  skipReason?: string;
+  unknownCount?: number;
   details: Array<{
     maintainer: string;
     email: string;
@@ -95,6 +98,19 @@ export function shouldRunScheduledCheck(settings: any, now = new Date()): boolea
 
 export async function checkAndSendOfflineAlerts(options: { force?: boolean } = {}): Promise<AlertResult> {
   const store = db();
+  const lock = await acquireAlertLock(store);
+  if (!lock) return {
+    checkedAt: new Date().toISOString(), totalDevices: 0, offlineCount: 0,
+    notifiedMaintainers: 0, skipped: true, skipReason: "已有告警檢查正在執行", details: []
+  };
+  try {
+    return await runOfflineAlertCheck(store, options, lock.assertOwned);
+  } finally {
+    await lock.release();
+  }
+}
+
+async function runOfflineAlertCheck(store: ReturnType<typeof db>, options: { force?: boolean }, assertOwned: () => Promise<void>): Promise<AlertResult> {
   await syncDeviceStatusesAndLocations(store);
   const settingsRow: any = await store.prepare("SELECT * FROM alert_settings WHERE id=1").first();
   const settings = settingsRow || {
@@ -154,6 +170,7 @@ export async function checkAndSendOfflineAlerts(options: { force?: boolean } = {
   // 3. Query realtime timestamps from rawdata (MySQL) in parallel chunks
   const pool = getPool();
   const deviceLatest: Record<string, { timestamp: string; PM25?: string; temp?: string; rh?: string }> = {};
+  const queryErrors = new Map<string, string>();
 
   const BATCH_SIZE = 8;
   for (let i = 0; i < inUseDevIds.length; i += BATCH_SIZE) {
@@ -163,10 +180,10 @@ export async function checkAndSendOfflineAlerts(options: { force?: boolean } = {
         const sql = `SELECT time, ch2 AS \`PM2.5_G3\`, ch4 AS temperature, ch5 AS rh FROM rawdata WHERE uid = ? ORDER BY time DESC LIMIT 1`;
         let rows: any[];
         try {
-          [rows] = await pool.query(sql, [id]) as [any[], any];
+          [rows] = await pool.query({ sql, timeout: 20000 }, [id]) as [any[], any];
         } catch (queryErr: any) {
           if (queryErr?.code === 'ECONNRESET' || queryErr?.code === 'PROTOCOL_CONNECTION_LOST') {
-            [rows] = await pool.query(sql, [id]) as [any[], any];
+            [rows] = await pool.query({ sql, timeout: 20000 }, [id]) as [any[], any];
           } else {
             throw queryErr;
           }
@@ -182,6 +199,7 @@ export async function checkAndSendOfflineAlerts(options: { force?: boolean } = {
           };
         }
       } catch (e) {
+        queryErrors.set(id, "量測資料查詢失敗，設備連線狀態未知");
         console.error("Error querying realtime in alert checker for", id, e);
       }
     }));
@@ -206,6 +224,7 @@ export async function checkAndSendOfflineAlerts(options: { force?: boolean } = {
 
   const nowMs = now.getTime();
   for (const d of inUseDevices) {
+    if (queryErrors.has(d.id)) continue;
     const latest = deviceLatest[d.id];
     let offlineMins = 0;
     let lastSeen: string | null = null;
@@ -245,6 +264,9 @@ export async function checkAndSendOfflineAlerts(options: { force?: boolean } = {
         host: settings.smtp_host,
         port: Number(settings.smtp_port) || 587,
         secure: Number(settings.smtp_port) === 465,
+        connectionTimeout: 15000,
+        greetingTimeout: 15000,
+        socketTimeout: 60000,
         auth: {
           user: settings.smtp_user,
           pass: settings.smtp_pass,
@@ -257,25 +279,38 @@ export async function checkAndSendOfflineAlerts(options: { force?: boolean } = {
 
   const details: AlertResult["details"] = [];
   const checkType = options.force ? "MANUAL" : "SCHEDULED";
-  const initialStatus = offlineList.length === 0 ? "NORMAL" : "PENDING";
+  await assertOwned();
+  const unknownSummary = queryErrors.size ? `，另有 ${queryErrors.size} 台查詢失敗（狀態未知，未計入斷線）` : "";
+  const initialStatus = offlineList.length === 0 ? (queryErrors.size ? "FAILED" : "NORMAL") : "PENDING";
   const initialSummary = offlineList.length === 0
-    ? `檢測 ${inUseDevices.length} 台使用中設備，全部正常連線`
+    ? `檢測 ${inUseDevices.length} 台使用中設備，${queryErrors.size ? "成功查詢的設備未發現斷線" : "全部正常連線"}`
     : `檢測 ${inUseDevices.length} 台使用中設備，發現 ${offlineList.length} 台斷線`;
 
   const checkInsertRes: any = await store.prepare(`
     INSERT INTO alert_checks (check_type, total_devices, offline_count, notified_maintainers, status, summary, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).bind(checkType, inUseDevices.length, offlineList.length, groupedByMaintainer.size, initialStatus, initialSummary, nowIso).run();
+  `).bind(checkType, inUseDevices.length, offlineList.length, groupedByMaintainer.size, initialStatus, initialSummary + unknownSummary, nowIso).run();
 
   const checkId = checkInsertRes?.lastInsertRowid ? Number(checkInsertRes.lastInsertRowid) : 0;
+
+  // Reserve this schedule before any SMTP side effects. A crash after sending
+  // must not cause the next poll/reboot to resend the same scheduled check.
+  await store.prepare("UPDATE alert_settings SET last_check_at=? WHERE id=1").bind(nowIso).run();
 
   const logInsert = store.prepare(`
     INSERT INTO alert_logs (check_id, aslung_id, lab_id, maintainer, email, last_seen, offline_mins, status, error_message, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
+  for (const [id, message] of queryErrors) {
+    const loc = activeLocMap.get(id);
+    await logInsert.bind(checkId || null, id, loc?.lab_id || "未指定地點",
+      (loc?.maintainer || "未指定負責人").trim(), "", null, 0, "UNKNOWN", message, nowIso).run();
+  }
+
   // 8. Process each maintainer group
   for (const [mName, items] of groupedByMaintainer.entries()) {
+    await assertOwned();
     const maintInfo = maintainerMap.get(mName);
     let targetEmail = "";
     if (maintInfo) {
@@ -324,7 +359,9 @@ export async function checkAndSendOfflineAlerts(options: { force?: boolean } = {
               請儘速確認儀器電源、Wi-Fi 網路訊號連線狀況與現場設置環境。
             </div>
             <p style="font-size: 11px; color: #94a3b8; border-top: 1px solid #e2e8f0; padding-top: 12px; margin-bottom: 0;">
-              此郵件由 ASLUNG 空氣品質監測系統自動排程發送，請勿直接回覆。
+              檢查編號：${checkId}；判定時間：${now.toLocaleString("zh-TW", { timeZone: "Asia/Taipei" })}（UTC+8）。<br/>
+              ${queryErrors.size ? `本次另有 ${queryErrors.size} 台設備查詢失敗，未計入斷線數量。<br/>` : ""}
+              此郵件由 ASLUNG 空氣品質監測系統發送，請勿直接回覆。
             </p>
           </div>
         `;
@@ -395,9 +432,10 @@ export async function checkAndSendOfflineAlerts(options: { force?: boolean } = {
     else if (hasSimulated) finalCheckStatus = "SIMULATED";
     else finalCheckStatus = "SENT";
   }
-  const finalSummary = offlineList.length === 0
-    ? `檢測 ${inUseDevices.length} 台使用中設備，全部正常連線`
-    : `檢測 ${inUseDevices.length} 台使用中設備，發現 ${offlineList.length} 台斷線，通知 ${groupedByMaintainer.size} 位負責人`;
+  if (queryErrors.size) finalCheckStatus = "FAILED";
+  const finalSummary = (offlineList.length === 0
+    ? `檢測 ${inUseDevices.length} 台使用中設備，${queryErrors.size ? "成功查詢的設備未發現斷線" : "全部正常連線"}`
+    : `檢測 ${inUseDevices.length} 台使用中設備，發現 ${offlineList.length} 台斷線，通知 ${groupedByMaintainer.size} 位負責人`) + unknownSummary;
 
   if (checkId) {
     await store.prepare(`
@@ -410,24 +448,25 @@ export async function checkAndSendOfflineAlerts(options: { force?: boolean } = {
   // Update last check & alert times in settings
   await store.prepare(`
     UPDATE alert_settings
-    SET last_check_at = ?, last_alert_at = (CASE WHEN ? > 0 THEN ? ELSE last_alert_at END)
+    SET last_alert_at = (CASE WHEN ? > 0 THEN ? ELSE last_alert_at END)
     WHERE id = 1
-  `).bind(nowIso, offlineList.length, nowIso).run();
+  `).bind(offlineList.length, nowIso).run();
 
   return {
     checkId,
     checkedAt: nowIso,
     totalDevices: inUseDevices.length,
     offlineCount: offlineList.length,
+    unknownCount: queryErrors.size,
     notifiedMaintainers: groupedByMaintainer.size,
     details
   };
 }
 
-let alertCronTimer: any = null;
 export function initAlertCron() {
-  if (alertCronTimer) return;
-  alertCronTimer = setInterval(async () => {
+  const state = globalThis as typeof globalThis & { aslungAlertCron?: ReturnType<typeof setInterval> };
+  if (state.aslungAlertCron) return;
+  state.aslungAlertCron = setInterval(async () => {
     try {
       const store = db();
       const settings: any = await store.prepare("SELECT * FROM alert_settings WHERE id=1").first();

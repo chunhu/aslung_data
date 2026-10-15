@@ -109,6 +109,31 @@ sudo docker compose exec app node scripts/create-admin.mjs
 
 ---
 
+### EC2 重新開機後自動啟動網站
+
+完成 Docker、Nginx 與網站設定後，在 EC2 專案根目錄執行一次：
+
+```bash
+bash scripts/setup-autostart.sh
+```
+
+腳本先檢查 Nginx 設定，再啟用並啟動 Docker、containerd、Nginx 的 systemd 服務，最後使用現有映像啟動網站並等待健康檢查。需要現有 Docker 映像與 `.env`；不下載程式碼、不重新建置，也不更改網域設定。
+
+之後開機由 systemd 啟動 Docker / Nginx，Docker 依 `compose.yaml` 的 `restart: unless-stopped` 恢復網站。**不需要在每次開機執行部署腳本。** 若曾使用 `docker compose stop` 手動停止容器，它會保持停止；重新執行上述設定腳本即可恢復。若使用 `docker compose down` 移除容器，也需重新執行上述腳本建立容器。
+
+`scripts/deploy.sh` 每次執行時也會設定這些服務開機啟動，即使沒有新版本而略過建置仍會執行。若要恢復已停止的網站，請直接執行 `setup-autostart.sh`。
+
+設定後可在維護時間重新啟動 EC2，再用以下指令確認：
+
+```bash
+systemctl is-enabled docker nginx
+systemctl is-active docker nginx
+sudo docker compose ps -a
+curl --fail http://127.0.0.1:3000/api/health
+```
+
+預期服務為 `enabled` / `active`，容器為 `healthy`，健康檢查回傳 `{"status":"ok"}`；最後以正式 HTTPS 網址確認網站可使用。失敗時查看 `sudo docker compose logs --tail=80 app` 及 `sudo journalctl -u docker -u nginx -b --no-pager -n 80`。
+
 ## 5. 後續設定與資料庫串接
 
 登入系統後，您可以開始進行下列管理：
@@ -150,6 +175,14 @@ sudo docker compose up -d
 ---
 
 ## 7. 疑難排解與實用指令
+
+### 告警排程與重複寄信防護
+
+告警排程在 Next.js 伺服器啟動時註冊，每 30 秒判斷是否到達設定的檢查時間；不需要開啟管理員網頁。排程與手動檢查共用 SQLite 執行鎖，執行期間持續續期；程序異常中止後，鎖最多約 2 分鐘可回收。手動檢查遇到執行中的批次會顯示略過提示。
+
+寄信前先記錄本次檢查時間，避免程序重啟或 SMTP 回覆不明時，下一次輪詢立即重寄同批通知。寄送失敗不在同一週期自動重試；依下次設定的排程再次檢查，或確認日誌後手動執行。若程序在寄送途中中止，部分收件人可能未收到，該次日誌可能保留待處理狀態。郵件會附檢查編號與判定時間供比對；設備持續離線時，後續排程仍會提醒。
+
+資料庫成功查詢但無紀錄的設備仍算未上傳；查詢失敗則記為「狀態未知」，不計入斷線數，也不寄設備斷線信。檢查摘要會列出查詢失敗數，設備日誌列出原因；應先排查資料庫連線。這些防護適用本專案單一 EC2、共用同一 SQLite 持久磁碟區的部署。
 
 * **忘記管理員密碼**：
   如果無法登入，可進入伺服器重設密碼（這將強制登出該帳號的所有現有連線）：
