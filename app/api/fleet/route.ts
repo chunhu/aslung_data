@@ -1,5 +1,6 @@
 import {identity,writeGuard,AppError,fail,syncDeviceStatusesAndLocations} from "@/lib/server";
 import {getConnection} from "@/lib/store.mjs";
+import {quickUpdateDevice} from "@/lib/fleet-quick-edit.mjs";
 import {ensureFleetSchema,updateFleetDevices,previewFleetImport,applyFleetImport,FleetError} from "@/lib/fleet-store.mjs";
 
 export const runtime="nodejs";
@@ -23,6 +24,7 @@ export async function POST(req:Request) {
     writeGuard(req);const me=await identity(req);if(me.role!=="admin")throw new AppError(403,"只有管理員可以執行設備管理。");
     const p=await req.json();if(!p||typeof p!=="object"||Array.isArray(p))throw new AppError(400,"參數不正確。");
     const d=getConnection();
+    if(p.action==="quick")return Response.json({ok:true,...quickUpdateDevice(d,p,me.email)});
     if(p.action==="bulk"){
       const result=updateFleetDevices(d,p,me.email);await syncDeviceStatusesAndLocations();
       return Response.json({ok:true,...result});

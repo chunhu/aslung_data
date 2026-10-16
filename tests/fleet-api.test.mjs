@@ -16,7 +16,7 @@ test('fleet API enforces admin and origin, previews without mutation and validat
     '@/lib/server':{identity:async()=>({role,email:'admin@example.test'}),AppError,
       writeGuard:req=>{if(req.headers.get('origin')!=='http://fleet.test')throw new AppError(403,'origin');},
       fail:e=>Response.json({error:e.message},{status:e.status||500}),syncDeviceStatusesAndLocations:async()=>{}},
-    '@/lib/store.mjs':{getConnection:()=>d},'@/lib/fleet-store.mjs':fleet
+    '@/lib/store.mjs':{getConnection:()=>d},'@/lib/fleet-quick-edit.mjs':{quickUpdateDevice:()=>({updated:1})},'@/lib/fleet-store.mjs':fleet
   };
   const code=ts.transpileModule(readFileSync(new URL('../app/api/fleet/route.ts',import.meta.url),'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;
   const module={exports:{}};new Function('require','exports','module',code)(name=>{assert.ok(name in dependencies);return dependencies[name];},module.exports,module);
@@ -25,6 +25,7 @@ test('fleet API enforces admin and origin, previews without mutation and validat
   try{
     assert.equal((await post({action:'previewImport'},'http://other.test')).status,403);
     role='member';assert.equal((await post({action:'bulk',ids:['AL-1']})).status,403);
+    assert.equal((await post({action:'quick',id:'AL-1',field:'status',status:'STANDBY'})).status,403);
     assert.equal((await route.GET(new Request('http://fleet.test/api/fleet?id=AL-1'))).status,403);
     role='admin';
     const text='lab_id,device_id,device_type,start_date\nN1,AL-1,aslung,2026-10-01';
