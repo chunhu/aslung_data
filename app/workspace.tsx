@@ -13,6 +13,7 @@ import {ADMIN_REALTIME_INTERVALS, MEMBER_REALTIME_INTERVALS, normalizeRealtimeIn
 import {useState,useEffect,useCallback,useRef,useMemo} from "react";
 import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
 import LanguageSwitcher from "@/components/LanguageSwitcher";
+import useAppLanguage from "@/components/useAppLanguage";
 import FontSizeAdjuster from "@/components/FontSizeAdjuster";
 import {Wrench,Activity,Database,Users,ShieldCheck,Download,Plus,RefreshCw,Code2,Server,LockKeyhole,FileJson,LogOut,LogIn,CheckCircle2,Unplug,Search,Trash2, MapPin, Key, RadioTower, Upload, Pencil, Check, ChevronsUpDown, ArrowRightLeft, QrCode, FileSpreadsheet, CloudDownload, FolderDown, FileText, Eye, Building2, UserCheck, BellRing, Mail, Clock, KeyRound, Filter, RotateCcw, X, AlertTriangle} from "lucide-react";
 import {Button} from "@/components/ui/button";
@@ -212,19 +213,8 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
   const [alertScheduleType, setAlertScheduleType] = useState<"interval" | "daily" | "weekly">("interval");
   const [alertScheduleDays, setAlertScheduleDays] = useState<string>("1,2,3,4,5");
   const [fleetImportText, setFleetImportText] = useState("");
-  const [isEn, setIsEn] = useState(false);
-
-  useEffect(() => {
-    const checkEn = () => {
-      const match = typeof document !== "undefined" ? document.cookie.match(/(^|;) ?googtrans=([^;]*)(;|$)/) : null;
-      const isEnglish = (match && match[2] && decodeURIComponent(match[2]).endsWith("/en")) ||
-        (typeof document !== "undefined" && (document.documentElement.lang === "en" || document.documentElement.classList.contains("translated-ltr")));
-      setIsEn(!!isEnglish);
-    };
-    checkEn();
-    const timer = setInterval(checkEn, 1500);
-    return () => clearInterval(timer);
-  }, []);
+  const language=useAppLanguage();
+  const isEn=language==="en";
 
   useEffect(() => {
     if (modal && typeof window !== "undefined") {

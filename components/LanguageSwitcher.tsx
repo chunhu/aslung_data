@@ -1,25 +1,18 @@
 "use client";
-import { useEffect, useState } from "react";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useEffect } from "react";
+import {Button} from "@/components/ui/button";
+import useAppLanguage from "@/components/useAppLanguage";
+import {applyDisplayLanguage} from "@/lib/language.mjs";
 
-export default function LanguageSwitcher() {
-  const [lang, setLang] = useState("zh-TW");
-
+export default function LanguageSwitcher({reloadOnChange=true,translatePage=true}:{reloadOnChange?:boolean;translatePage?:boolean}={}) {
+  const lang=useAppLanguage();
   useEffect(() => {
-    // Detect existing language from cookie
-    const match = document.cookie.match(/(^|;) ?googtrans=([^;]*)(;|$)/);
-    if (match && match[2]) {
-      const val = decodeURIComponent(match[2]);
-      if (val.endsWith("/en")) setLang("en");
-    }
-
-    if (document.getElementById("google-translate-script")) return;
-    
+    if (!translatePage || lang!=="en" || document.getElementById("google-translate-script")) return;
     const addScript = document.createElement("script");
     addScript.id = "google-translate-script";
     addScript.src = "//translate.google.com/translate_a/element.js?cb=googleTranslateElementInit";
     addScript.async = true;
-    document.body.appendChild(addScript);
+
     
     const ensureCleanStyles = () => {
       if (!document.getElementById("gt-clean-style")) {
@@ -55,36 +48,20 @@ export default function LanguageSwitcher() {
         "google_translate_element"
       );
     };
-  }, []);
+    document.body.appendChild(addScript);
+  }, [lang,translatePage]);
 
-  const changeLanguage = (newLang: string) => {
-    setLang(newLang);
-    
-    // Always persist cookie
-    if (newLang === "zh-TW") {
-      document.cookie = "googtrans=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
-      document.cookie = "googtrans=; expires=Thu, 01 Jan 1970 00:00:00 UTC; domain=" + location.hostname + "; path=/;";
-    } else {
-      document.cookie = "googtrans=/zh-TW/" + newLang + "; path=/";
-      document.cookie = "googtrans=/zh-TW/" + newLang + "; domain=" + location.hostname + "; path=/";
-    }
-
-    // Always reload to guarantee translation applies cleanly without DOM conflicts
-    window.location.reload();
+  const changeLanguage = () => {
+    const next=lang==="en"?"zh-TW":"en";
+    const url=new URL(window.location.href);
+    if(url.searchParams.has("lang")){url.searchParams.set("lang",next);window.history.replaceState(null,"",url);}
+    applyDisplayLanguage(next,true);
+    if(reloadOnChange)window.location.reload();
   };
-
-  return (
-    <div className="flex items-center gap-2">
-      <div id="google_translate_element" style={{ position: "absolute", left: "-9999px", top: "-9999px", width: "1px", height: "1px", overflow: "hidden" }}></div>
-      <Select value={lang} onValueChange={changeLanguage}>
-        <SelectTrigger className="w-24 sm:w-28 h-8 text-xs bg-white/50 border-slate-200">
-          <SelectValue placeholder="Language" />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="zh-TW">繁體中文</SelectItem>
-          <SelectItem value="en">English</SelectItem>
-        </SelectContent>
-      </Select>
-    </div>
-  );
+  return <div className="flex items-center gap-2 notranslate" translate="no">
+    {translatePage&&<div id="google_translate_element" style={{position:"absolute",left:"-9999px",top:"-9999px",width:"1px",height:"1px",overflow:"hidden"}}/>}
+    <Button type="button" variant="outline" size="sm" disabled={!lang} onClick={changeLanguage}
+      lang={lang==="en"?"zh-Hant":"en"} aria-label={lang==="en"?"切換為中文":"Switch to English"}
+      className="h-8 min-w-20 text-xs bg-white/50 border-slate-200">{lang==="en"?"中文":"English"}</Button>
+  </div>;
 }
