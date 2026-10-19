@@ -1,3 +1,4 @@
+import { alertEmailExclusion, alertRecipients } from "./alert-policy.mjs";
 import nodemailer from "nodemailer";
 import { db, syncDeviceStatusesAndLocations } from "@/lib/server";
 import { getPool } from "@/lib/data";
@@ -249,7 +250,7 @@ async function runOfflineAlertCheck(store: ReturnType<typeof db>, options: { for
 
   // 6. Group offline devices by maintainer
   const groupedByMaintainer = new Map<string, typeof offlineList>();
-  for (const item of offlineList) {
+  for (const item of offlineList.filter(item => !alertEmailExclusion(item.last_seen, now))) {
     const list = groupedByMaintainer.get(item.maintainer) || [];
     list.push(item);
     groupedByMaintainer.set(item.maintainer, list);
@@ -277,6 +278,7 @@ async function runOfflineAlertCheck(store: ReturnType<typeof db>, options: { for
     }
   }
 
+  const members = (await store.prepare("SELECT email, active, alert_email_enabled FROM members").all()).results;
   const details: AlertResult["details"] = [];
   const checkType = options.force ? "MANUAL" : "SCHEDULED";
   await assertOwned();
@@ -289,7 +291,7 @@ async function runOfflineAlertCheck(store: ReturnType<typeof db>, options: { for
   const checkInsertRes: any = await store.prepare(`
     INSERT INTO alert_checks (check_type, total_devices, offline_count, notified_maintainers, status, summary, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).bind(checkType, inUseDevices.length, offlineList.length, groupedByMaintainer.size, initialStatus, initialSummary + unknownSummary, nowIso).run();
+  `).bind(checkType, inUseDevices.length, offlineList.length, 0, initialStatus, initialSummary + unknownSummary, nowIso).run();
 
   const checkId = checkInsertRes?.lastInsertRowid ? Number(checkInsertRes.lastInsertRowid) : 0;
 
@@ -314,13 +316,20 @@ async function runOfflineAlertCheck(store: ReturnType<typeof db>, options: { for
     const maintInfo = maintainerMap.get(mName);
     let targetEmail = "";
     if (maintInfo) {
-      targetEmail = settings.use_test_email && maintInfo.email_test ? maintInfo.email_test : maintInfo.email;
+      const primary = alertRecipients(maintInfo.email, members);
+      const useTest = settings.use_test_email && maintInfo.email_test;
+      // Test routing must also respect the primary owner's opt-out.
+      const addresses = useTest ? (primary.length ? alertRecipients(maintInfo.email_test, members) : []) : primary;
+      targetEmail = addresses.join(", ");
     }
 
     let status = "SIMULATED";
     let errorMessage = "";
 
-    if (hasSmtp && transporter && targetEmail) {
+    if (maintInfo?.email && !targetEmail) {
+      status = "SKIPPED";
+      errorMessage = "收件會員已關閉告警通知或帳號已停用，僅保留畫面警示";
+    } else if (hasSmtp && transporter && targetEmail) {
       try {
         const rowsHtml = items.map(it => `
           <tr style="border-bottom: 1px solid #e2e8f0;">
@@ -423,6 +432,18 @@ async function runOfflineAlertCheck(store: ReturnType<typeof db>, options: { for
     });
   }
 
+  for (const item of offlineList) {
+    const reason = alertEmailExclusion(item.last_seen, now);
+    if (!reason) continue;
+    await logInsert.bind(checkId || null, item.aslung_id, item.lab_id, item.maintainer,
+      "", item.last_seen, item.offline_mins, "SKIPPED", reason, nowIso).run();
+    details.push({maintainer:item.maintainer,email:"",deviceCount:1,
+      devices:[{aslungId:item.aslung_id,labId:item.lab_id,lastSeen:item.last_seen,offlineMins:item.offline_mins}],
+      status:"SKIPPED",error:reason});
+  }
+  const notifiedMaintainers = details.filter(d => d.status === "SENT").length;
+  const suppressedCount = details.filter(d => d.status === "SKIPPED").reduce((n,d) => n+d.deviceCount,0);
+
   // Update check execution record
   let finalCheckStatus = "NORMAL";
   if (offlineList.length > 0) {
@@ -430,19 +451,19 @@ async function runOfflineAlertCheck(store: ReturnType<typeof db>, options: { for
     const hasSimulated = details.some(d => d.status === "SIMULATED");
     if (hasFailed) finalCheckStatus = "FAILED";
     else if (hasSimulated) finalCheckStatus = "SIMULATED";
-    else finalCheckStatus = "SENT";
+    else finalCheckStatus = notifiedMaintainers ? "SENT" : "SKIPPED";
   }
   if (queryErrors.size) finalCheckStatus = "FAILED";
   const finalSummary = (offlineList.length === 0
     ? `檢測 ${inUseDevices.length} 台使用中設備，${queryErrors.size ? "成功查詢的設備未發現斷線" : "全部正常連線"}`
-    : `檢測 ${inUseDevices.length} 台使用中設備，發現 ${offlineList.length} 台斷線，通知 ${groupedByMaintainer.size} 位負責人`) + unknownSummary;
+    : `檢測 ${inUseDevices.length} 台使用中設備，發現 ${offlineList.length} 台斷線，通知 ${notifiedMaintainers} 位負責人，${suppressedCount} 台僅警示未寄信`) + unknownSummary;
 
   if (checkId) {
     await store.prepare(`
       UPDATE alert_checks
-      SET status = ?, summary = ?
+      SET status = ?, summary = ?, notified_maintainers = ?
       WHERE id = ?
-    `).bind(finalCheckStatus, finalSummary, checkId).run();
+    `).bind(finalCheckStatus, finalSummary, notifiedMaintainers, checkId).run();
   }
 
   // Update last check & alert times in settings
@@ -450,7 +471,7 @@ async function runOfflineAlertCheck(store: ReturnType<typeof db>, options: { for
     UPDATE alert_settings
     SET last_alert_at = (CASE WHEN ? > 0 THEN ? ELSE last_alert_at END)
     WHERE id = 1
-  `).bind(offlineList.length, nowIso).run();
+  `).bind(notifiedMaintainers, nowIso).run();
 
   return {
     checkId,
@@ -458,7 +479,7 @@ async function runOfflineAlertCheck(store: ReturnType<typeof db>, options: { for
     totalDevices: inUseDevices.length,
     offlineCount: offlineList.length,
     unknownCount: queryErrors.size,
-    notifiedMaintainers: groupedByMaintainer.size,
+    notifiedMaintainers,
     details
   };
 }

@@ -4,6 +4,7 @@ import {readFileSync} from 'node:fs';
 import {DatabaseSync} from 'node:sqlite';
 import * as crypto from 'node:crypto';
 import ts from 'typescript';
+import * as policy from '../lib/alert-policy.mjs';
 
 function loadTs(path, dependencies) {
   const source=readFileSync(new URL(path,import.meta.url),'utf8');
@@ -32,6 +33,7 @@ function fixture(query, send) {
     INSERT INTO alert_settings VALUES(1,1,'interval',60,60,'smtp.test','test','secret',587,'test@example.test',0,NULL,NULL);
     CREATE TABLE devices(id TEXT,name TEXT,location TEXT,status TEXT);
     CREATE TABLE device_locations(aslung_id TEXT,lab_id TEXT,maintainer TEXT,start_time TEXT,end_time TEXT,active INTEGER);
+    CREATE TABLE members(email TEXT PRIMARY KEY,active INTEGER,alert_email_enabled INTEGER DEFAULT 1);
     CREATE TABLE maintainers(name TEXT,email TEXT,email_test TEXT);
     INSERT INTO maintainers VALUES('Maintainer','owner@example.test','');
     CREATE TABLE alert_checks(id INTEGER PRIMARY KEY,check_type TEXT,total_devices INTEGER,offline_count INTEGER,
@@ -52,6 +54,7 @@ function fixture(query, send) {
       return [id==='empty'?[]:[{time:new Date(Date.now()-(id==='old'?120:0)*60000)}]];
     })})},
     '@/lib/utils':{formatOfflineDuration:mins=>`${mins} minutes`},
+    './alert-policy.mjs':policy,
     './alert-lock':locks
   };
   return {sql,store,mails,load:()=>loadTs('../lib/alerts.ts',deps)};
@@ -104,11 +107,11 @@ test('query failure is unknown, empty data is offline, and email/log counts use 
   try {
     const result=await f.load().checkAndSendOfflineAlerts();
     assert.equal(result.offlineCount,2);assert.equal(result.unknownCount,1);
-    assert.equal(f.mails.length,1);assert.match(f.mails[0].subject,/共 2 台/);
+    assert.equal(f.mails.length,1);assert.match(f.mails[0].subject,/共 1 台/);
     assert.match(f.mails[0].html,new RegExp(`檢查編號：${result.checkId}`));
     const logs=f.sql.prepare('SELECT * FROM alert_logs ORDER BY aslung_id').all();
     assert.equal(logs.find(l=>l.aslung_id==='error').status,'UNKNOWN');
-    assert.equal(logs.find(l=>l.aslung_id==='empty').status,'SENT');
+    assert.equal(logs.find(l=>l.aslung_id==='empty').status,'SKIPPED');
     assert.equal(logs.some(l=>l.aslung_id==='fresh'),false);
     const check=f.sql.prepare('SELECT * FROM alert_checks').get();
     assert.equal(check.offline_count,2);assert.match(check.summary,/1 台查詢失敗/);
@@ -171,4 +174,48 @@ test('startup hook starts scheduling without a browser and skips build workers',
     if(runtime===undefined)delete process.env.NEXT_RUNTIME;else process.env.NEXT_RUNTIME=runtime;
     if(phase===undefined)delete process.env.NEXT_PHASE;else process.env.NEXT_PHASE=phase;
   }
+});
+
+
+test('old and never-uploaded devices remain warnings but never enter the email body or count',async()=>{
+  const f=fixture(async(options,[id])=>[id==='empty'?[]:[{time:new Date(id==='old'?'2020-01-01T00:00:00Z':Date.now()-120*60000)}]]);
+  try{
+    const result=await f.load().checkAndSendOfflineAlerts({force:true});
+    assert.equal(result.offlineCount,4);assert.equal(result.notifiedMaintainers,1);
+    assert.match(f.mails[0].subject,/共 2 台/);
+    assert.doesNotMatch(f.mails[0].html,/>old<|>empty</);
+    assert.equal(f.sql.prepare("SELECT COUNT(*) AS n FROM alert_logs WHERE status='SKIPPED'").get().n,2);
+    assert.equal(f.sql.prepare('SELECT notified_maintainers FROM alert_checks').get().notified_maintainers,1);
+  }finally{f.sql.close();}
+});
+
+for(const mode of ['disabled','inactive','test-routing'])test(`recipient opt-out is honored: ${mode}`,async()=>{
+  const f=fixture();
+  try{
+    f.sql.prepare('INSERT INTO members VALUES(?,?,?)').run('OWNER@example.test',mode==='inactive'?0:1,mode==='inactive'?1:0);
+    if(mode==='test-routing')f.sql.exec("UPDATE alert_settings SET use_test_email=1; UPDATE maintainers SET email_test='alternate@example.test'");
+    const result=await f.load().checkAndSendOfflineAlerts({force:true});
+    assert.equal(f.mails.length,0);assert.equal(result.offlineCount,2);assert.equal(result.notifiedMaintainers,0);
+    assert.equal(f.sql.prepare("SELECT COUNT(*) AS n FROM alert_logs WHERE status='SKIPPED'").get().n,2);
+    assert.equal(f.sql.prepare('SELECT notified_maintainers FROM alert_checks').get().notified_maintainers,0);
+    assert.equal(f.sql.prepare('SELECT last_alert_at FROM alert_settings').get().last_alert_at,null);
+  }finally{f.sql.close();}
+});
+
+test('a group with only excluded devices has no email and SKIPPED status',async()=>{
+  const f=fixture(async()=>[[]]);
+  try{
+    const result=await f.load().checkAndSendOfflineAlerts({force:true});
+    assert.equal(result.offlineCount,4);assert.equal(result.notifiedMaintainers,0);assert.equal(f.mails.length,0);
+    assert.equal(f.sql.prepare('SELECT status FROM alert_checks').get().status,'SKIPPED');
+  }finally{f.sql.close();}
+});
+
+test('one-year boundary uses calendar years, including leap day; recipient lists filter individually',()=>{
+  const now=new Date('2026-10-19T10:00:00Z');
+  assert.equal(policy.alertEmailExclusion('2025-10-19T10:00:00Z',now),'');
+  assert.ok(policy.alertEmailExclusion('2025-10-19T09:59:59Z',now));
+  assert.equal(policy.alertEmailExclusion('2023-02-28T10:00:00Z',new Date('2024-02-29T10:00:00Z')),'');
+  assert.ok(policy.alertEmailExclusion(null,now));assert.ok(policy.alertEmailExclusion('bad',now));
+  assert.deepEqual(policy.alertRecipients('A@test; b@test, c@test, C@test',[{email:'a@test',active:1,alert_email_enabled:0},{email:'b@test',active:0,alert_email_enabled:1}]),['c@test']);
 });

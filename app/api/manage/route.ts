@@ -245,7 +245,7 @@ export async function GET(){try{
      }
    }
  }
- const members=isAdmin?(await db().prepare("SELECT m.email,m.name,m.nickname,m.role,m.active,m.login_count,m.last_login_at,p.country,p.institution,p.project_name,p.project_summary,p.requested_access,p.registration_status,p.registered_at,p.email_verified_at,p.reviewed_at,p.reviewed_by,p.review_note FROM members m LEFT JOIN member_profiles p ON p.email=m.email ORDER BY CASE WHEN p.registration_status='pending_review' THEN 0 ELSE 1 END,m.role,m.email").all()).results:[];
+ const members=isAdmin?(await db().prepare("SELECT m.email,m.name,m.nickname,m.role,m.active,m.alert_email_enabled,m.login_count,m.last_login_at,p.country,p.institution,p.project_name,p.project_summary,p.requested_access,p.registration_status,p.registered_at,p.email_verified_at,p.reviewed_at,p.reviewed_by,p.review_note FROM members m LEFT JOIN member_profiles p ON p.email=m.email ORDER BY CASE WHEN p.registration_status='pending_review' THEN 0 ELSE 1 END,m.role,m.email").all()).results:[];
  const totalLogins=((await db().prepare("SELECT COALESCE(SUM(login_count), 0) as total FROM members").first()) as any)?.total || 0;
  const grants=isAdmin?(await db().prepare(`
   SELECT g.*, l.location_name, l.city_name, l.town_name,
@@ -273,9 +273,9 @@ export async function GET(){try{
  const segmentIds=new Set(permittedSegments.map((segment:any)=>segment.segment_id));
  const visibleLocations=isAdmin?locations:locations.filter((location:any)=>segmentIds.has(String(location.id)));
  const visibleNames=new Set(visibleLocations.map((location:any)=>String(location.maintainer||"").trim()).filter(Boolean));
- const visibleMaintainers=isAdmin?maintainers:maintainers.filter((person:any)=>String(person.email||"").toLowerCase()===m.email.toLowerCase()||visibleNames.has(String(person.name||"").trim())).map((person:any)=>({name:person.name,email:person.email}));
+ const visibleMaintainers=isAdmin?maintainers:maintainers.filter((person:any)=>String(person.email||"").toLowerCase()===m.email.toLowerCase()||visibleNames.has(String(person.name||"").trim())).map((person:any)=>({name:person.name,english_name:person.english_name||"",email:person.email}));
  return Response.json({
-   me:{email:m.email,name:m.name,role:m.role,allowMaintainerNameMatch:m.allowMaintainerNameMatch,login_count:m.login_count||0,last_login_at:m.last_login_at||null,...(await db().prepare("SELECT * FROM member_profiles WHERE email=?").bind(m.email).first()||{})},
+   me:{alert_email_enabled:((await db().prepare("SELECT alert_email_enabled FROM members WHERE email=?").bind(m.email).first()) as any)?.alert_email_enabled ?? 1,email:m.email,name:m.name,role:m.role,allowMaintainerNameMatch:m.allowMaintainerNameMatch,login_count:m.login_count||0,last_login_at:m.last_login_at||null,...(await db().prepare("SELECT * FROM member_profiles WHERE email=?").bind(m.email).first()||{})},
    devices,downloadSegments:permittedSegments,members,grants,locations:visibleLocations,tokens,files,fileGrants,
    labs,maintainers:visibleMaintainers,alertSettings:isAdmin?alertSettings:{realtime_interval_secs:alertSettings.realtime_interval_secs},alertChecks,alertLogs,grantRequests,totalLogins,siteStats,
    connected:!!(config().url&&config().token)
@@ -285,7 +285,14 @@ export async function GET(){try{
 export async function POST(r:Request){try{
  writeGuard(r);const me=await identity(r);const isAdmin=me.role==="admin";const p=await r.json() as Record<string,unknown>;if(!p||typeof p!=="object"||Array.isArray(p))throw new AppError(400,"請提供正確的表單資料。");
  const requireAdmin=()=>{if(!isAdmin)throw new AppError(403,"權限不足。")};
-  if(p.action==="memberReview"){
+  if(p.action==="alertEmailPreference"){
+    const email=p.email===undefined?me.email:required(p.email,254).toLowerCase();
+    if(!isAdmin&&email.toLowerCase()!==me.email.toLowerCase())throw new AppError(403,"只能修改自己的告警收信設定。");
+    if(typeof p.enabled!=="boolean")throw new AppError(400,"請提供正確的收信設定。");
+    const member=await db().prepare("SELECT email FROM members WHERE lower(email)=?").bind(email.toLowerCase()).first();
+    if(!member)throw new AppError(404,"找不到會員。");
+    await db().prepare("UPDATE members SET alert_email_enabled=? WHERE email=?").bind(p.enabled?1:0,member.email).run();
+  }else if(p.action==="memberReview"){
     requireAdmin();const email=required(p.email,254).toLowerCase();
     reviewRegistration(getConnection(),email,String(p.decision),me.email,String(p.note||""));
     let notice="";
@@ -621,16 +628,18 @@ export async function POST(r:Request){try{
   requireAdmin();
   const name=required(p.name,80);
   const email=required(p.email,160);
+  const englishName=p.english_name===undefined?null:(p.english_name===""?"":required(p.english_name,160));
   const emailTest=String(p.email_test||"").trim();
   const phone=String(p.phone||"").trim();
   const notes=String(p.notes||"").trim();
   const now=new Date().toISOString();
   await db().prepare(`
-    INSERT INTO maintainers(name,email,email_test,phone,notes,created_at)
-    VALUES(?,?,?,?,?,?)
+    INSERT INTO maintainers(name,email,email_test,phone,notes,created_at,english_name)
+    VALUES(?,?,?,?,?,?,COALESCE(?,''))
     ON CONFLICT(name) DO UPDATE SET
-      email=excluded.email, email_test=excluded.email_test, phone=excluded.phone, notes=excluded.notes
-  `).bind(name,email,emailTest,phone,notes,now).run();
+      email=excluded.email, email_test=excluded.email_test, phone=excluded.phone, notes=excluded.notes,
+      english_name=CASE WHEN ? THEN excluded.english_name ELSE maintainers.english_name END
+  `).bind(name,email,emailTest,phone,notes,now,englishName,englishName!==null?1:0).run();
 } else if(p.action==="maintainerDelete"){
   requireAdmin();
   const name=required(p.name);
@@ -660,17 +669,19 @@ export async function POST(r:Request){try{
   const rows=parseCsvRows(csvText);
   if(rows.length<=1)throw new AppError(400,"試算表內容為空。");
   const headers=rows[0].map(h=>h.trim().toLowerCase());
-  const mainIdx=headers.indexOf("maintainer"), mailIdx=headers.indexOf("mail"), testIdx=headers.indexOf("mail_test");
-  if(mainIdx===-1||mailIdx===-1)throw new AppError(400,"試算表需包含 maintainer 與 mail 欄位。");
+  const mainIdx=headers.includes("cht_name")?headers.indexOf("cht_name"):headers.indexOf("maintainer"), mailIdx=headers.indexOf("mail"), testIdx=headers.indexOf("mail_test");
+  const englishIdx=headers.includes("eng_name")?headers.indexOf("eng_name"):headers.findIndex(h=>["english_name","name_en","英文名","英文名稱","英文稱呼","英文姓名"].includes(h));
+  if(mainIdx===-1||mailIdx===-1)throw new AppError(400,"試算表需包含 Cht_name（或舊版 maintainer）與 mail 欄位；英文稱呼請填 Eng_name。");
   const now=new Date().toISOString();
   await db().prepare("BEGIN").run();
   let syncedCount=0;
   try{
     const upsert=db().prepare(`
-      INSERT INTO maintainers(name,email,email_test,phone,notes,created_at)
-      VALUES(?,?,?,'','',?)
+      INSERT INTO maintainers(name,email,email_test,phone,notes,created_at,english_name)
+      VALUES(?,?,?,'','',?,?)
       ON CONFLICT(name) DO UPDATE SET
-        email=excluded.email, email_test=excluded.email_test
+        email=excluded.email, email_test=excluded.email_test,
+        english_name=CASE WHEN ? THEN excluded.english_name ELSE maintainers.english_name END
     `);
     for(let i=1;i<rows.length;i++){
       const cols=rows[i];
@@ -678,7 +689,9 @@ export async function POST(r:Request){try{
       const mail=mailIdx!==-1&&cols[mailIdx]?cols[mailIdx].trim():"";
       if(!name||!mail)continue;
       const mailTest=(testIdx!==-1&&cols[testIdx]?cols[testIdx].trim():"")||"";
-      await upsert.bind(name,mail,mailTest,now).run();
+      const englishName=englishIdx===-1?"":(cols[englishIdx]||"").trim();
+      if(englishName.length>160)throw new AppError(400,`第 ${i+1} 列英文稱呼超過 160 字。`);
+      await upsert.bind(name,mail,mailTest,now,englishName,englishIdx===-1?0:1).run();
       syncedCount++;
     }
     await db().prepare("COMMIT").run();

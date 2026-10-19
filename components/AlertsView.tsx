@@ -1,5 +1,7 @@
 "use client";
+import { alertEmailExclusion } from "@/lib/alert-policy.mjs";
 import React, { useState } from "react";
+import MaintainerName from "@/components/MaintainerName";
 import { BellRing, Send, Settings, AlertTriangle, CheckCircle2, Clock, Mail, RefreshCw, ShieldAlert, Trash2, Eye } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -125,7 +127,7 @@ export default function AlertsView({
 
   const offlineGroups = new Map<string, Array<{ aslung_id: string; lab_id: string; offline_mins: number; last_seen: string | null }>>();
   
-  for (const d of inUseDevices) {
+  for (const d of realtimeData === null ? [] : inUseDevices) {
     const r = (realtimeData || []).find((x) => x.aslung_id === d.id);
     let offlineMins = 0;
     let lastSeen: string | null = null;
@@ -176,6 +178,7 @@ export default function AlertsView({
 
   return (
     <div className="space-y-6">
+      <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs leading-6 text-amber-900">從未上傳資料或斷線超過一年的設備僅保留警示，不列入通知信。會員可在側欄「告警收信設定」關閉收信；管理員亦可在會員管理調整。</p>
       {/* 1. Status & Control Panel */}
       <section className="panel p-6">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b pb-5 mb-5">
@@ -321,6 +324,7 @@ export default function AlertsView({
                           <span className="text-slate-500 truncate max-w-[100px]" title={it.lab_id}>{it.lab_id}</span>
                           <span className="text-red-600 font-semibold" title={it.last_seen ? `最後上傳：${localTime(it.last_seen)}（斷線約 ${it.offline_mins} 分鐘）` : "從未上傳數據"}>
                             {formatOfflineDuration(it.offline_mins, false, it.last_seen)}
+                            {alertEmailExclusion(it.last_seen,new Date(now))&&<span className="block text-[10px] text-amber-700" title={alertEmailExclusion(it.last_seen,new Date(now))}>僅警示，不寄信</span>}
                           </span>
                         </div>
                       ))}
@@ -345,8 +349,8 @@ export default function AlertsView({
                     check_type: "SCHEDULED",
                     total_devices: matching.length,
                     offline_count: matching.length,
-                    notified_maintainers: new Set(matching.map(l => l.maintainer)).size,
-                    status: matching.some(l => l.status === "FAILED") ? "FAILED" : matching.some(l => l.status === "SIMULATED") ? "SIMULATED" : "SENT",
+                    notified_maintainers: new Set(matching.filter(l => l.status === "SENT").map(l => l.maintainer)).size,
+                    status: matching.some(l => l.status === "FAILED") ? "FAILED" : matching.some(l => l.status === "SIMULATED") ? "SIMULATED" : matching.some(l => l.status === "SENT") ? "SENT" : matching.some(l => l.status === "UNKNOWN") ? "FAILED" : "SKIPPED",
                     summary: "",
                     created_at,
                   };
@@ -476,8 +480,8 @@ export default function AlertsView({
                           {check.offline_count === 0 ? (
                             <span className="text-slate-400 text-xs">{check.status === "FAILED" ? "檢查異常" : check.status === "PENDING" ? "處理中" : "無須發送"}</span>
                           ) : (
-                            <span className={`status ${check.status === 'SENT' ? 'ok' : check.status === 'SIMULATED' ? 'pending' : 'text-red-700 bg-red-100'}`}>
-                              {check.status === 'SENT' ? '已寄出' : check.status === 'SIMULATED' ? '模擬記錄' : check.status === 'PENDING' ? '處理中' : '檢查或寄送失敗'}
+                            <span className={`status ${check.status === 'SENT' ? 'ok' : ['SIMULATED','SKIPPED'].includes(check.status) ? 'pending' : 'text-red-700 bg-red-100'}`}>
+                              {check.status === 'SENT' ? '已寄出' : check.status === 'SKIPPED' ? '僅警示，未寄信' : check.status === 'SIMULATED' ? '模擬記錄' : check.status === 'PENDING' ? '處理中' : '檢查或寄送失敗'}
                             </span>
                           )}
                         </TableCell>
@@ -572,6 +576,8 @@ export default function AlertsView({
                         ? "全部正常連線"
                         : selectedCheckDetail.status === "SENT"
                         ? "已寄出通知信"
+                        : selectedCheckDetail.status === "SKIPPED"
+                        ? "僅保留警示，未寄送通知信"
                         : selectedCheckDetail.status === "SIMULATED"
                         ? "模擬通知記錄"
                         : "寄送失敗"}
@@ -609,7 +615,7 @@ export default function AlertsView({
                               <TableCell className="text-center font-mono text-xs text-slate-500">{idx + 1}</TableCell>
                               <TableCell className="font-mono font-bold text-slate-800">{log.aslung_id}</TableCell>
                               <TableCell className="text-xs">{log.lab_id || "—"}</TableCell>
-                              <TableCell className="font-medium">{log.maintainer}</TableCell>
+                              <TableCell className="font-medium"><MaintainerName name={log.maintainer||""}/></TableCell>
                               <TableCell className="font-mono text-xs text-slate-600">{log.email}</TableCell>
                               <TableCell className="text-xs text-red-600 font-semibold font-mono" title={log.status === "UNKNOWN" ? "查詢失敗，無法判定設備狀態" : log.last_seen ? `最後上傳：${localTime(log.last_seen)}（斷線約 ${log.offline_mins} 分鐘）` : "從未上傳數據"}>
                                 {log.status === "UNKNOWN" ? "狀態未知" : formatOfflineDuration(log.offline_mins, false, log.last_seen)}
@@ -618,8 +624,8 @@ export default function AlertsView({
                                 {log.status === "UNKNOWN" ? "查詢失敗" : log.last_seen ? localTime(log.last_seen) : "從未上傳"}
                               </TableCell>
                               <TableCell>
-                                <span className={`status ${log.status === 'SENT' ? 'ok' : log.status === 'SIMULATED' ? 'pending' : 'text-red-700 bg-red-100'}`}>
-                                  {log.status === 'SENT' ? '已寄出' : log.status === 'UNKNOWN' ? '未發送（狀態未知）' : log.status === 'SIMULATED' ? '模擬記錄' : '發送失敗'}
+                                <span className={`status ${log.status === 'SENT' ? 'ok' : ['SIMULATED','SKIPPED'].includes(log.status) ? 'pending' : 'text-red-700 bg-red-100'}`}>
+                                  {log.status === 'SENT' ? '已寄出' : log.status === 'SKIPPED' ? '僅警示，未寄信' : log.status === 'UNKNOWN' ? '未發送（狀態未知）' : log.status === 'SIMULATED' ? '模擬記錄' : '發送失敗'}
                                 </span>
                               </TableCell>
                               <TableCell className="text-xs text-slate-500 max-w-[160px] truncate" title={log.error_message || ''}>

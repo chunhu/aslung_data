@@ -36,7 +36,7 @@ function render(overrides={}){
 
 test('members page renders accounts, registration review and account actions',()=>{
   const html=render();
-  for(const text of ['會員註冊申請','會員帳號','新增會員','管理員甲','會員乙','tester','member@example.test','設為管理員','停用','刪除會員'])assert.ok(html.includes(text),text);
+  for(const text of ['會員註冊申請','會員帳號','新增會員','管理員甲','會員乙','tester','member@example.test','設為管理員','停用','刪除會員','告警收信','接收'])assert.ok(html.includes(text),text);
   assert.equal((html.match(/title="刪除會員"/g)||[]).length,1); // Self deletion remains unavailable.
 });
 

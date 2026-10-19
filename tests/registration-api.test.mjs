@@ -18,7 +18,7 @@ function load(path,dependencies) {
 }
 test('registration and admin API enforce origin, review permissions, activation gates and profile ownership',async()=>{
   const d=new DatabaseSync(':memory:');
-  d.exec(`CREATE TABLE members(email TEXT PRIMARY KEY,user_id TEXT UNIQUE,name TEXT,nickname TEXT UNIQUE,role TEXT,active INTEGER,password_hash TEXT);
+  d.exec(`CREATE TABLE members(email TEXT PRIMARY KEY,user_id TEXT UNIQUE,name TEXT,nickname TEXT UNIQUE,role TEXT,active INTEGER,password_hash TEXT,alert_email_enabled INTEGER NOT NULL DEFAULT 1);
     CREATE TABLE grants(email TEXT);CREATE TABLE maintainers(name TEXT,email TEXT);CREATE TABLE device_locations(id INTEGER);CREATE TABLE devices(id TEXT);`);
   registration.initializeRegistrationSchema(d);
   const store={prepare(sql){let args=[];return {bind(...values){args=values;return this;},async all(){return {results:d.prepare(sql).all(...args)};},async first(){return d.prepare(sql).get(...args);},async run(){return d.prepare(sql).run(...args);}};}};
@@ -57,6 +57,16 @@ test('registration and admin API enforce origin, review permissions, activation 
     assert.equal(update.status,200);assert.equal(d.prepare('SELECT country FROM member_profiles WHERE email=?').get(input.email).country,'US');
     assert.equal(d.prepare('SELECT COUNT(*) AS n FROM member_profiles WHERE email=?').get('other@example.test').n,0);
     assert.equal(d.prepare('SELECT role FROM members').get().role,'member');
+    const preference={action:'alertEmailPreference',enabled:false};
+    assert.equal((await manage.POST(request(preference,'http://untrusted.test'))).status,403);
+    assert.equal((await manage.POST(request({...preference,email:'other@example.test'}))).status,403);
+    assert.equal((await manage.POST(request({...preference,enabled:'false'}))).status,400);
+    assert.equal((await manage.POST(request(preference))).status,200);
+    assert.equal(d.prepare('SELECT alert_email_enabled FROM members').get().alert_email_enabled,0);
+    actor={email:'admin@example.test',role:'admin'};
+    assert.equal((await manage.POST(request({...preference,email:input.email,enabled:true}))).status,200);
+    assert.equal(d.prepare('SELECT alert_email_enabled FROM members').get().alert_email_enabled,1);
+    assert.equal((await manage.POST(request({...preference,email:'missing@example.test'}))).status,404);
   }finally{if(oldOrigin===undefined)delete process.env.APP_ORIGIN;else process.env.APP_ORIGIN=oldOrigin;d.close();}
 });
 

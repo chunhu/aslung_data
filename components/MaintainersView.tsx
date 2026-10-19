@@ -1,5 +1,6 @@
 "use client";
 import React from "react";
+import MaintainerName from "@/components/MaintainerName";
 import { UserCheck, CloudDownload, Plus, Trash2, Pencil, Mail, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,6 +9,7 @@ import { Empty, EmptyHeader, EmptyTitle, EmptyDescription, EmptyMedia } from "@/
 
 export interface Maintainer {
   name: string;
+  english_name?: string;
   email: string;
   email_test: string;
   phone: string;
@@ -43,7 +45,7 @@ export default function MaintainersView({
   setConfirmation,
 }: MaintainersViewProps) {
   const filtered = maintainers.filter((m) =>
-    (m.name + " " + m.email + " " + (m.email_test || "") + " " + (m.phone || "") + " " + (m.notes || "")).toLowerCase().includes(search.toLowerCase())
+    (m.name + " " + (m.english_name||"") + " " + m.email + " " + (m.email_test || "") + " " + (m.phone || "") + " " + (m.notes || "")).toLowerCase().includes(search.toLowerCase())
   );
 
   return (
@@ -163,11 +165,8 @@ export default function MaintainersView({
                         }}
                       />
                     </TableCell>
-                    <TableCell className="font-semibold text-slate-900 flex items-center gap-2">
-                      <div className="w-7 h-7 rounded-full bg-blue-100 text-blue-800 flex items-center justify-center text-xs font-bold shrink-0">
-                        {m.name.slice(0, 1)}
-                      </div>
-                      <span>{m.name}</span>
+                    <TableCell className="font-semibold text-slate-900">
+                      <MaintainerName name={m.name}/>
                     </TableCell>
                     <TableCell>
                       <a href={`mailto:${m.email}`} className="text-blue-600 hover:underline flex items-center gap-1 font-mono text-xs">
