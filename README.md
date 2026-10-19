@@ -25,7 +25,7 @@ EC2 若已有獨立的 Nginx 設定，請在網站的 `server` 區塊設定 `cli
 
 - Email / 密碼登入；管理員開通或停用會員，無公開自行註冊。
 - 管理員建立 ASLUNG ID，指派各會員可存取的設備與資料起訖期間。
-- 期間查詢、資料表、JSON 預覽、CSV / JSON 下載。
+- 期間查詢、資料表、JSON 預覽、CSV ZIP / JSON ZIP 下載。
 - 下載合併分頁，上限 50,000 筆；所有查詢與下載均檢查伺服器端授權。
 - 密碼加鹽 scrypt 雜湊、HttpOnly Cookie、HTTPS 下 Secure Cookie。
 - 會員修改密碼；管理員終端建立帳號、重設密碼、一致性備份。
@@ -51,7 +51,7 @@ EC2 若已有獨立的 Nginx 設定，請在網站的 `server` 區塊設定 `cli
 | app/login/ | Email / 密碼登入 |
 | app/api/auth/ | 登入、登出、修改密碼 |
 | app/api/manage/ | 會員、設備、授權管理 |
-| app/api/data/ | JSON 查詢及 CSV / JSON 下載 |
+| app/api/data/ | JSON 查詢及 CSV ZIP / JSON ZIP 下載 |
 | app/api/health/ | 程式存活檢查 |
 | lib/ | SQLite、密碼、登入、權限與量測 API 串接 |
 | components/、hooks/、vendor/ | 完整 UI 元件與樣式 |
@@ -173,7 +173,7 @@ HTTP 測試自動選擇空閒本機埠，使用臨時 SQLite / 帳號，結束�
 - 必要欄位（不分大小寫）：`aslung_id, PM, slope1, intercept1, Start_date`；選填 `End_date, break_point1, slope2, intercept2`，品質指標保留供查詢。`Factor_*` 暫不使用。
 - `PM1, PM2.5, PM10` 分別對應 G3；`PM1_GSA, PM2.5_GSA, PM10_GSA` 對應 GSA。`PM125` 明確保留為僅供查詢，不對應原始量測欄位，也不參與校正計算。其他合法通道名稱以 `UNMAPPED:` 保留，僅供查詢，不猜測或參與計算。
 - 日期 `YYYY/MM/DD` 與 `YYYY-MM-DD` 以臺灣時間解讀，Start_date 含當日零時，End_date 含整個當日；含時區的 ISO 日期時間可精確指定。資料庫以 UTC 儲存，區間使用 `[start,end)`。同設備同通道未填結束日期時，適用至該來源下一筆開始時間的前一刻，新舊參數無縫銜接；資料庫直接儲存下一筆開始時間作為排他上限，畫面顯示前一刻。若下一筆只填日期（臺灣當日零時），前一筆自然適用至前一天結束。最後一筆無限期。同一來源、設備與通道的舊 End_date 若只填日期且等於下一筆開始日期（臺灣零時），視為正常同日交接：新參數當日生效、舊參數截止前一刻。原表日期與銜接原因保存在 source_start/source_end/boundary_note 並顯示於查詢。跨日重疊、明確時間重疊、重複開始時間、跨來源重疊或格式錯誤仍拒絕整次更新。單筆開始及結束日期同日而沒有交接時，仍適用整天。
-- 公式：`calibrated = slope × raw + intercept`。有完整第二段係數時，`raw <= break_point1` 採第一段，否則採第二段；未填第二段全程採第一段。保留負值，不自動歸零。缺係數、原始值無效、衝突及計算溢位回傳 null 並標記狀態。
+- 單純係數模式公式：`calibrated = slope × raw + intercept`。依 Python 分段慣例，有完整第二段係數時，`raw < break_point1` 採第一段，等於或大於時採第二段；未填第二段全程採第一段。此模式保留負值；完整六項處理模式則將負校正值設為缺值。缺係數、原始值無效、衝突及計算溢位回傳 null 並標記狀態。
 - 「資料查詢 → 資料校正」可選原始值或「原始值＋校正值」，支援分頁、單機下載及批次 ZIP。校正結果新增 `*_calibrated`、`*_calibration_status`、`*_calibration_version`、`*_calibration_record` 欄位，原欄位不變。API 預設 raw；使用 `calibration=both`，回傳 `calibration_snapshot`，下一頁帶回此參數可固定版本。同一次下載從開始到結束採同一份參數快照；歷史快照仍受既有設備／期間授權約束。
 
 私人 Google 表單建議啟用 Google Sheets API，建立唯讀服務帳號並將各來源表單分享為「檢視者」。伺服器設定 `GOOGLE_CALIBRATION_CREDENTIALS=/secure/path/service-account.json`（憑證檔放在專案外且限制權限），或用部署平台秘密設定 `GOOGLE_CALIBRATION_CREDENTIALS_JSON`。系統僅申請 `spreadsheets.readonly` 範圍，不使用個人登入 Cookie，也不寫回 Google。沒有設定服務帳號時使用可供伺服器讀取的 CSV 匯出；無權限、HTML 登入頁、逾時與過大回應均視為失敗。不要將憑證或金鑰提交 Git。
@@ -198,3 +198,70 @@ HTTP 測試自動選擇空閒本機埠，使用臨時 SQLite / 帳號，結束�
 設備管理範圍獨立保存在 `member_device_scopes`，沒有指定設備時不得修改任何設備；不會從資料讀取授權自動推導寫入權限。設備管理頁不提供刪除設備、修改會員、匯入設備或變更資料授權。角色及範圍儲存於同一 SQLite 交易，`member_access_events` 保留前後狀態、操作人員與時間。權限調整於下一次 API 請求生效，快速設備更新會在寫入交易內再次確認管理權限。自己不能修改自己的角色或管理範圍，至少保留一位啟用中的系統管理員。
 
 舊版雙角色 CHECK 約束會在資料庫啟動時升級，保留會員欄位、索引、登入紀錄、工作階段、授權及其他外鍵資料，升級失敗則回復交易。Docker 內備份與帳號 CLI 所需的權限模組一併打包。正式部署前仍應執行既有備份程序。角色變更不取代註冊 Email 驗證與管理員審核。
+
+### 背景清理與校正（第一版）
+
+系統管理員可在「校正管理 → 背景清理與校正」輸入設備、臺灣時間日期區間與第六項 `up_limit`，建立每日工作、重算新版本、啟用／停用每日排程、查看進度與品質摘要、分頁查詢及串流下載 CSV ZIP。結束日期不包含當日；每次最多 31 天，工作內部採 `[start,end)`。沒有適用係數時不建立工作，`up_limit` 預設為 3，可手動調整；API 未提供此參數時同樣使用 3。第一版工作總覽與建立功能僅供 admin；結果 API 每次驗證設備、期間及實際使用的前後背景樣本授權，viewer 可查詢但不可下載；背景樣本超出會員授權時不提供該預先計算結果。既有「資料查詢」的單純係數模式仍保留；完整六項結果由本工作區提供。
+
+處理順序：
+
+1. G3／GSA 分別處理：三個原始 PM 完全相等且 >50 時清除三者；各通道 <1 時清除該通道。
+2. Ghost Peak 完整依 `cleanPM.py`：PM2.5 前向、反向各取五筆平均並迭代五輪，比例 <10 才保留；任一方向保留即保留，雙向都缺值時清除同組三個 PM。PM1／PM10 使用第一項清理後的數值，修正原 Python 重新帶回低值的問題。
+3. temperature、rh、co2 <1 設為缺值。
+4. 以清理後 PM 套用當時適用的係數；等於分段點使用第二段；負校正結果設為缺值。
+5. 校正後 PM1 > PM2.5，將最終 PM1 限制為 PM2.5；兩者皆有效才判斷。
+6. 使用同組原始三個 PM：PM1 >50 且 `abs(PM1-(PM1+PM2.5+PM10)/3) <= up_limit`，同組三個最終 PM 皆設為缺值。原始值不完整時留下無法判斷標記。
+
+原始欄位保留，另附 `*_clean`、`*_calibrated`、`*_final`、`_quality`、係數記錄／版本與 `_processing_version`。`*_calibrated` 是第四項結果，`*_final` 包含第五、六項。品質摘要是各欄位旗標出現次數，同筆資料可有多個旗標，不能直接相加當作刪除列數。不刪除原始資料列。
+
+工作建立時固定完整係數快照、規則版本與 up_limit。相同請求可重用同一工作；補傳或修正原始資料後，請按「重新計算新版本」。獨立 worker 一次執行一個工作，以 2,000 筆區塊處理、各加前後最多 25 筆樣本；使用 keyset 分頁讀取 MySQL，不寫入 rawdata。前後背景不足時 `_background_status=INSUFFICIENT_CONTEXT`，後續補算可產生新版。目前依 Python 使用相鄰樣本，不額外依時間間隔切段。
+
+結果第一版採每個工作一個 gzip JSON Lines 檔，放在 `CALIBRATION_RESULT_DIR`，預設是 DATABASE_PATH 同目錄的 calibration-results；SQLite 僅存工作與摘要。這是可試跑的分批架構，尚未導入 Parquet／S3；多設備合併 ZIP 由資料查詢頁提供。CSV ZIP 串流輸出；查詢每頁 200 筆，目前需循序掃描該日壓縮檔，後續大量互動查詢可換 Parquet／索引。檔案未設定自動清除策略，部署前需依實測規劃儲存容量與保留年限。
+
+每日排程預設不啟用。啟用後 worker 在臺灣時間 03:00 後排入最近三個完整日，涵蓋例行補傳；更早的資料補傳或歷史係數修正需手動重算。停機期間不自動補齊全部歷史日期。結果寫入暫存檔後，完成才發布；工作有租約避免重複執行，中斷最多自動重取三次，失敗可手動重試。
+
+本機另開 PowerShell，使用與本機網站相同的隔離資料庫：
+
+```powershell
+.\scripts\start-local-calibration-worker.ps1
+# 單次處理一個工作：
+.\scripts\start-local-calibration-worker.ps1 -Once
+```
+
+請先確保 `.env` 中的 MYSQL_HOST、MYSQL_USER、MYSQL_DATABASE、MYSQL_PASSWORD 正確；原始資料為唯讀查詢。本機結果存放 `.tools/calibration-results`，不會提交 Git。Linux／EC2 可設定 DATABASE_PATH、CALIBRATION_RESULT_DIR 後執行 `npm run calibration:worker`。Docker 使用與網站共享的資料 volume，需另外啟動：
+
+```bash
+docker compose --profile calibration up -d --build calibration-worker
+```
+
+測試：`node --test tests/processing.test.mjs tests/calibration.test.mjs tests/calibration-google.test.mjs`。Ghost Peak 含由使用者提供的 Python 函式實際執行產生的 240 筆對照資料；另驗證分批等價、六項邊界、租約、原子發布、失敗重試、排程與下載權限。
+
+### 全域自動校正排程
+
+「背景清理與校正」新增全域開關與獨立的 up_limit（預設 3），僅 admin 可設定。功能安裝時預設關閉；啟用一次後，每天臺灣時間 03:00 後由 worker 自動掃描，不需逐台建立排程。全域開關、參數、最近掃描時間、設備／工作數及錯誤均持久化於 SQLite。
+
+候選設備為已登錄且具有可計算通道係數的設備；不以線上／離線或部署狀態排除。MySQL 每批最多 100 台，唯讀彙總最近三個完整日及當日截至掃描時間的資料；只為有量測資料、且該日有適用係數的完整日建立工作。當日資料僅偵測新增與背景更新，不產生尚未結束的當日檔。以 rawdata 自增 id 的高水位辨識新增／補傳，並記錄各設備每日已排入的資料與係數／規則版本；相同資料不重複建立工作。停止上傳的設備，前一天尚未排入的資料仍會處理。近期資料或係數／up_limit 更新時，受此次掃描涵蓋的完整日會產生新版本。此機制不偵測原始資料原地修改或刪除，需使用手動重算。
+
+已啟用單台排程者使用單台設定，全域掃描略過，避免雙重排程；單台排程停用不等於全域排除。全域停用只停止新增自動工作，既有排隊工作仍會繼續。較早於最近三個完整日的補傳或歷史係數變更，仍需手動建立區間工作。worker 中斷或 MySQL 暫時失敗時保留掃描錯誤，五分鐘後重試；設定變更會取消尚未發布的掃描結果，重啟不會重複排入同日已完成的掃描。
+
+### 在資料查詢下載已完成校正結果
+
+「資料查詢 → 資料校正」新增「已完成清理與校正（六項規則）」；此模式直接讀取背景結果檔，不連線 MySQL 重新計算。保留原始值、`*_clean`、`*_calibrated`、`*_final`、品質旗標，另附 `_processing_job_id` 與 `_processing_up_limit`。可分頁查詢、下載 CSV／JSON，既有多設備／追蹤區段 ZIP 也沿用此選項。`*_final` 才是全部六項規則後的最終值。
+
+跨日結果自動合併；重疊版本採最新完成的結果，查詢時建立結果快照，後續分頁與下載帶回 `calibration_snapshot=processed:<uuid>`，避免中途混入新發布版本。每次仍重新檢查設備、區間與 Ghost Peak 背景授權，viewer 無匯出權限。若任何授權區間尚無完整結果，API 回傳 409 並列出缺漏（UTC），不提供部分檔、不改用原始值；管理員可至背景工作補算。沿用原資料 API 的包含結束時刻語意，例如查到下一日 00:00:00 時，也需要涵蓋該時刻的結果。背景模式與即時單純係數計算為不同選項。
+
+### CSV ZIP 伺服器壓縮下載
+
+資料查詢頁新增「CSV ZIP（伺服器壓縮）」按鈕，原始值、即時計算係數及已完成六項結果皆支援。API 使用 `download=1&format=csvzip`；伺服器分批讀取並串流產生包含 UTF-8 CSV 的 DEFLATE ZIP（level 1），不先把全部 CSV 載入記憶體、不在伺服器產生暫存檔。量測資料檔案下載僅提供 CSV ZIP／JSON ZIP，保留授權與校正快照檢查。
+
+多設備使用此選項時，每台先接收伺服器壓縮資料，以減少網路傳輸；瀏覽器解壓並合併 CSV 與清單為一份壓縮 ZIP，不會產生巢狀 ZIP。原有多設備 CSV／JSON 打包也改用 DEFLATE 壓縮最終檔案。批次最後合併仍使用瀏覽器記憶體，超大批次請分次下載。
+
+第一版採 ZIP32，單份 CSV 或 JSON 未壓縮大小上限為 2 GiB，超過請縮短區間；串流期間若資料來源失敗或超過上限，下載會失敗，避免把截斷的 ZIP 當作成功。取消下載會關閉來源串流。尚未加入下載檔快取或背景 ZIP 產檔。
+
+測試：`node --test tests/csv-zip.test.mjs tests/batch-download.test.mjs tests/processing.test.mjs`，包含 CRC 解壓驗證、中文／BOM、壓縮效果、大小限制、取消與失敗處理、原始分頁讀取、校正結果壓縮及批次合併。
+
+### 量測資料下載統一 ZIP
+
+資料查詢僅提供「CSV ZIP」與「JSON ZIP」；背景校正工作結果下載為 CSV ZIP。所有量測下載均由伺服器先進行 DEFLATE 壓縮後傳輸。`/api/data?download=1` 使用 `format=csvzip` 或 `format=jsonzip`；舊網址 `format=csv`、`format=json` 亦統一回傳 `application/zip`，不再提供未壓縮匯出。未指定 format 的下載回傳 JSON ZIP。既有串接程式若使用 download=1，必須先解壓再讀取內容；一般分頁 JSON 查詢（不帶 download=1）維持原介面。
+
+CSV ZIP 內含一個 .csv，JSON ZIP 內含一個 .json，JSON 仍保留設備、授權期間、校正快照與 data 欄位。批次下載先接收每台設備的伺服器 ZIP，再合併為單份 ZIP（CSV／JSON 與清單並列，無巢狀壓縮檔）。不包含檔案專區、附件、QR 圖片及錯誤報告等其他下載功能。下載仍需原本的設備／期間／背景資料授權；viewer 僅能查詢。

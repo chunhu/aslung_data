@@ -5,6 +5,8 @@ import {readFileSync} from 'node:fs';
 import {DatabaseSync} from 'node:sqlite';
 import ts from 'typescript';
 import * as segments from '../lib/download-segments.mjs';
+import * as zipExports from '../lib/csv-zip.mjs';
+import JSZip from 'jszip';
 
 function loadTs(path, dependencies) {
   const source = readFileSync(new URL(path, import.meta.url), 'utf8');
@@ -49,6 +51,7 @@ test('real API authorization enforces segment/device identity and downloads ever
       '@/lib/download-segments.mjs':segments,
       '@/lib/server':{...server,identity:async()=>member},
       '@/lib/permissions.mjs':permissions,
+      '@/lib/csv-zip.mjs':zipExports,
     '@/lib/data':{fetchPage:async(id,s,e)=>{
         calls.push({id,start:s,end:e});return {data:[{timestamp:s}],has_more:false,next_cursor:null};
       },toCsv:rows=>rows.map(r=>r.timestamp).join('\n')}
@@ -56,7 +59,8 @@ test('real API authorization enforces segment/device identity and downloads ever
     const query=new URLSearchParams({aslung_id:'AL-0609',segment_id:'1',start,end,download:'1',format:'json'});
     const response=await route.GET(new Request('http://localhost/api/data?'+query));
     assert.equal(response.status,200);
-    const body=await response.json();
+    const archive=await JSZip.loadAsync(await response.arrayBuffer(),{checkCRC32:true});
+    const body=JSON.parse(await archive.file('aslung_AL-0609_export.json').async('string'));
     assert.equal(body.data.length,2);
     assert.equal(body.authorized_ranges.length,2);
     assert.deepEqual(calls.map(c=>[c.start,c.end]),[

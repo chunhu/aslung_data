@@ -1,7 +1,7 @@
 import {canExportData} from '@/lib/permissions.mjs';
 import {fetchRangesPage} from "@/lib/download-segments.mjs";
 import {identity,fail,required,instant,authorizedDataRanges,permitted,AppError} from "@/lib/server";
-import {fetchPage,toCsv} from "@/lib/data";
+import {fetchPage} from "@/lib/data";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,7 +23,16 @@ export async function GET(r: Request) {
           : fetchPage(id, start, end, cursor, limit);
 
         const calibrationMode=url.searchParams.get("calibration")||"raw";
-        if(!["raw","both"].includes(calibrationMode))throw new AppError(400,"校正模式僅支援 raw 或 both。");
+        if(!["raw","both","processed"].includes(calibrationMode))throw new AppError(400,"校正模式僅支援 raw、both 或 processed。");
+        if(calibrationMode==='processed'){
+            if(m.role!=='admin'&&Date.parse(end)-Date.parse(start)>31*86400000)throw new AppError(400,'一般會員查詢與下載不可超過 31 天。');
+            if(url.searchParams.get('download')==='1'&&!canExportData(m))throw new AppError(403,'檢視會員沒有下載權限。');
+            const {processedDataResponse}=await import('@/lib/processed-query.mjs');
+            const {getConnection}=await import('@/lib/store.mjs');
+            try{return await processedDataResponse(getConnection(),{url,id,start,end,ranges,segmentId,authorize:async(job:any)=>{
+                if(m.role!=='admin')await permitted(m,id,job.context_start||job.start,job.context_end||job.end);
+            }});}catch(e){if(e instanceof AppError)throw e;throw new AppError((e as any).status||500,(e as Error).message);}
+        }
         let calibrationSnapshot="";
         let transform=(rows:Record<string,unknown>[])=>rows;
         if(calibrationMode==="both"){
@@ -53,34 +62,22 @@ export async function GET(r: Request) {
         const isDownload = url.searchParams.get("download") === "1";
         
         if (isDownload && !canExportData(m)) throw new AppError(403,"檢視會員僅可查詢資料，沒有下載或批次匯出權限。");
-        if (isDownload) {
-            let data: Record<string,unknown>[] = [];
-            let currentCursor = "";
-            const pageSize = 5000;
-            let safetyLimit = m.role === "admin" ? 50000 : 2000;
-            while (safetyLimit > 0) {
-                const res = await pageFor(currentCursor, pageSize);
-                data = data.concat(transform(res.data as Record<string,unknown>[]));
-                if (!res.has_more) break;
-                currentCursor = res.next_cursor as string;
-                safetyLimit--;
-                if (!safetyLimit) throw new AppError(413, "資料量超過單次匯出上限，請縮短期間後重試。");
+        if(isDownload){
+            if(!['csv','json','csvzip','jsonzip'].includes(format))throw new AppError(400,'下載僅支援 CSV ZIP 或 JSON ZIP。');
+            const {csvChunks,jsonChunks,csvZipResponse,jsonZipResponse}=await import('@/lib/csv-zip.mjs');
+            async function* rows(){
+                let cursor='',remaining=m.role==='admin'?50000:2000;
+                while(remaining-->0){
+                    const result=await pageFor(cursor,5000);
+                    for(const row of transform(result.data as Record<string,unknown>[]))yield row;
+                    if(!result.has_more)return;
+                    if(!result.next_cursor||result.next_cursor===cursor)throw new AppError(502,'資料分頁未前進，請稍後重試。');
+                    cursor=result.next_cursor;
+                }
+                throw new AppError(413,'資料量超過單次匯出上限，請縮短期間。');
             }
-            if (format === "csv") {
-                return new Response(toCsv(data), {
-                    headers: {
-                        "Content-Type": "text/csv; charset=utf-8",
-                        "Content-Disposition": `attachment; filename="aslung_${id}_export.csv"`
-                    }
-                });
-            } else {
-                return new Response(JSON.stringify({aslung_id: id, segment_id: segmentId, start, end, authorized_ranges: ranges,calibration:calibrationMode,calibration_snapshot:calibrationSnapshot, data}), {
-                    headers: {
-                        "Content-Type": "application/json; charset=utf-8",
-                        "Content-Disposition": `attachment; filename="aslung_${id}_export.json"`
-                    }
-                });
-            }
+            if(format==='csv'||format==='csvzip')return await csvZipResponse(csvChunks(rows()),`aslung_${id}_export`);
+            return await jsonZipResponse(jsonChunks(rows(),{aslung_id:id,segment_id:segmentId,start,end,authorized_ranges:ranges,calibration:calibrationMode,calibration_snapshot:calibrationSnapshot}),`aslung_${id}_export`);
         }
         
         const cursor = url.searchParams.get("cursor") || "";

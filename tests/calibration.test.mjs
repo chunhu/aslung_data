@@ -1,4 +1,6 @@
 import * as permissions from '../lib/permissions.mjs';
+import * as zipExports from '../lib/csv-zip.mjs';
+import JSZip from 'jszip';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
@@ -56,7 +58,7 @@ test('parses real headers, maps G3 and GSA independently, and ignores Factor_*',
   assert.deepEqual(records.map(r=>r.channel),['PM1_G3','PM1_GSA']);assert.equal(records[0].start,'2023-12-31T16:00:00.000Z');
   const readings=[{aslung_id:'AL-0001',timestamp:'2024-01-01T00:00:00Z',PM1_G3:10,PM1_GSA:11,'PM2.5_G3':null}];
   const output=c.calibrateRows(readings,records.map((r,i)=>({...r,id:i+1,version_id:1})))[0];
-  assert.equal(output.PM1_G3,10);assert.equal(output.PM1_G3_calibrated,21); // Breakpoint belongs to first segment.
+  assert.equal(output.PM1_G3,10);assert.equal(output.PM1_G3_calibrated,28); // Python: breakpoint belongs to second segment.
   assert.equal(output.PM1_GSA_calibrated,31);assert.equal(output['PM2.5_G3_calibrated'],null);
   assert.equal(output['PM2.5_G3_calibration_status'],'INVALID_RAW');assert.equal(readings[0].PM1_G3_calibrated,undefined);
 });
@@ -159,6 +161,7 @@ test('data API pins calibration versions across downloads and pagination, while 
   const api=load('../app/api/data/route.ts',{
     '@/lib/download-segments.mjs':{fetchRangesPage:async(ranges,cursor,limit,fetch)=>fetch(ranges[0].start,ranges[0].end,cursor,limit)},
     '@/lib/calibration.mjs':c,'@/lib/store.mjs':{getConnection:()=>d},
+    '@/lib/csv-zip.mjs':zipExports,
     '@/lib/server':{identity:async()=>({role}),AppError,required:v=>v,instant:v=>new Date(v).toISOString(),
       permitted:async()=>{if(denied)throw new AppError(403,'denied');},authorizedDataRanges:async()=>[{start:'2024-01-01T00:00:00.000Z',end:'2024-01-02T00:00:00.000Z'}],
       fail:e=>Response.json({error:e.message},{status:e.status||500})},
@@ -174,7 +177,8 @@ test('data API pins calibration versions across downloads and pagination, while 
     let response=await request({calibration:'both'});let first=await response.json();
     assert.equal(first.data[0].PM1_G3_calibrated,11);assert.equal(first.data[0].PM1_G3,5);
     const snapshot=first.calibration_snapshot;changeDuringFetch=true;
-    const download=await (await request({calibration:'both',download:'1',format:'json'})).json();
+    const archive=await JSZip.loadAsync(await (await request({calibration:'both',download:'1',format:'json'})).arrayBuffer(),{checkCRC32:true});
+    const download=JSON.parse(await archive.file('aslung_AL-0001_export.json').async('string'));
     assert.equal(download.data.length,2);assert.ok(download.data.every(r=>r.PM1_G3_calibrated===11));
     const next=await (await request({calibration:'both',cursor:'next',calibration_snapshot:snapshot})).json();assert.equal(next.data[0].PM1_G3_calibrated,11);
     const fresh=await (await request({calibration:'both',cursor:'next'})).json();assert.equal(fresh.data[0].PM1_G3_calibrated,21);

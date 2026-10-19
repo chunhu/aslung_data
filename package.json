@@ -12,6 +12,7 @@
     "admin:create": "node --env-file=.env scripts/create-admin.mjs",
     "member:reset-password": "node --env-file=.env scripts/reset-password.mjs",
     "backup": "node --env-file=.env scripts/backup.mjs",
+    "calibration:worker": "node --env-file=.env scripts/calibration-worker.mjs",
     "test": "node --test tests/*.test.mjs",
     "test:integration": "node tests/integration.mjs"
   },

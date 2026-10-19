@@ -19,6 +19,19 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+  calibration-worker:
+    build: .
+    profiles: ["calibration"]
+    restart: unless-stopped
+    env_file: .env
+    command: ["node", "scripts/calibration-worker.mjs"]
+    volumes:
+      - aslung-data:/app/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 volumes:
   aslung-data:
   aslung-backups:
