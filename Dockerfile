@@ -26,7 +26,7 @@ COPY --from=builder --chown=aslung:aslung /app/.next/standalone ./
 COPY --from=builder --chown=aslung:aslung /app/.next/static ./.next/static
 COPY --from=builder --chown=aslung:aslung /app/public ./public
 COPY --from=builder --chown=aslung:aslung /app/scripts ./scripts
-COPY --from=builder --chown=aslung:aslung /app/lib/store.mjs /app/lib/passwords.mjs /app/lib/registration.mjs /app/lib/countries.mjs ./lib/
+COPY --from=builder --chown=aslung:aslung /app/lib/store.mjs /app/lib/passwords.mjs /app/lib/registration.mjs /app/lib/countries.mjs /app/lib/member-access.mjs /app/lib/permissions.mjs ./lib/
 RUN mkdir -p /app/data /app/backups && chown -R aslung:aslung /app/data /app/backups
 USER aslung
 EXPOSE 3000

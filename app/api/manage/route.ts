@@ -391,7 +391,11 @@ export async function POST(r:Request){try{
    throw e;
  }
 }
- else if(p.action==="memberRole"){requireAdmin();const email=required(p.email);if(email===me.email)throw new AppError(400,"無法修改自己的角色。");const application:any=await db().prepare("SELECT registration_status FROM member_profiles WHERE email=?").bind(email).first();if(application&&application.registration_status!=="approved")throw new AppError(400,"請先完成 Email 驗證與帳號審核。");await db().prepare("UPDATE members SET role=? WHERE email=?").bind(p.role==="admin"?"admin":"member",email).run();}
+ else if(p.action==="memberRole"){
+   requireAdmin();const email=required(p.email).toLowerCase();
+   const {saveMemberAccess,AccessError}=await import("@/lib/member-access.mjs");
+   try{saveMemberAccess(getConnection(),me,{email,role:p.role,device_ids:[]});}catch(e){if(e instanceof AccessError)throw new AppError(e.status,e.message);throw e;}
+ }
  else if(p.action==="memberStatus"){requireAdmin();const email=required(p.email);if(email===me.email)throw new AppError(400,"無法停用自己的帳號。");const application:any=await db().prepare("SELECT registration_status FROM member_profiles WHERE email=?").bind(email).first();if(p.active&&application&&application.registration_status!=="approved")throw new AppError(400,"請從註冊申請清單審核，並先完成 Email 驗證。");await db().prepare("UPDATE members SET active=? WHERE email=?").bind(p.active?1:0,email).run();}
  else if(p.action==="memberDelete"){
   requireAdmin();

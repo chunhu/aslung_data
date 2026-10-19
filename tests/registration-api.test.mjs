@@ -1,3 +1,4 @@
+import * as access from '../lib/member-access.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
@@ -30,7 +31,7 @@ test('registration and admin API enforce origin, review permissions, activation 
     '@/lib/store.mjs':{getConnection:()=>d},'@/lib/registration.mjs':registration,'@/lib/registration-mail':{registrationMailer:()=>mailer},'@/lib/server':commonServer
   });
   const manage=load('../app/api/manage/route.ts',{
-    'node:crypto':{...crypto,default:crypto},'@/lib/store.mjs':{getConnection:()=>d},'@/lib/registration.mjs':registration,
+    '@/lib/member-access.mjs':access,'node:crypto':{...crypto,default:crypto},'@/lib/store.mjs':{getConnection:()=>d},'@/lib/registration.mjs':registration,
     '@/lib/registration-mail':{registrationMailer:()=>mailer},'@/lib/server':commonServer,'@/lib/realtime-settings.mjs':realtime,'@/lib/passwords.mjs':passwords
   });
   const oldOrigin=process.env.APP_ORIGIN;process.env.APP_ORIGIN='http://localhost:3001';
@@ -41,6 +42,7 @@ test('registration and admin API enforce origin, review permissions, activation 
     assert.equal((await register.POST(request(input))).status,200);
     assert.equal(d.prepare('SELECT active FROM members').get().active,0);
     assert.equal(d.prepare('SELECT role FROM members').get().role,'member');
+    d.prepare("INSERT INTO members(email,user_id,name,nickname,role,active,password_hash) VALUES('admin@example.test','fixture-admin','Admin','fixture-admin','admin',1,'hash')").run();
     const review={action:'memberReview',email:input.email,decision:'approve'};
     assert.equal((await manage.POST(request(review))).status,400);
     assert.equal((await manage.POST(request({action:'memberStatus',email:input.email,active:true}))).status,400);

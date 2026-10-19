@@ -6,21 +6,22 @@ import JSZip from "jszip";
 
 // Exercise the actual browser batch function with HTTP/UI adapters and real ZIP encoding.
 const file = ts.createSourceFile("workspace.tsx", readFileSync(new URL("../app/workspace.tsx", import.meta.url), "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-let batchSource;
+let batchSource,calibrationSource;
 function visit(node) {
   if (ts.isFunctionDeclaration(node) && node.name?.text === "startBatchDownload") batchSource = node.getText(file);
+  if (ts.isFunctionDeclaration(node) && node.name?.text === "addCalibrationQuery") calibrationSource = node.getText(file);
   ts.forEachChild(node, visit);
 }
 visit(file);
 assert.ok(batchSource, "Batch implementation must exist");
-const code = ts.transpileModule(batchSource, {compilerOptions: {target: ts.ScriptTarget.ES2022}}).outputText;
+const code = ts.transpileModule(calibrationSource+"\n"+batchSource, {compilerOptions: {target: ts.ScriptTarget.ES2022}}).outputText;
 
 test("ZIP exports exactly the checked devices and includes their manifest", async () => {
   const requests = [];
   let blobUrl, logs = [], progress;
   const noop = () => {};
   const context = {
-    batchRunning: false,
+    batchRunning: false,calibrationMode:"both",page:null,queried:null,
     downloadDevices: [{id: "AL-0001",selection_id:"1",segment_id:"1"}, {id: "AL-0002",selection_id:"2",segment_id:"2"}, {id: "AL-0001",selection_id:"3",segment_id:"3"}],
     selectedDeviceIds: ["1", "3"],
     start: "2026-10-01T00:00", end: "2026-10-01T23:59", admin: false,
@@ -36,6 +37,7 @@ test("ZIP exports exactly the checked devices and includes their manifest", asyn
     JSZip, URL, URLSearchParams,
     fetch: async url => {
       const query = new URL(url, "http://localhost").searchParams;
+      assert.equal(query.get("calibration"),"both");
       requests.push([query.get("aslung_id"),query.get("segment_id")]);
       return new Response("timestamp,value\n2026-10-01T12:00:00Z,42\n");
     },

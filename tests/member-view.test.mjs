@@ -1,3 +1,4 @@
+import {roleLabel} from '../lib/permissions.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -17,7 +18,7 @@ function visit(node){
 }
 visit(ast);
 assert.ok(expression,'Workspace must render a members section');
-const names=['section','admin','members','state','alertSettings','busy','isEn','selectedMembers','setModal','setGrantEmail','setGrantType','setGrantLab','setGrantDevice','setGrantId','setEditMember','setConfirmation','setSelectedMembers','mutate','localTime','RegistrationReviews','Button','Table','TableHeader','TableRow','TableHead','TableBody','TableCell','Plus','Trash2','Pencil'];
+const names=['roleLabel','setAccessMember','section','admin','members','state','alertSettings','busy','isEn','selectedMembers','setModal','setGrantEmail','setGrantType','setGrantLab','setGrantDevice','setGrantId','setEditMember','setConfirmation','setSelectedMembers','mutate','localTime','RegistrationReviews','Button','Table','TableHeader','TableRow','TableHead','TableBody','TableCell','Plus','Trash2','Pencil'];
 const compiled=ts.transpileModule(`export default function View({${names.join(',')}}:any){return (${expression});}`,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX}}).outputText;
 const module={exports:{}};
 new Function('require','module','exports',compiled)(name=>{assert.equal(name,'react/jsx-runtime');return jsx;},module,module.exports);
@@ -28,7 +29,7 @@ const fixtures=[{email:'admin@example.test',name:'管理員甲',role:'admin',act
 function render(overrides={}){
   const props=Object.fromEntries(names.map(name=>[name,()=>{}]));
   Object.assign(props,{section:'members',admin:true,members:fixtures,state:{me:fixtures[0]},alertSettings:{},busy:false,isEn:false,selectedMembers:new Set(),
-    localTime:value=>value,RegistrationReviews:()=>React.createElement('section',{},'會員註冊申請'),Button:tag('button'),
+    roleLabel,localTime:value=>value,RegistrationReviews:()=>React.createElement('section',{},'會員註冊申請'),Button:tag('button'),
     Table:tag('table'),TableHeader:tag('thead'),TableRow:tag('tr'),TableHead:tag('th'),TableBody:tag('tbody'),TableCell:tag('td'),
     Plus:()=>null,Trash2:()=>null,Pencil:()=>null,...overrides});
   return renderToStaticMarkup(React.createElement(View,props));
@@ -36,7 +37,7 @@ function render(overrides={}){
 
 test('members page renders accounts, registration review and account actions',()=>{
   const html=render();
-  for(const text of ['會員註冊申請','會員帳號','新增會員','管理員甲','會員乙','tester','member@example.test','設為管理員','停用','刪除會員','告警收信','接收'])assert.ok(html.includes(text),text);
+  for(const text of ['會員註冊申請','會員帳號','新增會員','管理員甲','會員乙','tester','member@example.test','角色與權限','停用','刪除會員','告警收信','接收'])assert.ok(html.includes(text),text);
   assert.equal((html.match(/title="刪除會員"/g)||[]).length,1); // Self deletion remains unavailable.
 });
 

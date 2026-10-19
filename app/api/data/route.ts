@@ -1,3 +1,4 @@
+import {canExportData} from '@/lib/permissions.mjs';
 import {fetchRangesPage} from "@/lib/download-segments.mjs";
 import {identity,fail,required,instant,authorizedDataRanges,permitted,AppError} from "@/lib/server";
 import {fetchPage,toCsv} from "@/lib/data";
@@ -21,6 +22,26 @@ export async function GET(r: Request) {
               (s: string, e: string, c: string, size: number) => fetchPage(id, s, e, c, size))
           : fetchPage(id, start, end, cursor, limit);
 
+        const calibrationMode=url.searchParams.get("calibration")||"raw";
+        if(!["raw","both"].includes(calibrationMode))throw new AppError(400,"校正模式僅支援 raw 或 both。");
+        let calibrationSnapshot="";
+        let transform=(rows:Record<string,unknown>[])=>rows;
+        if(calibrationMode==="both"){
+            const {currentCalibrationRecords,ensureCalibrationSchema,calibrateRows}=await import("@/lib/calibration.mjs");
+            const {getConnection}=await import("@/lib/store.mjs");
+            const database=getConnection();ensureCalibrationSchema(database);
+            const snapshot=url.searchParams.get("calibration_snapshot");
+            let records;
+            if(snapshot!==null){
+                if(snapshot!=="none"&&!/^\d+(,\d+){0,99}$/.test(snapshot))throw new AppError(400,"校正版本格式不正確。");
+                const ids=snapshot==="none"?[]:[...new Set(snapshot.split(",").map(Number))];
+                if(ids.some(v=>!Number.isSafeInteger(v)||v<=0))throw new AppError(400,"校正版本格式不正確。");
+                records=ids.length?database.prepare(`SELECT * FROM calibration_records WHERE aslung_id=? AND version_id IN (${ids.map(()=>"?").join(",")})`).all(id,...ids):[];
+            }else records=currentCalibrationRecords(database,id);
+            calibrationSnapshot=[...new Set(records.map((record:any)=>record.version_id))].join(",")||"none";
+            transform=rows=>calibrateRows(rows,records);
+        }
+
         // 系統管理員不受 31 天時間限制；一般會員仍維持 31 天上限以維持系統效能
         if (m.role !== "admin") {
             if (new Date(end).getTime() - new Date(start).getTime() > 31 * 24 * 3600 * 1000) {
@@ -31,6 +52,7 @@ export async function GET(r: Request) {
         const format = url.searchParams.get("format") || "json";
         const isDownload = url.searchParams.get("download") === "1";
         
+        if (isDownload && !canExportData(m)) throw new AppError(403,"檢視會員僅可查詢資料，沒有下載或批次匯出權限。");
         if (isDownload) {
             let data: Record<string,unknown>[] = [];
             let currentCursor = "";
@@ -38,7 +60,7 @@ export async function GET(r: Request) {
             let safetyLimit = m.role === "admin" ? 50000 : 2000;
             while (safetyLimit > 0) {
                 const res = await pageFor(currentCursor, pageSize);
-                data = data.concat(res.data as Record<string,unknown>[]);
+                data = data.concat(transform(res.data as Record<string,unknown>[]));
                 if (!res.has_more) break;
                 currentCursor = res.next_cursor as string;
                 safetyLimit--;
@@ -52,7 +74,7 @@ export async function GET(r: Request) {
                     }
                 });
             } else {
-                return new Response(JSON.stringify({aslung_id: id, segment_id: segmentId, start, end, authorized_ranges: ranges, data}), {
+                return new Response(JSON.stringify({aslung_id: id, segment_id: segmentId, start, end, authorized_ranges: ranges,calibration:calibrationMode,calibration_snapshot:calibrationSnapshot, data}), {
                     headers: {
                         "Content-Type": "application/json; charset=utf-8",
                         "Content-Disposition": `attachment; filename="aslung_${id}_export.json"`
@@ -63,7 +85,7 @@ export async function GET(r: Request) {
         
         const cursor = url.searchParams.get("cursor") || "";
         const page = await pageFor(cursor);
-        return Response.json({aslung_id:id,start,end,segment_id:segmentId,authorized_ranges:ranges,...page}, {headers: {"Cache-Control": "no-store"}});
+        return Response.json({aslung_id:id,start,end,segment_id:segmentId,authorized_ranges:ranges,...page,data:transform(page.data),calibration:calibrationMode,calibration_snapshot:calibrationSnapshot}, {headers: {"Cache-Control": "no-store"}});
     } catch(e) {
         return fail(e);
     }

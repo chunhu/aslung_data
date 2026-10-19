@@ -1,0 +1,16 @@
+"use client";
+import {useCallback,useEffect,useMemo,useState} from 'react';
+import {Button} from '@/components/ui/button';
+import {Input} from '@/components/ui/input';
+import DeviceQuickEdit from '@/components/DeviceQuickEdit';
+import MaintainerName,{MaintainerNamesProvider} from '@/components/MaintainerName';
+import {buildFleetRows,DEVICE_STATUSES} from '@/lib/fleet.mjs';
+type Props={api:(url:string,options?:RequestInit)=>Promise<any>;timezone:string;isEnglish:boolean};
+export default function DeviceManagementView({api,timezone,isEnglish}:Props){
+  const [data,setData]=useState<any>(null),[error,setError]=useState(''),[loading,setLoading]=useState(false),[search,setSearch]=useState(''),[edit,setEdit]=useState<{row:any;field:'status'|'location'|'maintainer'}|null>(null);
+  const load=useCallback(async()=>{setLoading(true);setError('');try{setData(await api('/api/device-management'));}catch(e){setData(null);setError((e as Error).message);}finally{setLoading(false);}},[api]);
+  useEffect(()=>{void load();},[load]);
+  const rows=useMemo(()=>data?buildFleetRows(data.devices,data.locations,null,data.labs).filter((r:any)=>(r.id+' '+r.lab+' '+r.maintainer+' '+r.description).toLowerCase().includes(search.toLowerCase())):[],[data,search]);
+  const scopedApi=useCallback((_url:string,options?:RequestInit)=>api('/api/device-management',options),[api]);
+  return <MaintainerNamesProvider maintainers={data?.maintainers||[]} isEnglish={isEnglish}><section className="panel p-5"><div className="mb-4 flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-semibold">{isEnglish?'Assigned device management':'指定設備管理'}</h2><p className="mt-1 text-xs text-slate-500">僅顯示系統管理員指定給您的設備。可更新狀態、部署與負責人，無法刪除設備、管理會員或修改資料授權。</p></div><Button variant="outline" disabled={loading} onClick={()=>void load()}>重新整理</Button></div><Input aria-label="搜尋指定設備" placeholder="搜尋設備、地點或負責人" value={search} onChange={e=>setSearch(e.target.value)} className="mb-4 max-w-md"/>{error&&<p role="alert" className="mb-4 text-sm text-rose-700">{error}</p>}<div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="border-b text-xs text-slate-500"><tr>{['ASLUNG ID','設備狀態','目前地點','負責人','操作'].map(h=><th key={h} className="p-3">{h}</th>)}</tr></thead><tbody>{rows.map((row:any)=><tr key={row.id} className="border-b border-slate-100"><td className="p-3 font-mono font-medium">{row.id}</td><td className="p-3">{DEVICE_STATUSES[row.status as keyof typeof DEVICE_STATUSES]||row.status}</td><td className="p-3">{row.lab||'未部署'}</td><td className="p-3">{row.maintainer?<MaintainerName name={row.maintainer}/>:'未指派'}</td><td className="p-3"><div className="flex gap-2">{(['status','location','maintainer'] as const).map((field,i)=><Button size="sm" variant="outline" key={field} onClick={()=>setEdit({row,field})}>{['更新狀態','更新部署','更新負責人'][i]}</Button>)}</div></td></tr>)}</tbody></table></div>{!rows.length&&<p className="py-8 text-center text-sm text-slate-400">{loading?'載入中…':'沒有符合的設備；請由系統管理員設定設備管理範圍。'}</p>}</section>{edit&&data&&<DeviceQuickEdit row={edit.row} field={edit.field} labs={data.labs} maintainers={data.maintainers} timezone={timezone} api={scopedApi} onSaved={load} onClose={()=>setEdit(null)}/>}</MaintainerNamesProvider>;
+}

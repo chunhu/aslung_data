@@ -1,3 +1,4 @@
+import * as permissions from '../lib/permissions.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -47,7 +48,8 @@ test('real API authorization enforces segment/device identity and downloads ever
     const route=loadTs('../app/api/data/route.ts',{
       '@/lib/download-segments.mjs':segments,
       '@/lib/server':{...server,identity:async()=>member},
-      '@/lib/data':{fetchPage:async(id,s,e)=>{
+      '@/lib/permissions.mjs':permissions,
+    '@/lib/data':{fetchPage:async(id,s,e)=>{
         calls.push({id,start:s,end:e});return {data:[{timestamp:s}],has_more:false,next_cursor:null};
       },toCsv:rows=>rows.map(r=>r.timestamp).join('\n')}
     });
