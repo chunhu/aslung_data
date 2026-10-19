@@ -1,6 +1,5 @@
 #!/bin/bash
 set -Eeuo pipefail
-
 DEPLOY_STARTED_AT=$(date +%s)
 CURRENT_STAGE="初始化"
 STAGE_NAMES=()
@@ -36,6 +35,7 @@ if [[ ${1:-} == "--force" ]]; then FORCE_REBUILD=1; fi
 
 echo "--- 開始執行部署作業：$(date +"%Y-%m-%d %H:%M:%S") ---"
 cd "$(dirname "$0")/.."
+run_stage "切換至 main 分支" git switch main
 run_stage "設定開機自動啟動" bash scripts/setup-autostart.sh --services-only
 run_stage "檢查 GitHub 更新" git fetch origin main
 LOCAL_COMMIT=$(git rev-parse HEAD)
