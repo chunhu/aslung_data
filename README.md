@@ -265,3 +265,18 @@ docker compose --profile calibration up -d --build calibration-worker
 資料查詢僅提供「CSV ZIP」與「JSON ZIP」；背景校正工作結果下載為 CSV ZIP。所有量測下載均由伺服器先進行 DEFLATE 壓縮後傳輸。`/api/data?download=1` 使用 `format=csvzip` 或 `format=jsonzip`；舊網址 `format=csv`、`format=json` 亦統一回傳 `application/zip`，不再提供未壓縮匯出。未指定 format 的下載回傳 JSON ZIP。既有串接程式若使用 download=1，必須先解壓再讀取內容；一般分頁 JSON 查詢（不帶 download=1）維持原介面。
 
 CSV ZIP 內含一個 .csv，JSON ZIP 內含一個 .json，JSON 仍保留設備、授權期間、校正快照與 data 欄位。批次下載先接收每台設備的伺服器 ZIP，再合併為單份 ZIP（CSV／JSON 與清單並列，無巢狀壓縮檔）。不包含檔案專區、附件、QR 圖片及錯誤報告等其他下載功能。下載仍需原本的設備／期間／背景資料授權；viewer 僅能查詢。
+### 部署校正分支到 EC2
+
+在既有 Ubuntu EC2 專案中取得 `scripts/deploy_cal.sh` 後執行：
+
+```bash
+bash scripts/deploy_cal.sh
+# 需要停用 Docker 建置快取時：
+bash scripts/deploy_cal.sh --no-cache
+```
+
+此腳本固定部署 `codex/calibration-management`，不呼叫固定切回 main 的 `deploy.sh`。使用 fast-forward 更新；本機有未提交修改、其他未追蹤檔案或分支分歧時停止，不自動 stash／reset。可先把腳本複製到舊 checkout，唯一允許的未追蹤檔案為 scripts/deploy_cal.sh。
+
+流程為設定系統服務開機啟動、驗證 Compose、建置網站與 worker、停止舊 worker、以直接唯讀開啟 SQLite 的方式建立升級前備份並檢查完整性、更新網站並等待健康檢查、啟動 worker 並驗證 MySQL 唯讀查詢與容器穩定性。建置與備份期間不停止既有網站。即使 Git 無更新也執行檢查與部署，預設使用 Docker 快取。失敗不會自動還原資料庫或刪除 volumes；若網站更新前已停止 worker，修正問題後重跑腳本。
+
+適用已有正式 SQLite 的環境；資料庫與校正結果需位於共用 /app/data，備份位於 /app/backups，並沿用原 Compose 專案／volumes。若找不到既有資料庫或環境路徑未持久化，腳本會停止。備份檔為 /app/backups/before-cal-*.sqlite，保留在 aslung-backups volume，備份本身不觸發新版 schema migration。排程開關沿用資料庫設定，部署腳本不會自動啟用全域／單台排程。
