@@ -2,6 +2,7 @@ import type {NextConfig} from "next";
 const config:NextConfig={
  output:"standalone",
  poweredByHeader:false,
+ experimental:{cpus:1,webpackMemoryOptimizations:true},
  // The standalone image also runs the unbundled calibration worker.
  // Keep database/S3 dependencies available to native Node.js worker imports.
  serverExternalPackages:["mysql2","@aws-sdk/client-s3"],

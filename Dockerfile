@@ -10,9 +10,10 @@ RUN --mount=type=cache,id=aslung-pnpm-store,target=/pnpm/store,sharing=locked \
 
 FROM node:24-bookworm-slim AS builder
 WORKDIR /app
+ARG NODE_BUILD_HEAP_MB=1024
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-ENV NEXT_TELEMETRY_DISABLED=1
+ENV NEXT_TELEMETRY_DISABLED=1 NODE_OPTIONS="--max-old-space-size=${NODE_BUILD_HEAP_MB}"
 RUN --mount=type=cache,id=aslung-next-cache,target=/app/.next/cache,sharing=locked \
     build_started=$(date +%s) && \
     node node_modules/next/dist/bin/next build --webpack && \

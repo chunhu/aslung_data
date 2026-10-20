@@ -333,3 +333,9 @@ sudo docker compose --profile calibration logs --tail=80 calibration-worker
 第一階段不自動搬移既有歷史工作、不刪除本機結果、不啟用排程，也不建立 S3 ZIP 下載快取或預簽署連結。已完成成果的查詢及下載仍經由 EC2，這一階段尚未減少瀏覽器下載所經過的 EC2 流量，也尚未釋放本機成果空間。請先使用一台設備的一天資料完成正式環境驗證，再加入歷史搬移、容量清理與直連下載。
 
 測試：`node --test tests/processing-storage.test.mjs tests/processing.test.mjs tests/calibration.test.mjs tests/deploy-cal.test.mjs`。S3 SDK 使用測試替身驗證上傳內容、完整性、重試及本機還原，不使用正式 AWS 憑證或正式資料庫；實際權限需以 EC2 部署前探測驗證。
+
+### 小容量 EC2 建置記憶體
+
+Docker builder 階段預設設定 `NODE_OPTIONS=--max-old-space-size=1024`，並傳遞給 Next.js 的 TypeScript 檢查子程序。Compose 的 app 與 worker 共用 `NODE_BUILD_HEAP_MB` 建置參數，可在 `.env` 調整，預設 1024 MiB；runtime 階段不繼承 builder 的 Node.js 堆積設定。Next.js 限制單一建置 worker 並啟用 Webpack 記憶體最佳化，仍保留正式建置的 TypeScript 檢查。
+
+約 1 GiB RAM 的 EC2 即使有 swap，建置仍可能較慢；提高堆積上限不會增加實體 RAM，也不能保證避免主機 OOM。部署前可用 `free -h` 檢查 RAM／swap、`df -h` 檢查磁碟。若持續出現程序被系統終止（如 exit 137），需評估主機容量或改由 CI 建置映像；不要關閉型別檢查來繞過建置失敗。

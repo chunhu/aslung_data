@@ -1,6 +1,9 @@
 services:
   app:
-    build: .
+    build:
+      context: .
+      args:
+        NODE_BUILD_HEAP_MB: ${NODE_BUILD_HEAP_MB:-1024}
     restart: unless-stopped
     env_file: .env
     ports:
@@ -20,7 +23,10 @@ services:
         max-size: "10m"
         max-file: "3"
   calibration-worker:
-    build: .
+    build:
+      context: .
+      args:
+        NODE_BUILD_HEAP_MB: ${NODE_BUILD_HEAP_MB:-1024}
     profiles: ["calibration"]
     restart: unless-stopped
     env_file: .env
