@@ -1,4 +1,5 @@
 import { alertEmailExclusion, alertRecipients } from "./alert-policy.mjs";
+import {explicitAlertRecipients} from './maintainer-links.mjs';
 import nodemailer from "nodemailer";
 import { db, syncDeviceStatusesAndLocations } from "@/lib/server";
 import { getPool } from "@/lib/data";
@@ -314,9 +315,10 @@ async function runOfflineAlertCheck(store: ReturnType<typeof db>, options: { for
   for (const [mName, items] of groupedByMaintainer.entries()) {
     await assertOwned();
     const maintInfo = maintainerMap.get(mName);
+    const explicitRecipients=await explicitAlertRecipients(store,maintInfo);
     let targetEmail = "";
     if (maintInfo) {
-      const primary = alertRecipients(maintInfo.email, members);
+      const primary = explicitRecipients??alertRecipients(maintInfo.email, members);
       const useTest = settings.use_test_email && maintInfo.email_test;
       // Test routing must also respect the primary owner's opt-out.
       const addresses = useTest ? (primary.length ? alertRecipients(maintInfo.email_test, members) : []) : primary;
@@ -326,9 +328,9 @@ async function runOfflineAlertCheck(store: ReturnType<typeof db>, options: { for
     let status = "SIMULATED";
     let errorMessage = "";
 
-    if (maintInfo?.email && !targetEmail) {
+    if ((explicitRecipients!==null||maintInfo?.email) && !targetEmail) {
       status = "SKIPPED";
-      errorMessage = "收件會員已關閉告警通知或帳號已停用，僅保留畫面警示";
+      errorMessage = explicitRecipients!==null?"維護身分未關聯可收信的啟用會員，或收件會員已關閉告警通知，僅保留畫面警示":"收件會員已關閉告警通知或帳號已停用，僅保留畫面警示";
     } else if (hasSmtp && transporter && targetEmail) {
       try {
         const rowsHtml = items.map(it => `

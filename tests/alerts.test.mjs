@@ -5,6 +5,7 @@ import {DatabaseSync} from 'node:sqlite';
 import * as crypto from 'node:crypto';
 import ts from 'typescript';
 import * as policy from '../lib/alert-policy.mjs';
+import * as maintainerLinks from '../lib/maintainer-links.mjs';
 
 function loadTs(path, dependencies) {
   const source=readFileSync(new URL(path,import.meta.url),'utf8');
@@ -54,7 +55,7 @@ function fixture(query, send) {
       return [id==='empty'?[]:[{time:new Date(Date.now()-(id==='old'?120:0)*60000)}]];
     })})},
     '@/lib/utils':{formatOfflineDuration:mins=>`${mins} minutes`},
-    './alert-policy.mjs':policy,
+    './alert-policy.mjs':policy,'./maintainer-links.mjs':maintainerLinks,
     './alert-lock':locks
   };
   return {sql,store,mails,load:()=>loadTs('../lib/alerts.ts',deps)};
@@ -100,6 +101,23 @@ test('parallel server bundles and manual trigger share one execution; completed 
     await b.checkAndSendOfflineAlerts();
     assert.equal(f.mails.length,2);
   }finally{unblock();f.sql.close();}
+});
+test('explicit maintainer account links route alerts to linked members and respect their opt-out',async()=>{
+  const f=fixture();try{
+    f.sql.exec(`ALTER TABLE members ADD COLUMN user_id TEXT;
+      CREATE UNIQUE INDEX members_user_id ON members(user_id);
+      INSERT INTO members(email,active,alert_email_enabled,user_id) VALUES('linked@example.test',1,1,'linked');`);
+    maintainerLinks.ensureMaintainerLinkSchema(f.sql);
+    const id=f.sql.prepare("SELECT maintainer_id FROM maintainers WHERE name='Maintainer'").get().maintainer_id;
+    f.sql.prepare('INSERT INTO member_maintainer_links VALUES(?,?,?,?)').run('linked',id,'admin@test',new Date().toISOString());
+    f.sql.prepare('INSERT INTO maintainer_link_routing VALUES(?)').run(id);
+    await f.load().checkAndSendOfflineAlerts({force:true});
+    assert.equal(f.mails.length,1);assert.equal(f.mails[0].to,'linked@example.test');
+    f.sql.exec("UPDATE members SET alert_email_enabled=0 WHERE user_id='linked'");
+    await f.load().checkAndSendOfflineAlerts({force:true});assert.equal(f.mails.length,1);
+    f.sql.exec("DELETE FROM member_maintainer_links WHERE member_user_id='linked'");
+    await f.load().checkAndSendOfflineAlerts({force:true});assert.equal(f.mails.length,1);
+  }finally{f.sql.close();}
 });
 
 test('query failure is unknown, empty data is offline, and email/log counts use one check snapshot',async()=>{
