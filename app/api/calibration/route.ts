@@ -1,7 +1,7 @@
 import {canManageCalibration} from '@/lib/permissions.mjs';
 import {identity,writeGuard,AppError,fail} from '@/lib/server';
 import {getConnection} from '@/lib/store.mjs';
-import {CalibrationError,ensureCalibrationSchema,saveCalibrationSource,setCalibrationSourceEnabled,syncCalibrationSource} from '@/lib/calibration.mjs';
+import {CalibrationError,ensureCalibrationSchema,saveCalibrationSource,setCalibrationSourceEnabled,syncCalibrationSource,archiveCalibrationSource} from '@/lib/calibration.mjs';
 import {fetchCalibrationCsv,calibrationAuthentication} from '@/lib/calibration-google.mjs';
 
 export const runtime='nodejs';
@@ -21,7 +21,7 @@ export async function GET(req:Request){try{
   const join='FROM calibration_records r JOIN calibration_versions v ON v.id=r.version_id JOIN calibration_sources s ON s.id=v.source_id WHERE '+clauses.join(' AND ');
   const records=d.prepare('SELECT r.*,s.name AS source_name,s.enabled AS source_enabled,v.created_at AS synced_at '+join+' ORDER BY r.aslung_id,r.channel,r.start DESC LIMIT 200 OFFSET ?').all(...args,offset);
   const total=d.prepare('SELECT COUNT(*) AS n '+join).get(...args)?.n||0;
-  return Response.json({sources:d.prepare('SELECT id,name,url,description,enabled,current_version,last_check,last_success,last_status,last_error,next_check,config_revision FROM calibration_sources ORDER BY name').all(),
+  return Response.json({sources:d.prepare('SELECT id,name,url,description,enabled,current_version,last_check,last_success,last_status,last_error,next_check,config_revision FROM calibration_sources WHERE archived=0 ORDER BY name').all(),
     records,total,offset,hasMore:offset+records.length<Number(total),authentication:calibrationAuthentication(),
     versions:d.prepare('SELECT * FROM calibration_versions WHERE (?=\'\' OR source_id=?) ORDER BY id DESC LIMIT 200').all(source,source),
     logs:d.prepare('SELECT l.*,s.name AS source_name FROM calibration_sync_logs l JOIN calibration_sources s ON s.id=l.source_id WHERE (?=\'\' OR l.source_id=?) ORDER BY l.id DESC LIMIT 50').all(source,source),
@@ -33,7 +33,8 @@ export async function POST(req:Request){try{
   const p=await req.json();if(!p||typeof p!=='object'||Array.isArray(p))throw new AppError(400,'表單內容不正確。');
   const d=getConnection();ensureCalibrationSchema(d);
   if(p.action==='save')return Response.json({ok:true,id:saveCalibrationSource(d,p,me.email)});
-  if(typeof p.id!=='string'||!d.prepare('SELECT id FROM calibration_sources WHERE id=?').get(p.id))throw new AppError(404,'來源不存在。');
+  if(p.action==='archive')return Response.json(archiveCalibrationSource(d,p.id,me.email));
+  if(typeof p.id!=='string'||!d.prepare('SELECT id FROM calibration_sources WHERE id=? AND archived=0').get(p.id))throw new AppError(404,'來源不存在。');
   if(p.action==='enabled'){setCalibrationSourceEnabled(d,p.id,p.enabled,me.email);return Response.json({ok:true});}
   if(p.action==='sync')return Response.json(await syncCalibrationSource(d,p.id,me.email,fetchCalibrationCsv,{force:true}));
   throw new AppError(400,'不支援的操作。');
