@@ -2,7 +2,35 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import ts from 'typescript';
+import * as React from 'react';
+import * as jsxRuntime from 'react/jsx-runtime';
+import {renderToStaticMarkup} from 'react-dom/server';
 import {visibleRealtimeRows,mergeRealtimeRows,discoverRealtimeDevices} from '../lib/realtime-discovery.mjs';
+
+test('discovery results are rendered independently with measurements and registration actions for every unknown device',()=>{
+  const Button=({children,onClick,disabled})=>React.createElement('button',{onClick,disabled},children);
+  const dependencies={'react':React,'react/jsx-runtime':jsxRuntime,'lucide-react':{Search:()=>null,TriangleAlert:()=>null},'@/components/ui/button':{Button}};
+  const source=readFileSync(new URL('../components/RealtimeDiscovery.tsx',import.meta.url),'utf8');
+  const code=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX}}).outputText;
+  const module={exports:{}};new Function('require','module','exports',code)(name=>{assert.ok(name in dependencies,name);return dependencies[name];},module,module.exports);
+  const Results=module.exports.RealtimeDiscoveryResults,registered=[];
+  const rows=[
+    {aslung_id:'AL-new-1',timestamp:new Date().toISOString(),PM1_G3:0,'PM2.5_G3':5,PM10_G3:8,temperature:24,rh:70},
+    {aslung_id:'AL-new-2',timestamp:new Date(Date.now()-2*3600000).toISOString(),PM1_G3:11},
+    {aslung_id:'AL-now-registered',timestamp:new Date().toISOString()}
+  ];
+  const tree=Results({rows,formatTime:()=> 'DISPLAYED TIME',onRegister:id=>registered.push(id),registeredIds:['AL-now-registered']});
+  const html=renderToStaticMarkup(tree);
+  for(const row of rows)assert.ok(html.includes(row.aslung_id));
+  assert.equal((html.match(/<tr/g)||[]).length,4);
+  assert.equal((html.match(/DISPLAYED TIME/g)||[]).length,3);
+  assert.match(html,/>0<\/td>/);assert.match(html,/已斷線/);assert.match(html,/已完成補登/);
+  assert.equal((html.match(/補登設備<\/button>/g)||[]).length,2);
+  const buttons=[];
+  function visit(element){if(!React.isValidElement(element))return;if(element.type===Button)buttons.push(element);React.Children.forEach(element.props.children,visit);}
+  visit(tree);buttons[0].props.onClick();assert.deepEqual(registered,['AL-new-1']);
+  assert.equal(Results({rows:[],formatTime:s=>s,onRegister:()=>{},registeredIds:[]}),null);
+});
 
 test('only undeployed readings older than one year are hidden',()=>{
   const now=new Date('2026-10-15T12:00:00Z');
