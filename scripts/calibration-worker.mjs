@@ -4,8 +4,11 @@ import {processingPool,rawProcessingRows,discoverProcessingData} from '../lib/pr
 import {scheduleGlobalProcessing} from '../lib/global-processing.mjs';
 import {syncCalibrationSource,ensureCalibrationSchema} from '../lib/calibration.mjs';
 import {fetchCalibrationCsv} from '../lib/calibration-google.mjs';
+import {uploadNextProcessingResult} from '../lib/processing-storage.mjs';
+import {storageConfiguration} from '../lib/s3-storage.mjs';
 
 const d=getConnection(),pool=processingPool();let stopping=false;
+storageConfiguration();
 for(const signal of ['SIGINT','SIGTERM'])process.on(signal,()=>{stopping=true;});
 const once=process.argv.includes('--once');
 console.log('[Processing] worker ready; one job at a time. Waiting for queued jobs.');
@@ -17,6 +20,8 @@ try{
     for(const source of sources){if(stopping)break;await syncCalibrationSource(d,source.id,'processing-worker',fetchCalibrationCsv);}
     scheduleProcessing(d);
     await scheduleGlobalProcessing(d,(devices,start,end,heartbeat)=>discoverProcessingData(pool,devices,start,end,heartbeat));
+    const uploaded=await uploadNextProcessingResult(d);
+    if(uploaded)console.log('[Storage]',uploaded.jobId,uploaded.status,uploaded.error||'');
     const job=claimProcessing(d);
     if(job){
       console.log('[Processing] started',job.id,job.device,job.start,job.end);

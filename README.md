@@ -304,3 +304,32 @@ bash scripts/deploy_cal.sh --no-cache
 刪除來源採封存：從來源清單移除、停用每日同步與後續係數套用，保留歷史版本、匯入紀錄及已完成結果；正在同步時拒絕刪除。日誌詳細資料仍可查閱已刪除來源的匯入快照。操作前有確認視窗，與「只刪除日誌」的影響不同。
 
 測試：`node --test tests/calibration-history.test.mjs tests/calibration.test.mjs tests/processing.test.mjs tests/global-processing.test.mjs`。
+
+### S3 校正成果儲存（第一階段）
+
+預設仍為本機模式。EC2 的 app 與 calibration-worker 共用 `.env`，啟用東京 S3 時加入：
+
+```dotenv
+CALIBRATION_STORAGE=s3
+AWS_REGION=ap-northeast-1
+S3_BUCKET=aslung-calibration-prod-20261020
+```
+
+透過 AWS SDK 預設憑證鏈取得 EC2 IAM Role 憑證，正式環境不需將 Access Key 寫入 `.env`。EC2 使用私人 S3 儲存貯體、ACL 停用、SSE-S3，角色需具備 `processed/*` 的 GetObject、PutObject、AbortMultipartUpload、ListMultipartUploadParts。Docker 使用 IMDSv2 required 時，主機 metadata response hop limit 設為 2，且須能連線至 IMDS 與東京 S3。正式資料庫、本機結果目錄與備份磁碟區沿用既有設定。
+
+新校正工作先原子發布本機 gzip JSON Lines，保存 SHA-256 與大小，再於同一筆交易新增 S3 上傳工作。物件路徑為 `processed/<設備>/<臺灣日期 YYYY/MM/DD>/<工作 UUID>/<SHA-256>.jsonl.gz`；工作已固定係數及清理規則快照，不同校正版本不會覆蓋舊成果。上傳採 SHA-256 校驗，之後以 HeadObject 核對大小、檢查碼及 metadata，通過後才在資料庫發布 S3 路徑。
+
+S3 故障不會將已成功校正的工作改為失敗，也不重算資料。上傳佇列保存在 SQLite，worker 重啟後可繼續；失敗從 30 秒開始退避，最高每小時重試一次。獨立上傳租約防止重複發布。管理員可在「背景清理與校正」查看等待上傳、上傳中、等待重試或 S3 已驗證，錯誤不輸出憑證。單一成果使用 PutObject，限制為 5 GiB；超過需縮短工作區間，第一階段尚未實作大型成果 multipart 上傳。
+
+既有查詢與 CSV ZIP／JSON ZIP 下載維持原本授權及操作流程。當本機檔案存在時先讀本機；若缺少且有已驗證的 S3 路徑，則下載至共用結果目錄，核對預期大小與 SHA-256 後才原子發布並讀取。下載中斷、缺件或檢查碼不符會清除暫存並回報錯誤，不回傳截斷的結果；每筆背景工作仍驗證查詢期間及 Ghost Peak 前後背景資料授權。
+
+`scripts/deploy_cal.sh` 在建置映像後、停止既有 worker 前，執行 `scripts/check-calibration-s3.mjs`。local 模式只確認設定；s3 模式實際上傳小型測試成果、驗證大小與檢查碼並讀回，未通過即停止部署。測試物件保留於 `processed/_checks/`，可由管理員在 S3 Console 定期清理；程式目前不需要 DeleteObject 權限。部署完成後仍可手動檢查：
+
+```bash
+sudo docker compose exec -T app node scripts/check-calibration-s3.mjs
+sudo docker compose --profile calibration logs --tail=80 calibration-worker
+```
+
+第一階段不自動搬移既有歷史工作、不刪除本機結果、不啟用排程，也不建立 S3 ZIP 下載快取或預簽署連結。已完成成果的查詢及下載仍經由 EC2，這一階段尚未減少瀏覽器下載所經過的 EC2 流量，也尚未釋放本機成果空間。請先使用一台設備的一天資料完成正式環境驗證，再加入歷史搬移、容量清理與直連下載。
+
+測試：`node --test tests/processing-storage.test.mjs tests/processing.test.mjs tests/calibration.test.mjs tests/deploy-cal.test.mjs`。S3 SDK 使用測試替身驗證上傳內容、完整性、重試及本機還原，不使用正式 AWS 憑證或正式資料庫；實際權限需以 EC2 部署前探測驗證。

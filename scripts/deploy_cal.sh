@@ -164,6 +164,7 @@ main() {
     local build_options=()
     if [[ "$no_cache" -eq 1 ]]; then build_options+=(--no-cache); fi
     run_stage '建置網站與校正 worker 映像' "${COMPOSE[@]}" --progress plain build "${build_options[@]}" app calibration-worker
+    run_stage '檢查校正成果儲存設定與 S3 讀寫' "${COMPOSE[@]}" run --rm --no-deps -T --entrypoint node app scripts/check-calibration-s3.mjs
     run_stage '暫停校正 worker' stop_worker
     run_stage '升級前備份與完整性檢查' backup_database
     run_stage '更新網站並等待健康檢查' start_website

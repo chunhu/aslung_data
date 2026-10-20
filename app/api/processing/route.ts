@@ -28,7 +28,9 @@ export async function GET(req:Request){try{
     return Response.json({job:{id:job.id,device:job.device,start:job.start,end:job.end,recipe:JSON.parse(job.recipe),summary:JSON.parse(job.summary)},data:rows,offset,hasMore},{headers:noStore});
   }
   if(me.role!=='admin')throw new AppError(403,'背景工作總覽僅供系統管理員使用。');
-  return Response.json({global:globalProcessingSettings(d),jobs:d.prepare('SELECT id,device,start,end,recipe,status,rows_done,summary,error,attempts,created_at,finished_at FROM processing_jobs ORDER BY created_at DESC LIMIT 100').all(),schedules:d.prepare('SELECT * FROM processing_schedules ORDER BY device').all()},{headers:noStore});
+  return Response.json({global:globalProcessingSettings(d),jobs:d.prepare(`SELECT j.id,j.device,j.start,j.end,j.recipe,j.status,j.rows_done,j.summary,j.error,j.attempts,j.created_at,j.finished_at,
+    u.status AS upload_status,u.last_error AS upload_error,u.attempts AS upload_attempts,u.retry_at AS upload_retry_at
+    FROM processing_jobs j LEFT JOIN processing_uploads u ON u.job_id=j.id ORDER BY j.created_at DESC LIMIT 100`).all(),schedules:d.prepare('SELECT * FROM processing_schedules ORDER BY device').all()},{headers:noStore});
 }catch(e){return fail(e);}}
 export async function POST(req:Request){try{
   writeGuard(req);const me=await identity(req);if(me.role!=='admin')throw new AppError(403,'背景工作設定僅供系統管理員使用。');
