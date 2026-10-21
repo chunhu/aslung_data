@@ -74,7 +74,7 @@ export async function GET(r: Request) {
         const results: any[] = [];
         const sql = `
             SELECT time, uid AS aslung_id, ch1 AS PM1_G3, ch2 AS \`PM2.5_G3\`, ch3 AS PM10_G3,
-                   ch4 AS temperature, ch5 AS rh, ch6 AS co2,
+                   ch4 AS temperature, ch5 AS rh, ch6 AS co2, ch7 AS battery,
                    ch29 AS PM1_GSA, ch30 AS \`PM2.5_GSA\`, ch31 AS PM10_GSA
             FROM rawdata WHERE uid = ? ORDER BY time DESC LIMIT 1
         `;
@@ -98,6 +98,7 @@ export async function GET(r: Request) {
                             temperature: r.temperature,
                             rh: r.rh,
                             co2: r.co2,
+                            battery: r.battery ?? null,
                             PM1_GSA: r.PM1_GSA,
                             'PM2.5_GSA': r['PM2.5_GSA'],
                             PM10_GSA: r.PM10_GSA,

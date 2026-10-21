@@ -15,7 +15,7 @@ test('discovery results are rendered independently with measurements and registr
   const module={exports:{}};new Function('require','module','exports',code)(name=>{assert.ok(name in dependencies,name);return dependencies[name];},module,module.exports);
   const Results=module.exports.RealtimeDiscoveryResults,registered=[];
   const rows=[
-    {aslung_id:'AL-new-1',timestamp:new Date().toISOString(),PM1_G3:0,'PM2.5_G3':5,PM10_G3:8,temperature:24,rh:70},
+    {aslung_id:'AL-new-1',timestamp:new Date().toISOString(),PM1_G3:0,'PM2.5_G3':5,PM10_G3:8,temperature:24,rh:70,battery:3.87},
     {aslung_id:'AL-new-2',timestamp:new Date(Date.now()-2*3600000).toISOString(),PM1_G3:11},
     {aslung_id:'AL-now-registered',timestamp:new Date().toISOString()}
   ];
@@ -24,7 +24,7 @@ test('discovery results are rendered independently with measurements and registr
   for(const row of rows)assert.ok(html.includes(row.aslung_id));
   assert.equal((html.match(/<tr/g)||[]).length,4);
   assert.equal((html.match(/DISPLAYED TIME/g)||[]).length,3);
-  assert.match(html,/>0<\/td>/);assert.match(html,/已斷線/);assert.match(html,/已完成補登/);
+  assert.match(html,/電池 \(battery\)/);assert.match(html,/>3\.87<\/td>/);assert.match(html,/>0<\/td>/);assert.match(html,/已斷線/);assert.match(html,/已完成補登/);
   assert.equal((html.match(/補登設備<\/button>/g)||[]).length,2);
   const buttons=[];
   function visit(element){if(!React.isValidElement(element))return;if(element.type===Button)buttons.push(element);React.Children.forEach(element.props.children,visit);}
@@ -63,14 +63,14 @@ test('discovery is time-bounded, excludes registered IDs and returns measurement
       assert.equal(options.timeout,15000);
       return [[{aslung_id:'AL-2'},{aslung_id:'AL-3'},{aslung_id:'AL-1'}]];
     }
-    assert.notEqual(params[0],'AL-1');
+    assert.notEqual(params[0],'AL-1');assert.match(options.sql,/ch7 AS battery/);
     if(params[0]==='AL-3')throw new Error('upstream failure');
-    return [[{aslung_id:params[0],time:'2026-10-15 11:59:00',PM1_G3:12}]];
+    return [[{aslung_id:params[0],time:'2026-10-15 11:59:00',PM1_G3:12,battery:0}]];
   }};
   const result=await discoverRealtimeDevices(pool,['AL-1'],7,new Date('2026-10-15T12:00:00Z'));
   assert.equal(result.devices.length,1);assert.equal(result.devices[0].aslung_id,'AL-2');
   assert.equal(result.devices[0].unregistered,true);assert.equal(result.devices[0].timestamp,'2026-10-15T11:59:00.000Z');
-  assert.equal(result.failedCount,1);assert.equal(result.truncated,false);
+  assert.equal(result.devices[0].battery,0);assert.equal(result.failedCount,1);assert.equal(result.truncated,false);
   assert.ok(calls.every(c=>/^SELECT/.test(c.options.sql))); // Upstream is strictly read-only.
 });
 
@@ -106,7 +106,7 @@ test('discovered devices participate in regular refresh only for administrators'
   let role='admin';const queried=[];
   const deps={
     '@/lib/server':{identity:async()=>({role}),fail:e=>Response.json({error:e.message},{status:500}),db:()=>({prepare:()=>({all:async()=>({results:[{id:'AL-1'}]})})})},
-    '@/lib/data':{getPool:()=>({query:async(sql,[id])=>{queried.push(id);return [[{aslung_id:id,time:new Date('2026-10-15T12:00:00Z')}]];}})}
+    '@/lib/data':{getPool:()=>({query:async(sql,[id])=>{assert.match(sql,/ch7 AS battery/);queried.push(id);return [[{aslung_id:id,time:new Date('2026-10-15T12:00:00Z'),battery:id==='AL-1'?0:'3.87'}]];}})}
   };
   const source=readFileSync(new URL('../app/api/realtime/route.ts',import.meta.url),'utf8');
   const code=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;
@@ -116,6 +116,8 @@ test('discovered devices participate in regular refresh only for administrators'
   assert.equal(res.status,200);assert.deepEqual(queried,['AL-1','AL-2']);
   const rows=await res.json();assert.equal(rows.find(r=>r.aslung_id==='AL-2').unregistered,true);
   assert.equal(rows.find(r=>r.aslung_id==='AL-1').unregistered,undefined);
+  assert.equal(rows.find(r=>r.aslung_id==='AL-1').battery,0);
+  assert.equal(rows.find(r=>r.aslung_id==='AL-2').battery,'3.87');
   role='member';queried.length=0;
   assert.equal((await route.GET(new Request('http://localhost/api/realtime?extra_ids=AL-2'))).status,403);
   assert.equal(queried.length,0);
