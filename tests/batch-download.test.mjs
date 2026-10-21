@@ -23,7 +23,7 @@ for(const format of ['csv','csvzip','json','jsonzip'])test("ZIP exports exactly 
   let blobUrl, logs = [], progress;
   const noop = () => {};
   const context = {
-    batchRunning: false,calibrationMode:"both",page:null,queried:null,
+    batchRunning: false,calibrationMode:"both",page:null,queried:null,tz:'Asia/Taipei',
     downloadDevices: [{id: "AL-0001",selection_id:"1",segment_id:"1"}, {id: "AL-0002",selection_id:"2",segment_id:"2"}, {id: "AL-0001",selection_id:"3",segment_id:"3"}],
     selectedDeviceIds: ["1", "3"],
     start: "2026-10-01T00:00", end: "2026-10-01T23:59", admin: false,
@@ -63,6 +63,7 @@ for(const format of ['csv','csvzip','json','jsonzip'])test("ZIP exports exactly 
     ]);
     const manifest = await archive.file("download_manifest.txt").async("string");
     assert.ok(!manifest.includes("AL-0002"));
+    for(const text of ['Batch Export Manifest','Exported at:','Display timezone: Asia/Taipei','Data mode: both','Authorized intervals:','SUCCESS','NO_FACTOR','No applicable calibration coefficient','device, channel and measurement time','not zero','Export success means a file was produced'])assert.ok(manifest.includes(text),text);
   } finally {
     if (blobUrl) URL.revokeObjectURL(blobUrl);
   }

@@ -732,13 +732,15 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
 
     const zip = new JSZip();
     let manifestText = "==================================================\r\n";
-    manifestText += "  ASLUNG 設備資料批次匯出清單報告 (Manifest)\r\n";
+    manifestText += "  ASLUNG 設備資料批次匯出清單報告 / Batch Export Manifest\r\n";
     manifestText += "==================================================\r\n";
-    manifestText += `匯出時間：${localTime(new Date().toISOString())}\r\n`;
-    manifestText += `使用者帳號：${state?.me.email} (${state?.me.name})\r\n`;
-    manifestText += `所選查詢區間：${start} ～ ${end}\r\n`;
-    manifestText += `匯出格式：${format.toUpperCase()}\r\n\r\n`;
-    manifestText += "設備匯出明細：\r\n";
+    manifestText += `匯出時間 / Exported at: ${localTime(new Date().toISOString())}\r\n`;
+    manifestText += `顯示時區 / Display timezone: ${tz}\r\n`;
+    manifestText += `使用者帳號 / User: ${state?.me.email} (${state?.me.name})\r\n`;
+    manifestText += `所選查詢區間 / Selected query period: ${start} ～ ${end}\r\n`;
+    manifestText += `匯出格式 / Format: ${format.toUpperCase()}\r\n`;
+    manifestText += `資料模式 / Data mode: ${calibrationMode}\r\n\r\n`;
+    manifestText += "設備匯出明細 / Export details:\r\n";
 
     let successCount = 0;
     let skippedCount = 0;
@@ -751,7 +753,8 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
       if (check.status === "OUT_OF_RANGE") {
         skippedCount++;
         const msg = dev.tracking_ranges && dev.tracking_ranges.length > 0 ? "所選期間未擺放於該站點" : "無有效授權紀錄";
-        manifestText += `${i + 1}. ${dev.id} [${dev.grant_lab_id || "-"} / segment ${dev.segment_id}]: 略過 (${msg})\r\n`;
+        const englishReason=dev.tracking_ranges&&dev.tracking_ranges.length>0?'Device was not deployed at this site during the selected period':'No valid authorization record';
+        manifestText += `${i + 1}. ${dev.id} [${dev.grant_lab_id || "-"} / segment ${dev.segment_id}]: 略過 / SKIPPED (${msg} / ${englishReason})\r\n`;
         setBatchLogs(prev => prev.map((l, idx) => idx === i ? { ...l, status: "skipped", message: msg } : l));
       } else {
         const devStart = check.status === "PARTIAL" ? check.clippedStart : sIso;
@@ -790,18 +793,18 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
           const recordCount = (format === "csv" || format === "csvzip") ? Math.max(0, lines.length - 1) : (JSON.parse(content).data?.length || 0);
           if (recordCount === 0 && (format === "csv" || format === "csvzip")) {
             skippedCount++;
-            manifestText += `${i + 1}. ${dev.id} [${dev.grant_lab_id || "-"} / segment ${dev.segment_id}]: 略過 (有效期間內無回報數據)\r\n`;
+            manifestText += `${i + 1}. ${dev.id} [${dev.grant_lab_id || "-"} / segment ${dev.segment_id}]: 略過 / SKIPPED (有效期間內無回報數據 / No measurements in authorized intervals)\r\n`;
             setBatchLogs(prev => prev.map((l, idx) => idx === i ? { ...l, status: "skipped", message: "此期間無數據" } : l));
           } else {
             successCount++;
             const fName = `${exportName(dev.id,devStart,devEnd,{segmentId:dev.segment_id})}.${(format === "csv" || format === "csvzip") ? "csv" : "json"}`;
             zip.file(fName, content);
-            manifestText += `${i + 1}. ${dev.id} [${dev.grant_lab_id || "-"} / segment ${dev.segment_id}]: 成功 (匯出 ${recordCount} 筆，有效授權區間: ${rangeDescription})\r\n`;
+            manifestText += `${i + 1}. ${dev.id} [${dev.grant_lab_id || "-"} / segment ${dev.segment_id}]: 成功 / SUCCESS (匯出筆數 / Rows: ${recordCount}; 有效授權區間 / Authorized intervals: ${rangeDescription}; 檔案 / File: ${fName})\r\n`;
             setBatchLogs(prev => prev.map((l, idx) => idx === i ? { ...l, status: "success", count: recordCount, validRange: rangeDescription } : l));
           }
         } catch (e: any) {
           skippedCount++;
-          manifestText += `${i + 1}. ${dev.id} [${dev.grant_lab_id || "-"} / segment ${dev.segment_id}]: 錯誤 (${e.message})\r\n`;
+          manifestText += `${i + 1}. ${dev.id} [${dev.grant_lab_id || "-"} / segment ${dev.segment_id}]: 錯誤 / ERROR (伺服器訊息 / Server message: ${e.message})\r\n`;
           setBatchLogs(prev => prev.map((l, idx) => idx === i ? { ...l, status: "error", message: e.message } : l));
           if (e.message.includes("登入已過期")) {
             break;
@@ -811,7 +814,20 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
       setBatchProgress(Math.round(((i + 1) / targets.length) * 100));
     }
 
-    manifestText += `\r\n總計完成：${successCount} 個區段成功，${skippedCount} 個區段略過。\r\n==================================================\r\n`;
+    manifestText += `\r\n總計 / Summary: ${successCount} 個區段成功 / successful segments; ${skippedCount} 個區段略過或失敗 / skipped or failed segments.\r\n==================================================\r\n`;
+    manifestText += "\r\n資料模式與校正狀態說明 / Data modes and calibration status\r\n";
+    manifestText += "raw：原始值，不執行校正。 / Raw measurements; no calibration applied.\r\n";
+    manifestText += "both：原始值＋即時計算係數，不執行六項清理規則。 / Raw values plus coefficient-only calculation; six-rule cleaning is not applied.\r\n";
+    manifestText += "processed：讀取已完成的六項清理與校正成果，PM 分析通常使用 *_final。 / Completed six-rule results; usually use *_final for PM analysis.\r\n\r\n";
+    manifestText += "NO_FACTOR：該設備、通道與量測時間找不到適用的校正係數，無法計算該通道的校正值。其他通道可能仍有係數。 / No applicable calibration coefficient was found for this device, channel and measurement time. That channel cannot be calibrated; other channels may still have coefficients.\r\n";
+    manifestText += "可能原因：來源未匯入或已停用、該通道沒有係數、量測時間不在係數適用期間。請管理員檢查來源、通道及日期。 / Possible causes: source not imported or disabled, missing channel coefficients, or measurement time outside the coefficient period. Ask an administrator to check the source, channel and dates.\r\n";
+    manifestText += "原始值保留；沒有係數的校正值留空，不當作 0，也不以原始值冒充校正值。 / Raw values are preserved. Unavailable calibrated values remain blank, not zero, and are not replaced by raw values.\r\n";
+    manifestText += "CALIBRATED：單純係數計算成功。 / Coefficient calculation succeeded.\r\n";
+    manifestText += "INVALID_RAW：原始值缺漏、無法解析或不是有限數值。 / Raw input is missing, unparseable or non-finite.\r\n";
+    manifestText += "CONFLICT（即時計算）／FACTOR_CONFLICT（六項規則）：多筆係數同時適用，未套用校正。 / Multiple coefficients match; calibration was not applied.\r\n";
+    manifestText += "INVALID_RESULT（即時計算）／INVALID_CALIBRATED（六項規則）：計算結果不是有限數值。 / Calculation produced a non-finite result.\r\n";
+    manifestText += "六項規則的原因記錄在 _quality；各欄位狀態可能不同。 / Six-rule processing reasons are recorded per channel in _quality.\r\n";
+    manifestText += "匯出成功只表示檔案成功產生，不代表每筆或每個通道均有有效校正值。CSV 空白、JSON null 及畫面「—」不代表 0。 / Export success means a file was produced, not that every row or channel has valid calibrated data. Blank CSV cells, JSON null and displayed dashes do not mean zero.\r\n";
     zip.file("download_manifest.txt", manifestText);
 
     try {
