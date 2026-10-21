@@ -361,3 +361,8 @@ sudo docker compose --profile calibration logs --tail=80 calibration-worker
 Docker builder 階段預設設定 `NODE_OPTIONS=--max-old-space-size=1024`，並傳遞給 Next.js 的 TypeScript 檢查子程序。Compose 的 app 與 worker 共用 `NODE_BUILD_HEAP_MB` 建置參數，可在 `.env` 調整，預設 1024 MiB；runtime 階段不繼承 builder 的 Node.js 堆積設定。Next.js 限制單一建置 worker 並啟用 Webpack 記憶體最佳化，仍保留正式建置的 TypeScript 檢查。
 
 約 1 GiB RAM 的 EC2 即使有 swap，建置仍可能較慢；提高堆積上限不會增加實體 RAM，也不能保證避免主機 OOM。部署前可用 `free -h` 檢查 RAM／swap、`df -h` 檢查磁碟。若持續出現程序被系統終止（如 exit 137），需評估主機容量或改由 CI 建置映像；不要關閉型別檢查來繞過建置失敗。
+
+
+### HOBO / LI-COR 設備資料
+
+支援 24 台 RCEC 設備批次設定、歷史匯入、每小時同步、查詢與 CSV 下載，以及 S3 按設備日歸檔和本機／S3 同步清除。設定與操作請見 [HOBO / LI-COR 說明](docs/HOBO-LICOR.md)。實際 Token 僅設定在 EC2 `.env` 的 `LICOR_API_TOKEN`；啟用 S3 使用 `HOBO_STORAGE=s3`，清除權限另新增 `scripts/iam-hobo-cleanup.json`。

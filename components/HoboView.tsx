@@ -1,0 +1,50 @@
+"use client";
+import {useEffect,useState} from 'react';
+import {Button} from '@/components/ui/button';
+import {Input} from '@/components/ui/input';
+import {formatInTimeZone,fromZonedTime} from 'date-fns-tz';
+import preset from '@/lib/hobo-rcec-loggers.json';
+import HoboCleanup from '@/components/HoboCleanup';
+type Props={api:(url:string,options?:RequestInit)=>Promise<any>;timezone:string};
+const columns=['logger_sn','sensor_sn','timestamp','data_type','data_type_id','value','unit','sensor_measurement_type'];
+export default function HoboView({api,timezone}:Props){
+  const [status,setStatus]=useState<any>(null),[error,setError]=useState(''),[notice,setNotice]=useState(''),[busy,setBusy]=useState(false);
+  const [serial,setSerial]=useState(''),[name,setName]=useState(''),[enabled,setEnabled]=useState(false);
+  const [batchSerials,setBatchSerials]=useState(preset.serials.join('\n')),[batchStart,setBatchStart]=useState(preset.startDateTaipei),[batchEnabled,setBatchEnabled]=useState(false);
+  const [start,setStart]=useState(()=>formatInTimeZone(new Date(Date.now()-7*86400000),timezone,"yyyy-MM-dd'T'HH:mm"));
+  const [end,setEnd]=useState(()=>formatInTimeZone(new Date(),timezone,"yyyy-MM-dd'T'HH:mm"));
+  const [rows,setRows]=useState<any[]>([]),[next,setNext]=useState<number|null>(null),[queried,setQueried]=useState(false),[download,setDownload]=useState('');
+  async function refresh(){try{setStatus(await api('/api/hobo'));}catch(e){setError((e as Error).message);}}
+  useEffect(()=>{void refresh();const timer=setInterval(()=>void refresh(),15000);return()=>clearInterval(timer);},[api]);
+  useEffect(()=>{setRows([]);setNext(null);setQueried(false);setDownload('');},[serial,start,end]);
+  function range(){
+    if(!serial||!start||!end)throw new Error('請填寫設備序號及日期範圍。');
+    const a=fromZonedTime(start,timezone),b=fromZonedTime(end,timezone);
+    if(!Number.isFinite(+a)||!Number.isFinite(+b)||a>b)throw new Error('請確認開始及結束時間。');
+    return {serial,start:a.toISOString(),end:b.toISOString()};
+  }
+  async function perform(work:()=>Promise<void>){setBusy(true);setError('');setNotice('');try{await work();}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
+  async function save(){await perform(async()=>{const r=range();await api('/api/hobo',{method:'POST',body:JSON.stringify({action:'save',serial,name,start:r.start,enabled})});setNotice('已儲存。啟用定期同步後，每小時檢查並補抓最近一天資料；首次由設定起日開始。');await refresh();});}
+  async function sync(){await perform(async()=>{await api('/api/hobo',{method:'POST',body:JSON.stringify({action:'sync',...range()})});setNotice('已加入同步佇列，由背景 worker 執行；可在下方查看進度。');await refresh();});}
+  async function query(after=0){await perform(async()=>{const params=new URLSearchParams({...range(),action:'query',after:String(after)});const result=await api('/api/hobo?'+params);setRows(previous=>after?[...previous,...result.rows]:result.rows);setNext(result.next);setQueried(true);params.set('action','csv');params.delete('after');setDownload('/api/hobo?'+params);});}
+  function choose(logger:any){setSerial(logger.serial);setName(logger.name);setEnabled(!!logger.enabled);}
+  async function batch(queue:boolean){await perform(async()=>{
+    const serials=[...new Set(batchSerials.trim().split(/[\s,，;；]+/).filter(Boolean))];
+    if(!batchStart||!serials.length)throw new Error('請填寫設備序號及起日。');
+    const result=await api('/api/hobo',{method:'POST',body:JSON.stringify({action:'batch',serials,start:fromZonedTime(batchStart+'T00:00:00','Asia/Taipei').toISOString(),end:new Date().toISOString(),enabled:batchEnabled,queue})});
+    setNotice(`已儲存 ${result.saved} 台；加入 ${result.queued} 個匯入工作；${result.skipped} 台已有工作，保留原進度。`);await refresh();
+  });}
+  return <div className="space-y-5"><section className="panel p-6 space-y-4"><div><h2 className="text-xl font-semibold">HOBO / LI-COR 資料</h2><p className="mt-2 text-sm text-slate-500">管理員專用。保留感測器、原始數值與單位，獨立儲存，不套用 ASLUNG PM 校正。日期依 {timezone} 輸入；CSV timestamp 為 UTC。CSV 檔名日期使用臺灣時間。</p></div>
+    {status&&!status.configured&&<p role="alert" className="rounded bg-amber-50 p-3 text-amber-800">尚未設定伺服器 LICOR_API_TOKEN。請在 EC2 .env 設定後重新建立 app 及 calibration-worker 容器。</p>}
+    {status?.storage_error&&<p role="alert" className="rounded bg-rose-50 p-3 text-rose-800">S3 歸檔暫停：{status.storage_error}。歸檔恢復前暫停抓取新資料，已抓取資料仍保留本機。</p>}
+    <p className="text-sm text-slate-500">儲存模式：{status?.storage==='s3'?'S3（本機僅保留待上傳資料）':'本機 SQLite'}。定期同步需啟動 calibration-worker。設備需先儲存，再執行指定範圍匯入。API 沒有設備清單端點，請從 LI-COR 網站取得 Logger Serial Number。</p>
+    <details className="rounded-lg border p-4" open><summary className="font-semibold cursor-pointer">批次新增與歷史匯入（已填入您的 24 台設備）</summary><div className="mt-3 grid gap-3 md:grid-cols-2"><label className="text-sm">設備序號（每行一台，可編輯）<textarea aria-label="批次設備序號" className="block mt-1 w-full rounded border p-2 font-mono" rows={6} value={batchSerials} onChange={e=>setBatchSerials(e.target.value)}/></label><div className="space-y-3"><label className="block text-sm">歷史匯入起日（臺灣時間，至執行當下）<Input type="date" value={batchStart} onChange={e=>setBatchStart(e.target.value)}/></label><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={batchEnabled} onChange={e=>setBatchEnabled(e.target.checked)}/>同時啟用每小時同步</label><p className="text-xs text-slate-500">名稱預設 RCEC_序號。歷史資料按日輪流抓取，各設備不會互相等待整段歷史完成。HTTP 200 但無資料僅代表所查區間為空，無法單憑此結果確認設備權限。</p><div className="flex flex-wrap gap-2"><Button variant="outline" disabled={busy} onClick={()=>void batch(false)}>僅儲存批次設備</Button><Button disabled={busy||!status?.configured} onClick={()=>void batch(true)}>儲存並從起日匯入至今</Button></div></div></div></details>
+    <div className="grid gap-4 md:grid-cols-3"><label className="text-sm">設備序號<Input value={serial} onChange={e=>setSerial(e.target.value.trim())} placeholder="Logger Serial Number"/></label><label className="text-sm">設備名稱<Input value={name} onChange={e=>setName(e.target.value)} maxLength={120}/></label><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={enabled} onChange={e=>setEnabled(e.target.checked)}/>每小時同步（預設關閉）</label><label className="text-sm">開始時間<Input type="datetime-local" value={start} onChange={e=>setStart(e.target.value)}/></label><label className="text-sm">結束時間<Input type="datetime-local" value={end} onChange={e=>setEnd(e.target.value)}/></label></div>
+    <p className="text-xs text-slate-500">新增設備時，開始時間亦作為首次自動同步起日。之後可用「匯入指定範圍」補抓更早資料；重複匯入會依感測器與時間更新，不新增重複紀錄。</p>
+    <div className="flex flex-wrap gap-2"><Button disabled={busy} onClick={()=>void save()}>儲存設備與排程</Button><Button variant="outline" disabled={busy||!status?.configured} onClick={()=>void sync()}>匯入指定範圍</Button><Button variant="outline" disabled={busy} onClick={()=>void query()}>查詢已匯入資料</Button><Button variant="outline" disabled={busy} onClick={()=>void refresh()}>重新整理</Button></div>
+    {error&&<p role="alert" className="text-rose-700">{error}</p>}{notice&&<p role="status" className="text-teal-800">{notice}</p>}{busy&&<p role="status">處理中…</p>}
+  </section><section className="panel p-6"><h3 className="font-semibold mb-3">HOBO 設備</h3><div className="overflow-auto"><table className="w-full text-left text-sm"><thead><tr>{['設備','名稱','每小時同步','本機／S3 筆數','最新量測（UTC）','操作'].map(x=><th className="p-2" key={x}>{x}</th>)}</tr></thead><tbody>{status?.loggers.map((l:any)=><tr key={l.serial} className="border-t"><td className="p-2">{l.serial}</td><td>{l.name}</td><td>{l.enabled?'啟用':'停用'}</td><td>{l.observations} / {l.archived||0}</td><td>{l.latest||'—'}</td><td><Button variant="outline" size="sm" disabled={busy} onClick={()=>choose(l)}>選取</Button></td></tr>)}</tbody></table>{status&&!status.loggers.length&&<p className="p-3">尚未新增 HOBO 設備。</p>}</div></section>
+  <section className="panel p-6"><h3 className="font-semibold mb-3">同步工作（最近 30 筆）</h3><div className="overflow-auto"><table className="w-full text-sm text-left"><thead><tr>{['設備','UTC 範圍','狀態','已抓取筆數（含重疊）','進度 / 錯誤','操作'].map(x=><th className="p-2" key={x}>{x}</th>)}</tr></thead><tbody>{status?.jobs.map((j:any)=><tr key={j.id} className="border-t"><td className="p-2">{j.serial}</td><td>{j.start}<br/>{j.end}</td><td>{{QUEUED:'排隊中',RUNNING:'同步中',DONE:'已完成',FAILED:'失敗'}[j.status as string]||j.status}</td><td>{j.observations}</td><td>{j.cursor}<br/><span className="text-rose-700">{j.error}</span></td><td>{j.status==='FAILED'&&<Button variant="outline" size="sm" disabled={busy} onClick={()=>void perform(async()=>{await api('/api/hobo',{method:'POST',body:JSON.stringify({action:'retry',id:j.id})});await refresh();})}>重試</Button>}</td></tr>)}</tbody></table></div></section>
+  <HoboCleanup api={api} loggers={status?.loggers||[]} onChange={()=>{setRows([]);setQueried(false);setDownload('');void refresh();}}/>
+  {queried&&<section className="panel p-6"><div className="flex flex-wrap items-center gap-4 mb-3"><h3 className="font-semibold">查詢結果（目前 {rows.length} 筆）</h3>{download&&<a className="text-teal-700 underline" href={download}>下載所選範圍全部 CSV</a>}</div><div className="overflow-auto"><table className="w-full text-left text-xs"><thead><tr>{columns.map(key=><th className="p-2" key={key}>{key}</th>)}</tr></thead><tbody>{rows.map((row,i)=><tr key={i} className="border-t">{columns.map(key=><td className="p-2 whitespace-nowrap" key={key}>{String(row[key]??'—')}</td>)}</tr>)}</tbody></table>{!rows.length&&<p className="p-3">此範圍尚無已匯入資料。請先匯入並等待工作完成。</p>}</div>{next!==null&&<Button className="mt-3" disabled={busy} onClick={()=>void query(next)}>載入更多</Button>}</section>}</div>;
+}

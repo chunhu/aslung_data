@@ -42,3 +42,13 @@ test('cleanup confirmation shows permanent scope, sizes and schedule option and 
   states[5]='DELETE';html=render('ProcessingCleanup.tsx',states,{filters:{},onChange:()=>{}});
   assert.match(html,/<button>確認永久清除<\/button>/);
 });
+
+test('HOBO cleanup requires DELETE and explains whole-day scope, S3 versions, paused schedules and retained backups',()=>{
+  const plan={filters:{serial:'20720755',from:'2026-10-01',to:'2026-10-01'},devices:1,days:1,local:12,archived:20,scopes:1,bytes:2048,items:[{serial:'20720755',day:'2026-10-01',local:12,archived:20}]};
+  const states=['','2026-10-01','2026-10-01',{plans:[],errors:[]},plan,true,false,'','',''];
+  let html=render('HoboCleanup.tsx',states,{loggers:[],onChange:()=>{}});
+  for(const text of ['臺灣時間整日清除','S3 檔案、版本與刪除標記','同步會停用','備份','輸入 DELETE 確認','20720755'])assert.ok(html.includes(text),text);
+  assert.match(html,/<button disabled="">確認永久清除<\/button>/);
+  states[7]='DELETE';html=render('HoboCleanup.tsx',states,{loggers:[],onChange:()=>{}});
+  assert.match(html,/<button>確認永久清除<\/button>/);
+});

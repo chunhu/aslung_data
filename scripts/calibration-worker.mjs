@@ -7,14 +7,22 @@ import {fetchCalibrationCsv} from '../lib/calibration-google.mjs';
 import {uploadNextProcessingResult} from '../lib/processing-storage.mjs';
 import {storageConfiguration} from '../lib/s3-storage.mjs';
 import {runNextCleanup} from '../lib/processing-cleanup.mjs';
+import {runHoboSync} from '../lib/hobo.mjs';
+import {archiveNextHoboDay,hoboStorageConfiguration} from '../lib/hobo-storage.mjs';
+import {runHoboCleanup} from '../lib/hobo-cleanup.mjs';
 
 const d=getConnection(),pool=processingPool();let stopping=false;
-storageConfiguration();
+storageConfiguration();hoboStorageConfiguration();
 for(const signal of ['SIGINT','SIGTERM'])process.on(signal,()=>{stopping=true;});
 const once=process.argv.includes('--once');
 console.log('[Processing] worker ready; one job at a time. Waiting for queued jobs.');
 try{
   do{
+    try{
+      await runHoboCleanup(d);
+      await archiveNextHoboDay(d);await archiveNextHoboDay(d);
+      await runHoboSync(d);
+    }catch{console.error('[HOBO] storage/sync check failed; retaining staged data for retry.');}
     const cleaned=await runNextCleanup(d);
     if(cleaned)console.log('[Cleanup]',cleaned.id,cleaned.status,cleaned.error||'');
     // Refresh coefficients before scheduling new daily jobs. Never replace a failed source snapshot.

@@ -1,0 +1,24 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadHoboBucketVersioning",
+      "Effect": "Allow",
+      "Action": "s3:GetBucketVersioning",
+      "Resource": "arn:aws:s3:::aslung-calibration-prod-20261020"
+    },
+    {
+      "Sid": "ListHoboVersions",
+      "Effect": "Allow",
+      "Action": "s3:ListBucketVersions",
+      "Resource": "arn:aws:s3:::aslung-calibration-prod-20261020",
+      "Condition": {"StringLike": {"s3:prefix": "hobo/*"}}
+    },
+    {
+      "Sid": "DeleteHoboObjectVersions",
+      "Effect": "Allow",
+      "Action": ["s3:DeleteObject", "s3:DeleteObjectVersion"],
+      "Resource": "arn:aws:s3:::aslung-calibration-prod-20261020/hobo/*"
+    }
+  ]
+}
