@@ -4,7 +4,7 @@ import {Button} from '@/components/ui/button';
 import {Dialog,DialogContent,DialogDescription,DialogHeader,DialogTitle} from '@/components/ui/dialog';
 
 type Props={id:string;api:(path:string,options?:RequestInit)=>Promise<any>;isEnglish:boolean;formatTime:(s:string)=>string;onClose:()=>void};
-const labels:Record<string,string>={QUEUED:'排隊中',RUNNING:'處理中',COMPLETED:'已完成',FAILED:'失敗'};
+const labels:Record<string,string>={QUEUED:'排隊中',RUNNING:'處理中',COMPLETED:'已完成',FAILED:'失敗',DELETING:'清除中'};
 export function storageLabel(status:string|null,en:boolean){
   const names:Record<string,string>={STORED:en?'S3 verified':'S3 已驗證',RETRY:en?'Local retained · S3 retry scheduled':'本機保留 · S3 等待重試',UPLOADING:en?'Uploading to S3':'S3 上傳中',PENDING:en?'Local retained · pending S3 upload':'本機保留 · 等待上傳 S3'};
   return names[status||'']||(en?'Local file':'本機檔案');

@@ -1,0 +1,24 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadCalibrationBucketVersioning",
+      "Effect": "Allow",
+      "Action": "s3:GetBucketVersioning",
+      "Resource": "arn:aws:s3:::aslung-calibration-prod-20261020"
+    },
+    {
+      "Sid": "ListCalibrationVersions",
+      "Effect": "Allow",
+      "Action": "s3:ListBucketVersions",
+      "Resource": "arn:aws:s3:::aslung-calibration-prod-20261020",
+      "Condition": {"StringLike": {"s3:prefix": "processed/*"}}
+    },
+    {
+      "Sid": "DeleteCalibrationJobVersions",
+      "Effect": "Allow",
+      "Action": ["s3:DeleteObject", "s3:DeleteObjectVersion"],
+      "Resource": "arn:aws:s3:::aslung-calibration-prod-20261020/processed/*"
+    }
+  ]
+}

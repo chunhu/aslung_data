@@ -13,7 +13,7 @@ function render(file,states,extra={}){
     'react/jsx-runtime':jsx,'@/components/ui/button':{Button:tag('button')},'@/components/ui/input':{Input:tag('input')},'@/components/ui/label':{Label:tag('label')},
     '@/components/ui/dialog':Object.fromEntries(['Dialog','DialogContent','DialogHeader','DialogTitle','DialogDescription'].map(name=>[name,tag('div')])),
     '@/lib/measurement-processing.mjs':{DEFAULT_UP_LIMIT:3},sonner:{toast:{}},
-    '@/components/ProcessingJobDetails':{default:()=>null,storageLabel:()=> 'S3 已驗證'}};
+    '@/components/ProcessingJobDetails':{default:()=>null,storageLabel:()=> 'S3 已驗證'},'@/components/ProcessingCleanup':{default:()=>null}};
   const code=ts.transpileModule(readFileSync(new URL('../components/'+file,import.meta.url),'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX}}).outputText;
   const module={exports:{}};new Function('require','module','exports',code)(name=>{assert.ok(name in deps,name);return deps[name];},module,module.exports);
   return renderToStaticMarkup(React.createElement(module.exports.default,{api:()=>assert.fail('render must not read results'),isEnglish:false,formatTime:value=>value,onClose:()=>{},...extra}));
@@ -31,4 +31,14 @@ test('details consolidate versions, quality, storage and job download without au
   const html=render('ProcessingJobDetails.tsx',[job,'',null,'',false,0,'G3'],{id:job.id});
   for(const text of ['品質摘要','INVALID_RAW','six-rules-2 / all-fields-1','S3 已驗證','背景樣本不足筆數','載入結果預覽','下載此工作（CSV ZIP）'])assert.ok(html.includes(text),text);
   assert.ok(!html.includes('<table'));assert.ok(html.includes('download=1'));
+});
+
+test('cleanup confirmation shows permanent scope, sizes and schedule option and requires DELETE before enabling',()=>{
+  const plan={filters:{device:'AL-1143'},totals:{jobs:1,excluded:0,localFiles:1,localBytes:1024,s3Versions:2,s3Bytes:2048},items:[{id:'job-1',device:'AL-1143',start:job.start,end:job.end,localCount:1,remoteCount:2}]};
+  const states=[{counts:[],tasks:[]},'',true,plan,false,'',true,''];
+  let html=render('ProcessingCleanup.tsx',states,{filters:{},onChange:()=>{}});
+  for(const text of ['確認清除校正成果','本機檔案／大小','S3 版本及刪除標記／大小','停用全域排程','保留原始量測','輸入 DELETE 確認'])assert.ok(html.includes(text),text);
+  assert.match(html,/<button disabled="">確認永久清除<\/button>/);
+  states[5]='DELETE';html=render('ProcessingCleanup.tsx',states,{filters:{},onChange:()=>{}});
+  assert.match(html,/<button>確認永久清除<\/button>/);
 });

@@ -31,10 +31,11 @@ COPY --from=builder --chown=aslung:aslung /app/lib/store.mjs /app/lib/passwords.
 COPY --from=builder --chown=aslung:aslung /app/lib/maintainer-links.mjs /app/lib/alert-policy.mjs ./lib/
 COPY --from=builder --chown=aslung:aslung /app/lib/s3-storage.mjs /app/lib/processing-storage.mjs ./lib/
 COPY --from=builder --chown=aslung:aslung /app/lib/export-name.mjs ./lib/
+COPY --from=builder --chown=aslung:aslung /app/lib/processing-cleanup.mjs /app/lib/processing-cleanup-s3.mjs ./lib/
 COPY --from=builder --chown=aslung:aslung /app/lib/processing-jobs.mjs /app/lib/processing-raw.mjs /app/lib/global-processing.mjs /app/lib/measurement-processing.mjs /app/lib/calibration.mjs /app/lib/calibration-dates.mjs /app/lib/calibration-google.mjs /app/lib/fleet-import.mjs ./lib/
 RUN mkdir -p /app/data /app/backups && chown -R aslung:aslung /app/data /app/backups
 USER aslung
 # Verify worker imports in the final image without opening databases or running jobs.
-RUN node --input-type=module -e "await Promise.all(['store','processing-jobs','processing-raw','global-processing','calibration-google'].map(name => import('./lib/' + name + '.mjs'))); console.log('Calibration worker runtime dependencies OK')"
+RUN node --input-type=module -e "await Promise.all(['store','processing-jobs','processing-raw','global-processing','calibration-google','processing-cleanup'].map(name => import('./lib/' + name + '.mjs'))); console.log('Calibration worker runtime dependencies OK')"
 EXPOSE 3000
 CMD ["node","server.js"]

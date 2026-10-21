@@ -6,6 +6,7 @@ import {syncCalibrationSource,ensureCalibrationSchema} from '../lib/calibration.
 import {fetchCalibrationCsv} from '../lib/calibration-google.mjs';
 import {uploadNextProcessingResult} from '../lib/processing-storage.mjs';
 import {storageConfiguration} from '../lib/s3-storage.mjs';
+import {runNextCleanup} from '../lib/processing-cleanup.mjs';
 
 const d=getConnection(),pool=processingPool();let stopping=false;
 storageConfiguration();
@@ -14,6 +15,8 @@ const once=process.argv.includes('--once');
 console.log('[Processing] worker ready; one job at a time. Waiting for queued jobs.');
 try{
   do{
+    const cleaned=await runNextCleanup(d);
+    if(cleaned)console.log('[Cleanup]',cleaned.id,cleaned.status,cleaned.error||'');
     // Refresh coefficients before scheduling new daily jobs. Never replace a failed source snapshot.
     ensureCalibrationSchema(d);
     const sources=d.prepare('SELECT id FROM calibration_sources WHERE enabled=1 AND next_check<=? AND lease_until<=?').all(new Date().toISOString(),Date.now());

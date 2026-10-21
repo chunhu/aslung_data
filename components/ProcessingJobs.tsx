@@ -6,8 +6,9 @@ import {Label} from '@/components/ui/label';
 import {toast} from 'sonner';
 import {DEFAULT_UP_LIMIT} from '@/lib/measurement-processing.mjs';
 import ProcessingJobDetails,{storageLabel} from '@/components/ProcessingJobDetails';
+import ProcessingCleanup from '@/components/ProcessingCleanup';
 type Props={api:(path:string,options?:RequestInit)=>Promise<any>;isEnglish:boolean;formatTime:(s:string)=>string};
-const labels:Record<string,string>={QUEUED:'排隊中',RUNNING:'處理中',COMPLETED:'已完成',FAILED:'失敗'};
+const labels:Record<string,string>={QUEUED:'排隊中',RUNNING:'處理中',COMPLETED:'已完成',FAILED:'失敗',DELETING:'清除中'};
 export default function ProcessingJobs({api,isEnglish:en,formatTime}:Props){
   const [data,setData]=useState<any>(null),[error,setError]=useState(''),[busy,setBusy]=useState(false);
   const [device,setDevice]=useState(''),[start,setStart]=useState(''),[end,setEnd]=useState(''),[limit,setLimit]=useState(String(DEFAULT_UP_LIMIT));
@@ -59,6 +60,7 @@ export default function ProcessingJobs({api,isEnglish:en,formatTime}:Props){
         <div className="flex gap-2"><Button type="submit" disabled={listLoading}>{en?'Filter':'篩選'}</Button><Button type="button" variant="outline" disabled={listLoading} onClick={()=>{const empty={device:'',from:'',to:'',status:''};setDraft(empty);setFilters(empty);setPage(1);}}>{en?'Reset':'重設'}</Button></div>
       </form>
       <p className="text-xs text-slate-500">{en?'Dates filter the processing period, not the creation time.':'日期依工作處理期間篩選，非建立時間。'}</p>
+      <ProcessingCleanup api={api} filters={filters} isEnglish={en} formatTime={formatTime} onChange={()=>void load()}/>
       {listLoading&&<p role="status" className="text-sm">{en?'Loading history…':'正在載入工作記錄…'}</p>}
       <div className="max-h-[32rem] overflow-auto" aria-busy={listLoading}><table className="w-full text-left text-sm"><thead className="sticky top-0 bg-white"><tr>{(en?['Device / period','Status','Rows','Actions']:['設備／期間','狀態','筆數','操作']).map(h=><th className="p-3" key={h}>{h}</th>)}</tr></thead><tbody>{data?.jobs.map((job:any)=><tr key={job.id} className="border-t"><td className="p-3">{job.device}<span className="block text-xs text-slate-500">{formatTime(job.start)} → {formatTime(job.end)}</span></td><td className="p-3">{en?job.status:labels[job.status]}{job.status==='COMPLETED'&&<span className={'mt-1 block text-xs '+(job.upload_status==='RETRY'?'text-amber-700':'text-slate-500')}>{storageLabel(job.upload_status,en)}</span>}</td><td className="p-3">{job.rows_done}</td><td className="p-3"><div className="flex flex-wrap gap-2"><Button variant="outline" size="sm" onClick={()=>setSelected(job.id)}>{en?'Details':'詳細資料'}</Button>{job.status==='FAILED'&&<Button size="sm" variant="outline" disabled={busy} onClick={()=>void post({action:'retry',id:job.id})}>{en?'Retry':'重試'}</Button>}</div></td></tr>)}</tbody></table>{!listLoading&&!data?.jobs.length&&<p className="py-4 text-sm text-slate-500">{en?'No matching processing jobs.':'沒有符合條件的校正工作。'}</p>}</div>
       <div className="flex flex-wrap items-center justify-between gap-2 text-sm"><span>{en?`${data?.pagination?.total??0} jobs · Page ${data?.pagination?.page??1} / ${data?.pagination?.pages??1}`:`共 ${data?.pagination?.total??0} 筆工作 · 第 ${data?.pagination?.page??1}／${data?.pagination?.pages??1} 頁`}</span><div className="flex gap-2"><Button size="sm" variant="outline" disabled={listLoading||!data||data.pagination.page<=1} onClick={()=>setPage(data.pagination.page-1)}>{en?'Previous':'上一頁'}</Button><Button size="sm" variant="outline" disabled={listLoading||!data||data.pagination.page>=data.pagination.pages} onClick={()=>setPage(data.pagination.page+1)}>{en?'Next':'下一頁'}</Button></div></div>

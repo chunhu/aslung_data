@@ -42,7 +42,7 @@ export async function GET(req:Request){try{
   const clauses:string[]=[],values:string[]=[];
   const device=q.get('device')?.trim(),status=q.get('status');
   if(device){if(!/^[A-Za-z0-9_-]{1,80}$/.test(device))throw new AppError(400,'設備 ID 不正確。');clauses.push('j.device=? COLLATE NOCASE');values.push(device);}
-  if(status){if(!['QUEUED','RUNNING','COMPLETED','FAILED'].includes(status))throw new AppError(400,'工作狀態不正確。');clauses.push('j.status=?');values.push(status);}
+  if(status){if(!['QUEUED','RUNNING','COMPLETED','FAILED','DELETING'].includes(status))throw new AppError(400,'工作狀態不正確。');clauses.push('j.status=?');values.push(status);}
   const day=(value:string)=>{
     if(!/^\d{4}-\d{2}-\d{2}$/.test(value))throw new AppError(400,'日期格式不正確。');
     const time=Date.parse(value+'T00:00:00+08:00');
