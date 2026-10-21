@@ -18,6 +18,31 @@ const recipe=processingRecipe(0);
 const sample=(i,extra={})=>({id:i,aslung_id:'AL-1',timestamp:new Date(Date.UTC(2024,0,1,0,0,i)).toISOString(),PM1_G3:8,'PM2.5_G3':10,PM10_G3:15,PM1_GSA:9,'PM2.5_GSA':11,PM10_GSA:16,temperature:23,rh:55,co2:400,...extra});
 const factors=['PM1_G3','PM2.5_G3','PM10_G3','PM1_GSA','PM2.5_GSA','PM10_GSA'].map((channel,i)=>({id:i+1,version_id:7,aslung_id:'AL-1',channel,start:'2023-01-01T00:00:00.000Z',end:null,a1:1,b1:0,breakpoint:null,a2:null,b2:null}));
 const middle=(extra={},r=recipe,f=factors)=>processMeasurements(Array.from({length:101},(_,i)=>sample(i,i===50?extra:{})),f,r)[50];
+
+test('numeric strings produce the same six-rule results as numbers while preserving raw inputs',()=>{
+  const channels=['PM1_G3','PM2.5_G3','PM10_G3','PM1_GSA','PM2.5_GSA','PM10_GSA','temperature','rh','co2'];
+  const rows=Array.from({length:101},(_,i)=>sample(i,i===50?{PM1_G3:60,'PM2.5_G3':58,PM10_G3:62,temperature:0.5}:{}));
+  const strings=rows.map(row=>({...row,...Object.fromEntries(channels.map(c=>[c,` ${row[c]} `]))}));
+  const snapshot=JSON.stringify(strings),expected=processMeasurements(rows,factors,recipe),actual=processMeasurements(strings,factors,recipe);
+  actual.forEach((row,i)=>{
+    for(const c of channels){assert.equal(row[c],strings[i][c]);assert.equal(row[c+'_clean'],expected[i][c+'_clean']);}
+    const derived=row=>Object.fromEntries(Object.entries(row).filter(([key])=>!channels.includes(key)));
+    assert.deepEqual(derived(row),derived(expected[i]));
+  });
+  assert.equal(JSON.stringify(strings),snapshot);
+  assert.equal(actual[49].PM1_G3_final,8);assert.ok(actual[50]._quality.PM1_G3.includes('PM_NEAR_EQUAL_HIGH'));
+  assert.equal(middle({PM1_G3:'8e0',rh:'.55e2'}).rh_clean,55);
+  const legacy=processMeasurements(strings,factors,{...recipe,version:'six-rules-1'});
+  assert.equal(legacy[49].PM1_G3_clean,null);assert.ok(legacy[49]._quality.PM1_G3.includes('INVALID_RAW'));
+});
+
+test('invalid measurement inputs stay excluded rather than being coerced into readings',()=>{
+  for(const value of ['', ' ', '0x10', '12mg', 'NaN', 'Infinity', '1e999', null,undefined,true,[],{},NaN,Infinity]){
+    const r=middle({PM1_G3:value,temperature:value});
+    assert.equal(r.PM1_G3_clean,null);assert.equal(r.temperature_clean,null);
+    assert.ok(r._quality.PM1_G3.includes('INVALID_RAW'));assert.ok(r._quality.temperature.includes('INVALID_RAW'));
+  }
+});
 test('six rules preserve raw values, keep per-channel lower exclusions, and do not mix sensors',()=>{
   let r=middle({PM1_G3:0.5,temperature:-2,rh:0,co2:0});
   assert.equal(r.PM1_G3,0.5);assert.equal(r.PM1_G3_clean,null);assert.equal(r['PM2.5_G3_clean'],10);assert.equal(r.PM1_GSA_final,9);
@@ -36,6 +61,8 @@ test('Ghost Peak matches the uploaded Python implementation on the saved 240-sam
   const fixture=JSON.parse(readFileSync(new URL('./fixtures/ghost-python.json',import.meta.url),'utf8'));
   const output=processMeasurements(fixture.pm25.map((value,i)=>sample(i,{'PM2.5_G3':value,PM10_G3:20})),factors,recipe);
   assert.deepEqual(output.map(r=>r['PM2.5_G3_clean']),fixture.expected);
+  const strings=processMeasurements(fixture.pm25.map((value,i)=>sample(i,{'PM2.5_G3':value===null?null:String(value),PM10_G3:'20'})),factors,recipe);
+  assert.deepEqual(strings.map(r=>r['PM2.5_G3_clean']),fixture.expected);
 });
 test('Python breakpoint equality uses segment two, negatives become null, PM1 capped, sixth rule uses originals',()=>{
   const custom=factors.map(f=>({...f,...(f.channel==='PM1_G3'?{a1:2,b1:0,breakpoint:8,a2:3,b2:0}:{})}));
