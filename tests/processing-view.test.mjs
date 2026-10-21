@@ -52,3 +52,11 @@ test('HOBO cleanup requires DELETE and explains whole-day scope, S3 versions, pa
   states[7]='DELETE';html=render('HoboCleanup.tsx',states,{loggers:[],onChange:()=>{}});
   assert.match(html,/<button>確認永久清除<\/button>/);
 });
+
+test('HOBO cancel button covers queued, running and failed jobs with an explicit preservation and schedule notice',()=>{
+  for(const status of ['QUEUED','RUNNING','FAILED']){
+    const html=render('HoboCancelSync.tsx',[true,false,''],{job:{id:'job-1',serial:'20720755',start:'2025-01-01',end:'2026-10-21',status},onChange:()=>{}});
+    for(const text of ['取消工作','確認取消工作','20720755','本機及 S3 資料會保留','停用該設備','尚未寫入的回傳資料將捨棄'])assert.ok(html.includes(text),text);
+  }
+  for(const status of ['DONE','CANCELLED'])assert.equal(render('HoboCancelSync.tsx',[false,false,''],{job:{status},onChange:()=>{}}),'');
+});

@@ -1,6 +1,6 @@
 import {identity,writeGuard,AppError,fail} from '@/lib/server';
 import {getConnection} from '@/lib/store.mjs';
-import {HoboError,hoboStatus,saveHoboLogger,saveHoboBatch,queueHoboSync,retryHoboSync,hoboRange,hoboSerial} from '@/lib/hobo.mjs';
+import {HoboError,hoboStatus,saveHoboLogger,saveHoboBatch,queueHoboSync,retryHoboSync,cancelHoboSync,hoboRange,hoboSerial} from '@/lib/hobo.mjs';
 import {queryStoredHobo,storedHoboCsvStream} from '@/lib/hobo-storage.mjs';
 export const runtime='nodejs';
 export const dynamic='force-dynamic';
@@ -30,6 +30,7 @@ export async function POST(req:Request){try{
     if(!process.env.LICOR_API_TOKEN?.trim())throw new AppError(503,'請先在 EC2 .env 設定 LICOR_API_TOKEN 並重建容器。');
     return Response.json({id:queueHoboSync(d,{...body,actor:me.email})},{status:202,headers});
   }else if(body?.action==='retry')retryHoboSync(d,body.id);
+  else if(body?.action==='cancel')return Response.json(cancelHoboSync(d,body.id),{headers});
   else throw new AppError(400,'不支援的操作。');
   return Response.json({ok:true},{headers});
 }catch(e){return failure(e);}}

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {readFileSync} from 'node:fs';
 import ts from 'typescript';
-import {ensureHoboSchema,saveHoboLogger,saveHoboBatch,queueHoboSync,retryHoboSync,runHoboSync,fetchHoboWindow,queryHobo,hoboCsvStream,hoboStatus,HoboError} from '../lib/hobo.mjs';
+import {ensureHoboSchema,saveHoboLogger,saveHoboBatch,queueHoboSync,retryHoboSync,cancelHoboSync,runHoboSync,fetchHoboWindow,queryHobo,hoboCsvStream,hoboStatus,HoboError,hoboMonthRanges,waitHoboRequest} from '../lib/hobo.mjs';
 const start='2026-10-01T00:00:00.000Z',end='2026-10-03T00:00:00.000Z';
 const observation=(timestamp=start,value=0)=>({logger_sn:'12345678',sensor_sn:'sensor-1',timestamp,data_type:'Temperature',data_type_id:'1',value,unit:'°C',sensor_measurement_type:'Temperature'});
 function store(){const d=new DatabaseSync(':memory:');d.exec('PRAGMA foreign_keys=ON');ensureHoboSchema(d);saveHoboLogger(d,{serial:'12345678',name:'HOBO test',start,enabled:false});return d;}
@@ -21,13 +21,71 @@ test('LI-COR request uses only official endpoint, server bearer token, serial an
 });
 
 test('saturated API response is split; truncated parent data is discarded',async()=>{
-  let calls=0;
-  const rows=await fetchHoboWindow({serial:'12345678',start,end:'2026-10-01T00:00:04Z',token:'test',fetchImpl:async url=>{
-    calls++;if(calls===1)return json({max_results:true,data:[observation(start,999)]});
+  let calls=0,permissions=0;
+  const rows=await fetchHoboWindow({serial:'12345678',start,end:'2026-10-01T00:00:04Z',token:'test',beforeRequest:async()=>{permissions++;},fetchImpl:async url=>{
+    calls++;assert.equal(permissions,calls);if(calls===1)return json({max_results:true,data:[observation(start,999)]});
     return json({max_results:false,data:[observation(url.searchParams.get('start_date_time'),calls)]});
   }});
   assert.equal(calls,3);assert.deepEqual(rows.map(r=>r.value),[2,3]);
   await assert.rejects(fetchHoboWindow({serial:'12345678',start,end:start,token:'test',fetchImpl:async()=>json({max_results:true,data:[]})}),/單秒/);
+});
+
+test('long history is split by Taiwan calendar month across year and leap-day boundaries without gaps',()=>{
+  const ranges=hoboMonthRanges('2024-01-15T00:00:00+08:00','2025-03-12T10:00:00+08:00');
+  assert.equal(ranges.length,15);assert.equal(ranges[0].end,'2024-01-31T16:00:00.000Z');
+  assert.equal((Date.parse(ranges[1].end)-Date.parse(ranges[1].start))/86400000,29);
+  assert.equal(ranges.at(-1).end,'2025-03-12T02:00:00.000Z');
+  for(let i=1;i<ranges.length;i++)assert.equal(ranges[i].start,ranges[i-1].end);
+});
+
+test('month boundary limits daily request and pauses the job before continuing into next month',async()=>{
+  const d=store(),now=Date.now(),a='2026-01-31T15:00:00.000Z',b='2026-01-31T18:00:00.000Z';
+  const id=queueHoboSync(d,{serial:'12345678',start:a,end:b}),seen=[];
+  const fetcher=async r=>{seen.push({start:r.start,end:r.end});return [];};
+  await runHoboSync(d,fetcher,now);
+  const pending=d.prepare('SELECT * FROM hobo_jobs WHERE id=?').get(id);
+  assert.equal(pending.cursor,'2026-01-31T16:00:00.000Z');assert.ok(pending.next_attempt>=now+60000);
+  assert.equal(hoboStatus(d).jobs[0].months_done,1);assert.equal(hoboStatus(d).jobs[0].months,2);
+  assert.equal(await runHoboSync(d,fetcher,now+1),null);
+  assert.equal((await runHoboSync(d,fetcher,pending.next_attempt+1)).status,'DONE');
+  assert.deepEqual(seen,[{start:a,end:'2026-01-31T16:00:00.000Z'},{start:'2026-01-31T16:00:00.000Z',end:b}]);d.close();
+});
+
+test('older queued history gains month checkpoints while preserving its daily resume cursor',async()=>{
+  const d=store(),a='2025-01-01T00:00:00+08:00',b='2026-03-01T00:00:00+08:00';
+  const id=queueHoboSync(d,{serial:'12345678',start:a,end:b});d.prepare('DELETE FROM hobo_months WHERE job=?').run(id);
+  d.prepare('UPDATE hobo_jobs SET cursor=? WHERE id=?').run('2025-02-15T00:00:00.000Z',id);
+  let requested;await runHoboSync(d,async r=>{requested=r;return [];});
+  assert.equal(requested.start,'2025-02-15T00:00:00.000Z');assert.equal(requested.end,'2025-02-16T00:00:00.000Z');
+  const status=hoboStatus(d).jobs[0];assert.equal(status.months,14);assert.equal(status.months_done,1);d.close();
+});
+
+test('persisted request spacing is shared by new callers and applies before each split request',async()=>{
+  const d=store();let time=1000;const sleeps=[];
+  const options={clock:()=>time,sleep:async ms=>{sleeps.push(ms);time+=ms;},interval:15000};
+  await waitHoboRequest(d,options);await waitHoboRequest(d,{...options});await waitHoboRequest(d,{...options});
+  assert.deepEqual(sleeps,[15000,15000]);
+  assert.equal(Number(d.prepare("SELECT value FROM hobo_service_state WHERE name='licor_next_request'").get().value),46000);d.close();
+});
+
+test('HTTP Retry-After seconds and date are preserved for server-requested cooldown',async()=>{
+  const now=Date.now();
+  for(const retry of ['900',new Date(now+1800000).toUTCString()]){
+    await assert.rejects(fetchHoboWindow({serial:'12345678',start,end,token:'test',fetchImpl:async()=>new Response('',{status:429,headers:{'Retry-After':retry}})}),e=>e.status===429&&e.retryAt>=now+899000);
+  }
+});
+
+test('rate limiting pauses all devices without exhausting the normal failure retry budget',async t=>{
+  const d=store();queueHoboSync(d,{serial:'12345678',start,end});saveHoboLogger(d,{serial:'23456789',name:'other',start,enabled:false});queueHoboSync(d,{serial:'23456789',start,end});
+  const previous=process.env.LICOR_API_TOKEN;process.env.LICOR_API_TOKEN='TEST_ONLY_TOKEN';let calls=0;
+  t.mock.method(globalThis,'fetch',async()=>{calls++;return new Response('',{status:429,headers:{'Retry-After':'900'}});});
+  try{
+    const now=Date.now();await runHoboSync(d);assert.equal(calls,1);
+    const job=d.prepare('SELECT * FROM hobo_jobs WHERE serial=?').get('12345678');
+    assert.equal(job.attempts,0);assert.equal(job.status,'QUEUED');assert.equal(job.cursor,start);assert.ok(job.next_attempt>=now+900000);
+    assert.equal(await runHoboSync(d),null);assert.equal(calls,1);
+    assert.ok(hoboStatus(d).next_request>=job.next_attempt);
+  }finally{if(previous===undefined)delete process.env.LICOR_API_TOKEN;else process.env.LICOR_API_TOKEN=previous;d.close();}
 });
 
 test('accepts actual LI-COR UTC timestamps containing a space before the time and a trailing Z',async()=>{
@@ -81,6 +139,53 @@ test('worker checkpoints one day at a time, deduplicates overlap, and repeats up
   assert.equal(ranges.length,2);d.close();
 });
 
+test('cancelling queued work preserves downloaded rows and progress and prevents schedule regeneration',async()=>{
+  const d=store();const id=queueHoboSync(d,{serial:'12345678',start,end});
+  await runHoboSync(d,async()=>[observation()]);saveHoboLogger(d,{serial:'12345678',name:'test',start,enabled:true});
+  const cursor=d.prepare('SELECT cursor FROM hobo_jobs WHERE id=?').get(id).cursor;
+  assert.equal(cancelHoboSync(d,id).ok,true);
+  const job=d.prepare('SELECT * FROM hobo_jobs WHERE id=?').get(id);assert.equal(job.status,'CANCELLED');assert.equal(job.cursor,cursor);assert.equal(job.lease_token,'');
+  assert.equal(d.prepare('SELECT COUNT(*) n FROM hobo_observations').get().n,1);assert.equal(d.prepare('SELECT enabled FROM hobo_loggers').get().enabled,0);
+  assert.equal(d.prepare("SELECT COUNT(*) n FROM hobo_months WHERE job=? AND status='CANCELLED'").get(id).n,1);
+  assert.equal(await runHoboSync(d,async()=>assert.fail('cancelled work must not fetch')),null);
+  assert.throws(()=>retryHoboSync(d,id),/找不到/);
+  // Repeating an old cancellation must not disable an intentionally restarted schedule.
+  saveHoboLogger(d,{serial:'12345678',name:'test',start,enabled:true});cancelHoboSync(d,id);assert.equal(d.prepare('SELECT enabled FROM hobo_loggers').get().enabled,1);d.close();
+});
+
+test('cancelling in-flight work discards the response and cannot change CANCELLED back to retry or done',async()=>{
+  const d=store(),id=queueHoboSync(d,{serial:'12345678',start,end});let release;
+  const running=runHoboSync(d,()=>new Promise(resolve=>{release=resolve;}));
+  assert.equal(d.prepare('SELECT status FROM hobo_jobs').get().status,'RUNNING');cancelHoboSync(d,id);release([observation()]);
+  assert.equal((await running).status,'CANCELLED');assert.equal(d.prepare('SELECT COUNT(*) n FROM hobo_observations').get().n,0);
+  const job=d.prepare('SELECT * FROM hobo_jobs').get();assert.equal(job.status,'CANCELLED');assert.equal(job.cursor,start);assert.equal(job.attempts,0);d.close();
+});
+
+test('running requests receive an abort signal promptly after cancellation',async()=>{
+  const d=store(),id=queueHoboSync(d,{serial:'12345678',start,end});let aborted=false,timer;
+  const running=runHoboSync(d,({signal})=>new Promise((resolve,reject)=>signal.addEventListener('abort',()=>{aborted=true;reject(new Error('aborted'));},{once:true})));
+  cancelHoboSync(d,id);
+  try{
+    const result=await Promise.race([running,new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('cancel did not abort request')),4000);})]);
+    assert.equal(result.status,'CANCELLED');assert.ok(aborted);
+  }finally{clearTimeout(timer);d.close();}
+});
+
+test('cancellation between a saturated response and its split children prevents further API access',async()=>{
+  const d=store(),id=queueHoboSync(d,{serial:'12345678',start,end});let calls=0;
+  const result=await runHoboSync(d,args=>fetchHoboWindow({...args,token:'TEST_ONLY',fetchImpl:async()=>{
+    calls++;cancelHoboSync(d,id);return json({max_results:true,data:[]});
+  }}));
+  assert.equal(result.status,'CANCELLED');assert.equal(calls,1);assert.equal(d.prepare('SELECT COUNT(*) n FROM hobo_observations').get().n,0);d.close();
+});
+
+test('failed jobs can be cancelled but completed work is not silently relabelled',async()=>{
+  const d=store(),id=queueHoboSync(d,{serial:'12345678',start,end});d.prepare("UPDATE hobo_jobs SET status='FAILED' WHERE id=?").run(id);cancelHoboSync(d,id);
+  assert.equal(d.prepare('SELECT status FROM hobo_jobs WHERE id=?').get(id).status,'CANCELLED');
+  const completed=queueHoboSync(d,{serial:'12345678',start,end:start});await runHoboSync(d,async()=>[]);
+  assert.throws(()=>cancelHoboSync(d,completed),/已完成/);assert.throws(()=>cancelHoboSync(d,'missing'),/找不到/);d.close();
+});
+
 test('later manual history does not advance automatic cursor over an unimported gap',async()=>{
   const d=store();queueHoboSync(d,{serial:'12345678',start:end,end});await runHoboSync(d,async()=>[]);
   assert.equal(d.prepare('SELECT synced_until FROM hobo_loggers').get().synced_until,null);d.close();
@@ -130,5 +235,7 @@ test('HOBO API rejects non-admin read/write/download, enforces origin, and expor
   assert.equal((await POST(new Request('http://local/api/hobo',{method:'POST',body:JSON.stringify({action:'save'})}))).status,403);
   role='admin';origin=false;assert.equal((await POST(new Request('http://local/api/hobo',{method:'POST'}))).status,403);
   const response=await GET(new Request('http://local/api/hobo?'+params));assert.equal(response.status,200);assert.match(response.headers.get('Content-Disposition'),/HOBO_12345678_20261001_20261003/);assert.match(await response.text(),/logger_sn/);
+  const id=queueHoboSync(d,{serial:'12345678',start,end});origin=true;
+  const cancelled=await POST(new Request('http://local/api/hobo',{method:'POST',body:JSON.stringify({action:'cancel',id})}));assert.equal(cancelled.status,200);assert.equal(d.prepare('SELECT status FROM hobo_jobs WHERE id=?').get(id).status,'CANCELLED');
   d.close();
 });

@@ -112,7 +112,7 @@ test('cleanup pauses schedules, blocks regeneration, keeps index/local data on p
   assert.equal(d.prepare('SELECT COUNT(*) n FROM hobo_archives').get().n,1);assert.equal(d.prepare('SELECT COUNT(*) n FROM hobo_observations').get().n,1);
   client.failDelete=false;await runHoboCleanup(d,{purge,now:Date.now()+120000});
   assert.equal(client.objects.size,0);assert.equal(d.prepare('SELECT COUNT(*) n FROM hobo_archives').get().n,0);assert.equal(d.prepare('SELECT COUNT(*) n FROM hobo_observations').get().n,0);
-  assert.equal(d.prepare('SELECT COUNT(*) n FROM hobo_jobs').get().n,0);assert.equal(d.prepare('SELECT COUNT(*) n FROM hobo_loggers').get().n,1);assert.equal(hoboCleanupStatus(d).plans[0].status,'DONE');d.close();
+  assert.equal(d.prepare('SELECT COUNT(*) n FROM hobo_jobs').get().n,0);assert.equal(d.prepare('SELECT COUNT(*) n FROM hobo_months').get().n,0);assert.equal(d.prepare('SELECT COUNT(*) n FROM hobo_loggers').get().n,1);assert.equal(hoboCleanupStatus(d).plans[0].status,'DONE');d.close();
 });
 
 test('local-only cleanup removes exactly the selected Taiwan day and preserves other data',async()=>{
