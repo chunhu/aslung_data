@@ -1,6 +1,6 @@
 import {identity,writeGuard,AppError,fail} from '@/lib/server';
 import {getConnection} from '@/lib/store.mjs';
-import {HoboError,hoboStatus,saveHoboLogger,saveHoboBatch,queueHoboSync,retryHoboSync,cancelHoboSync,hoboRange,hoboSerial} from '@/lib/hobo.mjs';
+import {HoboError,hoboStatus,saveHoboLogger,saveHoboBatch,queueHoboSync,retryHoboSync,cancelHoboSync,manageHoboJobs,hoboRange,hoboSerial} from '@/lib/hobo.mjs';
 import {queryStoredHobo,storedHoboCsvStream} from '@/lib/hobo-storage.mjs';
 export const runtime='nodejs';
 export const dynamic='force-dynamic';
@@ -12,10 +12,11 @@ export async function GET(req:Request){try{
   if(action==='status')return Response.json(hoboStatus(d),{headers});
   const serial=hoboSerial(url.searchParams.get('serial'));
   const {start,end}=hoboRange(url.searchParams.get('start'),url.searchParams.get('end'));
-  if(action==='query')return Response.json(await queryStoredHobo(d,{serial,start,end,after:Number(url.searchParams.get('after')||0)}),{headers});
+  const filters={measurement:url.searchParams.get('measurement')||'',sensor:url.searchParams.get('sensor')||'',q:url.searchParams.get('q')||''};
+  if(action==='query')return Response.json(await queryStoredHobo(d,{serial,start,end,...filters,after:Number(url.searchParams.get('after')||0)}),{headers});
   if(action==='csv'){
     const date=(value:string)=>new Date(Date.parse(value)+8*3600000).toISOString().slice(0,10).replaceAll('-','');
-    return new Response(await storedHoboCsvStream(d,{serial,start,end}),{headers:{...headers,'Content-Type':'text/csv; charset=utf-8','Content-Disposition':`attachment; filename="HOBO_${serial}_${date(start)}_${date(end)}.csv"`}});
+    return new Response(await storedHoboCsvStream(d,{serial,start,end,...filters}),{headers:{...headers,'Content-Type':'text/csv; charset=utf-8','Content-Disposition':`attachment; filename="HOBO_${serial}_${date(start)}_${date(end)}.csv"`}});
   }
   throw new AppError(400,'不支援的操作。');
 }catch(e){return failure(e);}}
@@ -31,6 +32,7 @@ export async function POST(req:Request){try{
     return Response.json({id:queueHoboSync(d,{...body,actor:me.email})},{status:202,headers});
   }else if(body?.action==='retry')retryHoboSync(d,body.id);
   else if(body?.action==='cancel')return Response.json(cancelHoboSync(d,body.id),{headers});
+  else if(body?.action==='jobsBulk')return Response.json(manageHoboJobs(d,body),{headers});
   else throw new AppError(400,'不支援的操作。');
   return Response.json({ok:true},{headers});
 }catch(e){return failure(e);}}

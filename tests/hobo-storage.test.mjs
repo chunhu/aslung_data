@@ -4,7 +4,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {Readable} from 'node:stream';
 import {readFileSync} from 'node:fs';
 import ts from 'typescript';
-import {ensureHoboSchema,saveHoboLogger,queueHoboSync,runHoboSync,hoboRevision,hoboStatus,withHoboLock,HoboError} from '../lib/hobo.mjs';
+import {ensureHoboSchema,saveHoboLogger,queueHoboSync,manageHoboJobs,runHoboSync,hoboRevision,hoboStatus,withHoboLock,HoboError} from '../lib/hobo.mjs';
 import {archiveNextHoboDay,queryStoredHobo,storedHoboCsvStream,readHoboArchive,hoboObjectVersions,purgeHoboScope,hoboStorageConfiguration,hoboDayRange} from '../lib/hobo-storage.mjs';
 import {previewHoboCleanup,confirmHoboCleanup,runHoboCleanup,hoboCleanupStatus} from '../lib/hobo-cleanup.mjs';
 const serial='20720755',start='2026-10-01T00:00:00.000Z',end='2026-10-01T00:00:01.000Z';
@@ -46,6 +46,14 @@ test('S3 upload is verified before removing staging; queries and CSV restore dat
   assert.equal(d.prepare('SELECT COUNT(*) n FROM hobo_observations').get().n,0);assert.equal(hoboStatus(d).loggers[0].archived,2);d.close();
 });
 
+test('deleting sync job records preserves S3 objects, local measurements, file indexes and CSV access',async()=>{
+  const d=database(),client=new FakeS3(),options={configuration,clientFor:()=>client};await seed(d);await archiveNextHoboDay(d,options);await seed(d,[row(end,12)]);
+  const ids=d.prepare('SELECT id FROM hobo_jobs').all().map(r=>r.id);const count=client.calls.length;
+  assert.equal(manageHoboJobs(d,{ids,operation:'delete',confirmation:'DELETE'}).deleted,2);
+  assert.equal(client.calls.length,count);assert.equal(client.objects.size,1);assert.equal(d.prepare('SELECT COUNT(*) n FROM hobo_archives').get().n,1);assert.equal(d.prepare('SELECT COUNT(*) n FROM hobo_observations').get().n,1);
+  assert.equal((await queryStoredHobo(d,{serial,start,end},options)).rows.length,2);d.close();
+});
+
 test('failed verification keeps local data and tracks orphan scope; retry publishes only verified generation',async()=>{
   const d=database(),client=new FakeS3();await seed(d);client.badHead=true;
   const options={configuration,clientFor:()=>client};await assert.rejects(archiveNextHoboDay(d,options),/驗證失敗/);
@@ -85,6 +93,19 @@ test('Taiwan day boundary is preserved and pagination spans archives and staged 
   const page1=await queryStoredHobo(d,range,options),page2=await queryStoredHobo(d,{...range,after:page1.next},options);
   assert.equal(page1.rows.length,200);assert.equal(page2.rows.length,30);assert.equal(page2.next,null);
   assert.equal(new Set([...page1.rows,...page2.rows].map(r=>r.timestamp)).size,230);d.close();
+});
+
+test('measurement, sensor and keyword filters apply to merged S3/local rows before pagination and CSV export',async()=>{
+  const d=database(),client=new FakeS3(),options={configuration,clientFor:()=>client};
+  const rows=Array.from({length:450},(_,i)=>({...row(start,i),sensor_sn:`station-${i}`,sensor_measurement_type:i<250?'Temperature':'RH',unit:i<250?'°C':'%'}));
+  await seed(d,rows);await archiveNextHoboDay(d,options);await seed(d,[{...rows[0],value:99}]);
+  const range={serial,start,end,measurement:'temperature',sensor:'STATION-',q:'°c'};
+  const first=await queryStoredHobo(d,range,options),second=await queryStoredHobo(d,{...range,after:first.next},options);
+  assert.equal(first.rows.length,200);assert.equal(second.rows.length,50);assert.equal(second.next,null);
+  const all=[...first.rows,...second.rows];assert.ok(all.every(r=>r.sensor_measurement_type==='Temperature'));assert.equal(all.find(r=>r.sensor_sn==='station-0').value,99);
+  const csv=await new Response(await storedHoboCsvStream(d,range,options)).text();assert.equal(csv.trim().split('\r\n').length,251);assert.ok(!csv.includes('"RH"'));
+  assert.equal((await queryStoredHobo(d,{...range,sensor:'missing'},options)).rows.length,0);
+  await assert.rejects(queryStoredHobo(d,{...range,q:'x'.repeat(161)},options),/160/);d.close();
 });
 
 test('preview and confirmation reject wrong actors, missing DELETE, stale data and running operations',async()=>{

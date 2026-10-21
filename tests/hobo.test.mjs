@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {readFileSync} from 'node:fs';
 import ts from 'typescript';
-import {ensureHoboSchema,saveHoboLogger,saveHoboBatch,queueHoboSync,retryHoboSync,cancelHoboSync,runHoboSync,fetchHoboWindow,queryHobo,hoboCsvStream,hoboStatus,HoboError,hoboMonthRanges,waitHoboRequest} from '../lib/hobo.mjs';
+import {ensureHoboSchema,saveHoboLogger,saveHoboBatch,queueHoboSync,retryHoboSync,cancelHoboSync,manageHoboJobs,runHoboSync,fetchHoboWindow,queryHobo,hoboCsvStream,hoboStatus,HoboError,hoboMonthRanges,waitHoboRequest} from '../lib/hobo.mjs';
 const start='2026-10-01T00:00:00.000Z',end='2026-10-03T00:00:00.000Z';
 const observation=(timestamp=start,value=0)=>({logger_sn:'12345678',sensor_sn:'sensor-1',timestamp,data_type:'Temperature',data_type_id:'1',value,unit:'°C',sensor_measurement_type:'Temperature'});
 function store(){const d=new DatabaseSync(':memory:');d.exec('PRAGMA foreign_keys=ON');ensureHoboSchema(d);saveHoboLogger(d,{serial:'12345678',name:'HOBO test',start,enabled:false});return d;}
@@ -186,6 +186,41 @@ test('failed jobs can be cancelled but completed work is not silently relabelled
   assert.throws(()=>cancelHoboSync(d,completed),/已完成/);assert.throws(()=>cancelHoboSync(d,'missing'),/找不到/);d.close();
 });
 
+test('bulk cancellation skips completed/cancelled work and only pauses devices whose jobs were changed',()=>{
+  const d=store(),ids=[];const statuses=['QUEUED','RUNNING','FAILED','DONE','CANCELLED'];
+  for(let i=0;i<statuses.length;i++){
+    const serial=String(23456780+i);saveHoboLogger(d,{serial,name:'test',start,enabled:true});
+    const id=queueHoboSync(d,{serial,start,end});ids.push(id);d.prepare('UPDATE hobo_jobs SET status=? WHERE id=?').run(statuses[i],id);
+  }
+  const result=manageHoboJobs(d,{ids:[...ids,ids[0]],operation:'cancel',confirmation:'CANCEL'});
+  assert.equal(result.requested,5);assert.equal(result.cancelled,3);assert.equal(result.skipped,2);
+  for(let i=0;i<ids.length;i++){
+    assert.equal(d.prepare('SELECT enabled FROM hobo_loggers WHERE serial=?').get(String(23456780+i)).enabled,i<3?0:1);
+    assert.equal(d.prepare('SELECT status FROM hobo_jobs WHERE id=?').get(ids[i]).status,i===3?'DONE':'CANCELLED');
+  }d.close();
+});
+
+test('bulk deletion requires DELETE and rejects the entire batch if any job is active or missing',()=>{
+  const d=store(),id=queueHoboSync(d,{serial:'12345678',start,end});
+  saveHoboLogger(d,{serial:'23456789',name:'other',start,enabled:false});const done=queueHoboSync(d,{serial:'23456789',start,end});d.prepare("UPDATE hobo_jobs SET status='DONE' WHERE id=?").run(done);
+  assert.throws(()=>manageHoboJobs(d,{ids:[done],operation:'delete',confirmation:''}),/確認/);
+  assert.throws(()=>manageHoboJobs(d,{ids:[done,id],operation:'delete',confirmation:'DELETE'}),/先取消/);
+  assert.equal(d.prepare('SELECT COUNT(*) n FROM hobo_jobs').get().n,2);
+  assert.throws(()=>manageHoboJobs(d,{ids:[done,'missing'],operation:'delete',confirmation:'DELETE'}),/已變更/);
+  assert.equal(d.prepare('SELECT COUNT(*) n FROM hobo_jobs').get().n,2);
+  manageHoboJobs(d,{ids:[id],operation:'cancel',confirmation:'CANCEL'});
+  assert.equal(manageHoboJobs(d,{ids:[done,id],operation:'delete',confirmation:'DELETE'}).deleted,2);
+  assert.equal(d.prepare('SELECT COUNT(*) n FROM hobo_months').get().n,0);
+  assert.throws(()=>manageHoboJobs(d,{ids:[],operation:'cancel',confirmation:'CANCEL'}),/1 至 100/);d.close();
+});
+
+test('bulk cancel followed by job deletion cannot publish an in-flight response or recreate a removed job',async()=>{
+  const d=store(),id=queueHoboSync(d,{serial:'12345678',start,end});let release;
+  const running=runHoboSync(d,()=>new Promise(resolve=>{release=resolve;}));
+  manageHoboJobs(d,{ids:[id],operation:'cancel',confirmation:'CANCEL'});manageHoboJobs(d,{ids:[id],operation:'delete',confirmation:'DELETE'});release([observation()]);
+  assert.equal((await running).status,'CANCELLED');assert.equal(d.prepare('SELECT COUNT(*) n FROM hobo_jobs').get().n,0);assert.equal(d.prepare('SELECT COUNT(*) n FROM hobo_observations').get().n,0);d.close();
+});
+
 test('later manual history does not advance automatic cursor over an unimported gap',async()=>{
   const d=store();queueHoboSync(d,{serial:'12345678',start:end,end});await runHoboSync(d,async()=>[]);
   assert.equal(d.prepare('SELECT synced_until FROM hobo_loggers').get().synced_until,null);d.close();
@@ -235,7 +270,15 @@ test('HOBO API rejects non-admin read/write/download, enforces origin, and expor
   assert.equal((await POST(new Request('http://local/api/hobo',{method:'POST',body:JSON.stringify({action:'save'})}))).status,403);
   role='admin';origin=false;assert.equal((await POST(new Request('http://local/api/hobo',{method:'POST'}))).status,403);
   const response=await GET(new Request('http://local/api/hobo?'+params));assert.equal(response.status,200);assert.match(response.headers.get('Content-Disposition'),/HOBO_12345678_20261001_20261003/);assert.match(await response.text(),/logger_sn/);
+  const insert=d.prepare('INSERT INTO hobo_observations VALUES(?,?,?,?,?,?,?,?)');
+  for(const [sensor,type,unit] of [['s-1','Temperature','°C'],['s-2','RH','%']])insert.run('12345678',sensor,start,'CURRENT','1',12,unit,type);
+  params.set('action','query');params.set('measurement','temperature');params.set('sensor','s-1');params.set('q','°C');
+  const searched=await GET(new Request('http://local/api/hobo?'+params));assert.equal(searched.status,200);const data=await searched.json();assert.equal(data.rows.length,1);assert.equal(data.rows[0].sensor_sn,'s-1');
+  params.set('action','csv');const filtered=await (await GET(new Request('http://local/api/hobo?'+params))).text();assert.ok(filtered.includes('Temperature'));assert.ok(!filtered.includes('"RH"'));
   const id=queueHoboSync(d,{serial:'12345678',start,end});origin=true;
   const cancelled=await POST(new Request('http://local/api/hobo',{method:'POST',body:JSON.stringify({action:'cancel',id})}));assert.equal(cancelled.status,200);assert.equal(d.prepare('SELECT status FROM hobo_jobs WHERE id=?').get(id).status,'CANCELLED');
+  role='member';const bulk=()=>new Request('http://local/api/hobo',{method:'POST',body:JSON.stringify({action:'jobsBulk',operation:'delete',ids:[id],confirmation:'DELETE'})});
+  assert.equal((await POST(bulk())).status,403);role='admin';origin=false;assert.equal((await POST(bulk())).status,403);origin=true;
+  const deleted=await POST(bulk());assert.equal(deleted.status,200);assert.equal((await deleted.json()).deleted,1);
   d.close();
 });
