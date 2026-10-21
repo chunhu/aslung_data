@@ -2,6 +2,7 @@ import {canExportData} from '@/lib/permissions.mjs';
 import {fetchRangesPage} from "@/lib/download-segments.mjs";
 import {identity,fail,required,instant,authorizedDataRanges,permitted,AppError} from "@/lib/server";
 import {fetchPage} from "@/lib/data";
+import {exportName} from '@/lib/export-name.mjs';
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -76,8 +77,8 @@ export async function GET(r: Request) {
                 }
                 throw new AppError(413,'資料量超過單次匯出上限，請縮短期間。');
             }
-            if(format==='csv'||format==='csvzip')return await csvZipResponse(csvChunks(rows()),`aslung_${id}_export`);
-            return await jsonZipResponse(jsonChunks(rows(),{aslung_id:id,segment_id:segmentId,start,end,authorized_ranges:ranges,calibration:calibrationMode,calibration_snapshot:calibrationSnapshot}),`aslung_${id}_export`);
+            if(format==='csv'||format==='csvzip')return await csvZipResponse(csvChunks(rows()),exportName(id,start,end));
+            return await jsonZipResponse(jsonChunks(rows(),{aslung_id:id,segment_id:segmentId,start,end,authorized_ranges:ranges,calibration:calibrationMode,calibration_snapshot:calibrationSnapshot}),exportName(id,start,end));
         }
         
         const cursor = url.searchParams.get("cursor") || "";

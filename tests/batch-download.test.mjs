@@ -1,3 +1,4 @@
+import {exportName} from '../lib/export-name.mjs';
 import {test} from "node:test";
 import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
@@ -35,7 +36,7 @@ for(const format of ['csv','csvzip','json','jsonzip'])test("ZIP exports exactly 
     setBatchZipFilename: noop,
     setBatchBlobUrl: value => {blobUrl = value;},
     setBatchLogs: update => {logs = typeof update === "function" ? update(logs) : update;},
-    JSZip, URL, URLSearchParams,
+    JSZip, URL, URLSearchParams, exportName,
     fetch: async url => {
       const query = new URL(url, "http://localhost").searchParams;
       assert.equal(query.get("calibration"),"both");
@@ -56,8 +57,8 @@ for(const format of ['csv','csvzip','json','jsonzip'])test("ZIP exports exactly 
     assert.deepEqual(logs.map(log=>log.count),[1,1]);
     const archive = await JSZip.loadAsync(await (await fetch(blobUrl)).arrayBuffer());
     assert.deepEqual(Object.keys(archive.files).sort(), [
-      "AL-0001_segment-1_2026-10-01_2026-10-01."+extension,
-      "AL-0001_segment-3_2026-10-01_2026-10-01."+extension,
+      "AL-0001_20261001_20261002_segment-1."+extension,
+      "AL-0001_20261001_20261002_segment-3."+extension,
       "download_manifest.txt"
     ]);
     const manifest = await archive.file("download_manifest.txt").async("string");

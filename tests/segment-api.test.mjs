@@ -1,3 +1,4 @@
+import * as exportNames from '../lib/export-name.mjs';
 import * as permissions from '../lib/permissions.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
@@ -52,7 +53,7 @@ test('real API authorization enforces segment/device identity and downloads ever
       '@/lib/server':{...server,identity:async()=>member},
       '@/lib/permissions.mjs':permissions,
       '@/lib/csv-zip.mjs':zipExports,
-    '@/lib/data':{fetchPage:async(id,s,e)=>{
+    '@/lib/export-name.mjs':exportNames,'@/lib/data':{fetchPage:async(id,s,e)=>{
         calls.push({id,start:s,end:e});return {data:[{timestamp:s}],has_more:false,next_cursor:null};
       },toCsv:rows=>rows.map(r=>r.timestamp).join('\n')}
     });
@@ -60,7 +61,7 @@ test('real API authorization enforces segment/device identity and downloads ever
     const response=await route.GET(new Request('http://localhost/api/data?'+query));
     assert.equal(response.status,200);
     const archive=await JSZip.loadAsync(await response.arrayBuffer(),{checkCRC32:true});
-    const body=JSON.parse(await archive.file('aslung_AL-0609_export.json').async('string'));
+    const body=JSON.parse(await archive.file('AL-0609_20260101_20260110.json').async('string'));
     assert.equal(body.data.length,2);
     assert.equal(body.authorized_ranges.length,2);
     assert.deepEqual(calls.map(c=>[c.start,c.end]),[

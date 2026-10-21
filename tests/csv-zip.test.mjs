@@ -1,3 +1,4 @@
+import * as exportNames from '../lib/export-name.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import JSZip from 'jszip';
@@ -36,7 +37,7 @@ test('CSV ZIP API exports all raw pages and rejects unauthorized downloads befor
   let role='admin',allowed=true,calls=0;
   class AppError extends Error{constructor(status,message){super(message);this.status=status;}}
   const server={AppError,required:v=>v,instant:v=>new Date(v).toISOString(),identity:async()=>({role}),permitted:async()=>{if(!allowed)throw new AppError(403,'denied');},authorizedDataRanges:async()=>[{start:'2024-01-01T00:00:00.000Z',end:'2024-01-02T00:00:00.000Z'}],fail:e=>Response.json({error:e.message},{status:e.status||500})};
-  const deps={'@/lib/server':server,'@/lib/permissions.mjs':{canExportData:m=>m.role!=='viewer'},'@/lib/download-segments.mjs':{},'@/lib/csv-zip.mjs':{csvChunks,csvZipResponse,jsonChunks,jsonZipResponse},'@/lib/data':{fetchPage:async(id,s,e,cursor)=>{calls++;return {data:[{timestamp:cursor?'2024-01-01T00:01:00.000Z':'2024-01-01T00:00:00.000Z',aslung_id:id,PM1_G3:cursor?2:1}],has_more:!cursor,next_cursor:cursor?null:'next'};}}};
+  const deps={'@/lib/export-name.mjs':exportNames,'@/lib/server':server,'@/lib/permissions.mjs':{canExportData:m=>m.role!=='viewer'},'@/lib/download-segments.mjs':{},'@/lib/csv-zip.mjs':{csvChunks,csvZipResponse,jsonChunks,jsonZipResponse},'@/lib/data':{fetchPage:async(id,s,e,cursor)=>{calls++;return {data:[{timestamp:cursor?'2024-01-01T00:01:00.000Z':'2024-01-01T00:00:00.000Z',aslung_id:id,PM1_G3:cursor?2:1}],has_more:!cursor,next_cursor:cursor?null:'next'};}}};
   const code=ts.transpileModule(readFileSync(new URL('../app/api/data/route.ts',import.meta.url),'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;
   const module={exports:{}};new Function('require','module','exports',code)(key=>{assert.ok(key in deps,key);return deps[key];},module,module.exports);
   const call=(format='csvzip',download='1')=>module.exports.GET(new Request('http://localhost/api/data?aslung_id=AL-1&start=2024-01-01T00:00:00Z&end=2024-01-02T00:00:00Z&download='+download+'&format='+format));
@@ -44,12 +45,12 @@ test('CSV ZIP API exports all raw pages and rejects unauthorized downloads befor
   role='admin';allowed=false;assert.equal((await call()).status,403);assert.equal(calls,0);allowed=true;
   const response=await call();assert.equal(response.status,200);assert.match(response.headers.get('Content-Type'),/zip/);
   const zip=await JSZip.loadAsync(await response.arrayBuffer(),{checkCRC32:true});
-  const csv=await zip.file('aslung_AL-1_export.csv').async('string');assert.equal(calls,2);assert.match(csv,/AL-1,1/);assert.match(csv,/AL-1,2/);
+  const csv=await zip.file('AL-1_20240101_20240102.csv').async('string');assert.equal(calls,2);assert.match(csv,/AL-1,1/);assert.match(csv,/AL-1,2/);
   for(const format of ['csv','json','jsonzip']){
     const res=await call(format);assert.equal(res.headers.get('Content-Type'),'application/zip');
     const archive=await JSZip.loadAsync(await res.arrayBuffer(),{checkCRC32:true});
-    if(format==='csv')assert.ok(archive.file('aslung_AL-1_export.csv'));
-    else assert.equal(JSON.parse(await archive.file('aslung_AL-1_export.json').async('string')).data.length,2);
+    if(format==='csv')assert.ok(archive.file('AL-1_20240101_20240102.csv'));
+    else assert.equal(JSON.parse(await archive.file('AL-1_20240101_20240102.json').async('string')).data.length,2);
   }
   const count=calls;assert.equal((await call('text')).status,400);assert.equal(calls,count);
   const preview=await call('json','0');assert.match(preview.headers.get('Content-Type'),/json/);assert.equal((await preview.json()).data.length,1);

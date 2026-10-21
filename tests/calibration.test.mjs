@@ -1,3 +1,4 @@
+import * as exportNames from '../lib/export-name.mjs';
 import * as permissions from '../lib/permissions.mjs';
 import * as zipExports from '../lib/csv-zip.mjs';
 import JSZip from 'jszip';
@@ -155,6 +156,27 @@ test('calibration API protects admin writes and list access, bounds pagination, 
   }finally{d.close();}
 });
 
+test('manual sync fetches only the selected source tab and leaves the other source and logs untouched',async()=>{
+  const {d,id}=fixture(),calls=[];
+  const second=c.saveCalibrationSource(d,{name:'Second tab',url:'https://docs.google.com/spreadsheets/d/test123/edit?gid=26524521'},'admin@test');
+  class AppError extends Error{constructor(status,message){super(message);this.status=status;}}
+  const api=load('../app/api/calibration/route.ts',{
+    '@/lib/server':{identity:async()=>({email:'admin@test',role:'admin'}),writeGuard:()=>{},AppError,fail:e=>Response.json({error:e.message},{status:e.status||500})},
+    '@/lib/store.mjs':{getConnection:()=>d},'@/lib/permissions.mjs':permissions,'@/lib/calibration.mjs':c,
+    '@/lib/calibration-google.mjs':{fetchCalibrationCsv:async source=>{calls.push({id:source.id,gid:c.googleCalibrationUrl(source.url).gid});return csv(row(source.id===id?'AL-1':'AL-2'));}}
+  });
+  const sync=source=>api.POST(new Request('http://test/api/calibration',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'sync',id:source})}));
+  try{
+    const before=d.prepare('SELECT * FROM calibration_sources WHERE id=?').get(second);
+    assert.equal((await (await sync(id)).json()).status,'UPDATED');
+    assert.deepEqual(calls,[{id,gid:'0'}]);assert.deepEqual(d.prepare('SELECT * FROM calibration_sources WHERE id=?').get(second),before);
+    assert.equal(d.prepare('SELECT COUNT(*) n FROM calibration_sync_logs WHERE source_id=?').get(second).n,0);
+    const first=d.prepare('SELECT * FROM calibration_sources WHERE id=?').get(id);
+    assert.equal((await (await sync(second)).json()).status,'UPDATED');
+    assert.deepEqual(calls,[{id,gid:'0'},{id:second,gid:'26524521'}]);assert.deepEqual(d.prepare('SELECT * FROM calibration_sources WHERE id=?').get(id),first);
+  }finally{d.close();}
+});
+
 test('data API pins calibration versions across downloads and pagination, while retaining existing access checks',async()=>{
   const {d,id}=fixture();let denied=false,fetches=0,changeDuringFetch=false,role='member';
   class AppError extends Error{constructor(status,message){super(message);this.status=status;}}
@@ -166,7 +188,7 @@ test('data API pins calibration versions across downloads and pagination, while 
       permitted:async()=>{if(denied)throw new AppError(403,'denied');},authorizedDataRanges:async()=>[{start:'2024-01-01T00:00:00.000Z',end:'2024-01-02T00:00:00.000Z'}],
       fail:e=>Response.json({error:e.message},{status:e.status||500})},
     '@/lib/permissions.mjs':permissions,
-    '@/lib/data':{toCsv:rows=>JSON.stringify(rows),fetchPage:async(device,start,end,cursor)=>{
+    '@/lib/export-name.mjs':exportNames,'@/lib/data':{toCsv:rows=>JSON.stringify(rows),fetchPage:async(device,start,end,cursor)=>{
       fetches++;if(changeDuringFetch&&!cursor)await c.syncCalibrationSource(d,id,'test',async()=>csv(row().replace(',2,1,',',4,1,')),{force:true});
       return {data:[{aslung_id:device,timestamp:'2024-01-01T01:00:00Z',PM1_G3:5}],next_cursor:cursor?null:'next',has_more:!cursor};
     }}
@@ -178,7 +200,7 @@ test('data API pins calibration versions across downloads and pagination, while 
     assert.equal(first.data[0].PM1_G3_calibrated,11);assert.equal(first.data[0].PM1_G3,5);
     const snapshot=first.calibration_snapshot;changeDuringFetch=true;
     const archive=await JSZip.loadAsync(await (await request({calibration:'both',download:'1',format:'json'})).arrayBuffer(),{checkCRC32:true});
-    const download=JSON.parse(await archive.file('aslung_AL-0001_export.json').async('string'));
+    const download=JSON.parse(await archive.file('AL-0001_20240101_20240102.json').async('string'));
     assert.equal(download.data.length,2);assert.ok(download.data.every(r=>r.PM1_G3_calibrated===11));
     const next=await (await request({calibration:'both',cursor:'next',calibration_snapshot:snapshot})).json();assert.equal(next.data[0].PM1_G3_calibrated,11);
     const fresh=await (await request({calibration:'both',cursor:'next'})).json();assert.equal(fresh.data[0].PM1_G3_calibrated,21);

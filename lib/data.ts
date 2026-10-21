@@ -43,6 +43,7 @@ export async function fetchPage(id: string, start: string, end: string, cursor: 
 
   let sql = `
     SELECT
+      rawdata.*,
       id,
       uid AS aslung_id,
       time,

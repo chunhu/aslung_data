@@ -1,3 +1,4 @@
+import * as exportNames from '../lib/export-name.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
@@ -86,7 +87,8 @@ test('MySQL worker reads bounded keyset pages and real context without writing r
   let calls=0;const pool={query:async({sql,values,timeout})=>{
     assert.match(sql,/^SELECT /);assert.ok(!sql.includes('AL-1'));assert.equal(values[0],'AL-1');assert.equal(timeout,60000);
     calls++;
-    const raw=(i)=>({id:i,aslung_id:'AL-1',time:new Date(Date.UTC(2024,0,1,0,0,i)),PM1_G3:8});
+    assert.match(sql,/SELECT rawdata\.\*/);assert.match(sql,/ch7 AS battery/);assert.match(sql,/ch37 AS `Num_10_GSA`/);
+    const raw=(i)=>({id:i,aslung_id:'AL-1',time:new Date(Date.UTC(2024,0,1,0,0,i)),PM1_G3:8,battery:'4.1',ch15:'extra-channel',gps:'25,121'});
     if(calls===1){assert.match(sql,/LIMIT 25/);return [[raw(-1),raw(-2)]];}
     if(calls===2){assert.match(sql,/LIMIT 2000/);return [Array.from({length:2000},(_,i)=>raw(i))];}
     if(calls===3){assert.match(sql,/time>\? OR \(time=\? AND id>\?\)/);assert.equal(values.at(-1),1999);return [[raw(2000)]];}
@@ -94,6 +96,9 @@ test('MySQL worker reads bounded keyset pages and real context without writing r
   }};
   const out=[];for await(const r of rawProcessingRows(pool,{device:'AL-1',start:sample(0).timestamp,end:sample(2100).timestamp}))out.push(r);
   assert.equal(calls,4);assert.equal(out.length,2004);assert.equal(out[0].id,-2);assert.equal(out[1].id,-1);assert.equal(out.at(-1).id,2100);assert.equal(out[2].timestamp,sample(0).timestamp);
+  assert.equal(out[2].ch15,'extra-channel');assert.equal(out[2].battery,'4.1');
+  const processed=processMeasurements(out.slice(0,5),factors,recipe);
+  assert.equal(processed[2].gps,'25,121');assert.equal(processed[2].ch15,'extra-channel');
 });
 async function fixture(){
   const d=new DatabaseSync(':memory:');d.exec("CREATE TABLE devices(id TEXT PRIMARY KEY); INSERT INTO devices VALUES('AL-1')");cal.ensureCalibrationSchema(d);jobs.ensureProcessingSchema(d);
@@ -122,11 +127,12 @@ test('queue pins coefficients and recipe, reuses identical requests, and support
 test('worker atomically publishes compressed output, failed runs retain no completed result, and retry works',async()=>{
   const d=await fixture(),root=await mkdtemp(join(process.cwd(),'.tools','processing-test-'));
   try{
-    const id=jobs.enqueueProcessing(d,request),job=jobs.claimProcessing(d),rows=Array.from({length:101},(_,i)=>sample(i));
+    const id=jobs.enqueueProcessing(d,request),job=jobs.claimProcessing(d),rows=Array.from({length:101},(_,i)=>sample(i,{battery:'4.1',ch15:'extra-channel',gps:'25,121'}));
     assert.equal(await jobs.runProcessing(d,job,rows,root),50);
     const stored=d.prepare('SELECT * FROM processing_jobs WHERE id=?').get(id);assert.equal(stored.status,'COMPLETED');assert.equal(stored.rows_done,50);
     const result=[];for await(const row of jobs.readProcessingResult(stored,root))result.push(row);
     assert.equal(result.length,50);assert.equal(result[0].timestamp,request.start);assert.equal(result[0]._background_status,'COMPLETE');
+    assert.equal(result[0].battery,'4.1');assert.equal(result[0].ch15,'extra-channel');assert.equal(result[0].gps,'25,121');
     jobs.enqueueProcessing(d,{...request,refresh:'fail'});const failed=jobs.claimProcessing(d);
     async function* broken(){yield sample(0);throw new Error('simulated connection failure');}
     await assert.rejects(()=>jobs.runProcessing(d,failed,broken(),root),/simulated/);
@@ -153,7 +159,7 @@ test('processing API protects writes, enforces result data permission and viewer
   const server={AppError,identity:async()=>member,writeGuard:()=>{if(!guard)throw new AppError(403,'origin');},
     fail:e=>Response.json({error:e.message},{status:e.status||500}),required:(v)=>{if(!v||typeof v!=='string')throw new AppError(400,'required');return v;},
     instant:v=>new Date(v).toISOString(),permitted:async()=>{checked++;if(!allow)throw new AppError(403,'denied');}};
-  const deps={'@/lib/server':server,'@/lib/permissions.mjs':permissions,'@/lib/store.mjs':{getConnection:()=>d},'@/lib/processing-jobs.mjs':jobs,'@/lib/global-processing.mjs':globalProcessing,'@/lib/csv-zip.mjs':zipExports};
+  const deps={'@/lib/export-name.mjs':exportNames,'@/lib/server':server,'@/lib/permissions.mjs':permissions,'@/lib/store.mjs':{getConnection:()=>d},'@/lib/processing-jobs.mjs':jobs,'@/lib/global-processing.mjs':globalProcessing,'@/lib/csv-zip.mjs':zipExports};
   const code=ts.transpileModule(readFileSync(new URL('../app/api/processing/route.ts',import.meta.url),'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;
   const module={exports:{}};new Function('require','module','exports',code)(key=>{assert.ok(key in deps);return deps[key];},module,module.exports);
   const api=module.exports,get=q=>api.GET(new Request('http://localhost/api/processing'+q)),post=p=>api.POST(new Request('http://localhost/api/processing',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)}));
@@ -173,11 +179,45 @@ test('processing API protects writes, enforces result data permission and viewer
     member={role:'viewer',email:'v'};assert.equal((await get('?id='+job.id+'&download=1')).status,403);
     const preview=await get('?id='+job.id);assert.equal(preview.status,200);assert.equal((await preview.json()).data.length,50);
     member={role:'member',email:'m'};const download=await get('?id='+job.id+'&download=1');assert.equal(download.status,200);assert.match(download.headers.get('Content-Type'),/zip/);
-    const zip=await JSZip.loadAsync(await download.arrayBuffer(),{checkCRC32:true});assert.match(await zip.file('processed_'+job.id+'.csv').async('string'),/PM1_G3_final/);assert.ok(checked>=5);
+    const zip=await JSZip.loadAsync(await download.arrayBuffer(),{checkCRC32:true});assert.match(await zip.file('AL-1_20240101.csv').async('string'),/PM1_G3_final/);assert.ok(checked>=5);
     // Revocation is checked again for every new request, even when a file already exists.
     allow=false;assert.equal((await get('?id='+job.id+'&download=1')).status,403);
   }finally{d.close();if(previous===undefined)delete process.env.CALIBRATION_RESULT_DIR;else process.env.CALIBRATION_RESULT_DIR=previous;await rm(root,{recursive:true,force:true});}
 });
+test('history filters and pagination expose older jobs and metadata details without reading results',async()=>{
+  const d=await fixture();let role='admin';
+  class AppError extends Error{constructor(status,message){super(message);this.status=status;}}
+  const deps={'@/lib/server':{AppError,identity:async()=>({role}),permitted:async()=>{},required:v=>v,fail:e=>Response.json({error:e.message},{status:e.status||500})},
+    '@/lib/permissions.mjs':permissions,'@/lib/store.mjs':{getConnection:()=>d},'@/lib/processing-jobs.mjs':jobs,
+    '@/lib/global-processing.mjs':globalProcessing,'@/lib/csv-zip.mjs':zipExports,'@/lib/export-name.mjs':exportNames};
+  const code=ts.transpileModule(readFileSync(new URL('../app/api/processing/route.ts',import.meta.url),'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;
+  const module={exports:{}};new Function('require','module','exports',code)(key=>{assert.ok(key in deps,key);return deps[key];},module,module.exports);
+  const get=q=>module.exports.GET(new Request('http://test/api/processing?'+q));
+  try{
+    const ids=[];
+    for(let i=0;i<105;i++){
+      const start=new Date(Date.UTC(2024,0,i+1,16)).toISOString(),end=new Date(Date.parse(start)+86400000).toISOString();
+      const id=jobs.enqueueProcessing(d,{...request,start,end});ids.push(id);
+      d.prepare('UPDATE processing_jobs SET status=?,created_at=? WHERE id=?').run(['QUEUED','RUNNING','COMPLETED','FAILED'][i%4],start,id);
+    }
+    const first=await (await get('')).json();assert.equal(first.pagination.total,105);assert.equal(first.jobs.length,20);assert.equal(first.pagination.pages,6);
+    const last=await (await get('page=6')).json();assert.equal(last.jobs.length,5);assert.equal(last.jobs.at(-1).id,ids[0]);
+    const bounded=await (await get('page=999')).json();assert.equal(bounded.pagination.page,6);
+    const days=await (await get('device=al-1&from=2024-01-04&to=2024-01-05')).json();assert.equal(days.pagination.total,2);
+    assert.deepEqual(new Set(days.jobs.map(j=>j.id)),new Set([ids[2],ids[3]]));
+    const completed=await (await get('from=2024-01-04&to=2024-01-05&status=COMPLETED')).json();assert.equal(completed.jobs[0].id,ids[2]);assert.equal(completed.pagination.total,1);
+    assert.equal((await (await get('device=AL-OTHER')).json()).pagination.total,0);
+    // These completed fixtures have no physical file: details must stay metadata-only.
+    const details=await get('id='+ids[2]+'&detail=1');assert.equal(details.status,200);
+    const body=await details.json();assert.equal(body.job.status,'COMPLETED');assert.equal(body.job.recipe.rawSchema,'all-fields-1');assert.equal(body.data,undefined);assert.equal(body.job.result_bucket,undefined);
+    assert.equal((await get('id='+ids[0]+'&detail=1')).status,200);
+    assert.equal((await get('id='+ids[0])).status,409);
+    for(const invalid of ['page=0','page=1.1','page_size=101','status=WRONG','from=2024-02-30','from=2024-01-04&to=2024-01-03',"device=AL-1%27"])
+      assert.equal((await get(invalid)).status,400,invalid);
+    role='member';assert.equal((await get('')).status,403);assert.equal((await get('id='+ids[2]+'&detail=1')).status,403);
+  }finally{d.close();}
+});
+
 test('global scheduling automatically includes measured devices with factors, deduplicates and processes yesterday without requiring new arrivals today',async()=>{
   const d=await fixture();let discoveries=0;
   const data=[{device:'AL-1',day:'2024-01-03',last_id:'100'},{device:'AL-1',day:'2024-01-04',last_id:'150'},{device:'AL-1',day:'2024-01-05',last_id:'200'}];
@@ -242,16 +282,17 @@ test('data query reads stored results without raw queries, pins versions, filter
     const options={id:'AL-1',start:sample(30).timestamp,end:sample(60).timestamp,ranges:[{start:sample(30).timestamp,end:sample(60).timestamp}],segmentId:'1',root,authorize:async()=>{authorized++;}};
     const res=await processedDataResponse(d,{...options,url:new URL('http://localhost/api/data?calibration=processed')});
     const initial=await res.json();assert.equal(initial.data.length,31);assert.equal(initial.data[0].timestamp,options.start);assert.equal(initial.data.at(-1).timestamp,options.end);assert.equal(initial.data[0]._processing_job_id,job.id);
-    jobs.enqueueProcessing(d,{...request,refresh:'newer'});const newer=jobs.claimProcessing(d);
-    await jobs.runProcessing(d,newer,Array.from({length:101},(_,i)=>sample(i,{PM1_G3:9})),root);
+    jobs.enqueueProcessing(d,{...request,start:sample(45).timestamp,end:sample(55).timestamp,refresh:'newer'});const newer=jobs.claimProcessing(d);
+    await jobs.runProcessing(d,newer,Array.from({length:101},(_,i)=>sample(i,{PM1_G3:9,battery:'4.1',ch15:'extra-channel'})),root);
     const pinned=new URL('http://localhost/api/data?download=1&format=json');pinned.searchParams.set('calibration_snapshot',initial.calibration_snapshot);
     const oldZip=await JSZip.loadAsync(await (await processedDataResponse(d,{...options,url:pinned})).arrayBuffer(),{checkCRC32:true});
-    const old=JSON.parse(await oldZip.file('processed_AL-1.json').async('string'));assert.equal(old.data[0].PM1_G3,8);assert.equal(old.data[0]._processing_job_id,job.id);
+    const old=JSON.parse(await oldZip.file('AL-1_20240101.json').async('string'));assert.equal(old.data[0].PM1_G3,8);assert.equal(old.data[0]._processing_job_id,job.id);
     const csvZip=await JSZip.loadAsync(await (await processedDataResponse(d,{...options,url:new URL('http://localhost/api/data?download=1&format=csv')})).arrayBuffer(),{checkCRC32:true});
-    const csv=await csvZip.file('processed_AL-1.csv').async('string');assert.match(csv,/_processing_up_limit/);assert.match(csv,new RegExp(newer.id));
+    const csv=await csvZip.file('AL-1_20240101.csv').async('string');assert.match(csv,/_processing_up_limit/);assert.match(csv,new RegExp(newer.id));
+    assert.match(csv.split('\r\n')[0],/battery,ch15/);assert.match(csv,/4.1,extra-channel/);
     const zipped=await processedDataResponse(d,{...options,url:new URL('http://localhost/api/data?download=1&format=csvzip')});
     const archive=await JSZip.loadAsync(await zipped.arrayBuffer(),{checkCRC32:true});
-    assert.match(await archive.file('processed_AL-1.csv').async('string'),new RegExp(newer.id));
+    assert.match(await archive.file('AL-1_20240101.csv').async('string'),new RegExp(newer.id));
     const disjoint=await (await processedDataResponse(d,{...options,ranges:[{start:sample(30).timestamp,end:sample(32).timestamp},{start:sample(58).timestamp,end:sample(60).timestamp}],url:new URL('http://localhost/api/data')})).json();assert.equal(disjoint.data.length,6);
     await assert.rejects(()=>processedDataResponse(d,{...options,url:pinned,authorize:async()=>{throw Object.assign(new Error('permission revoked'),{status:403});}}),e=>e.status===403);
     await assert.rejects(()=>processedDataResponse(d,{...options,end:sample(90).timestamp,ranges:[{start:options.start,end:sample(90).timestamp}],url:pinned}),e=>e.status===409);
@@ -264,7 +305,7 @@ test('measurement API exposes completed results, paginates a pinned file and ret
   process.env.CALIBRATION_RESULT_DIR=root;let me={role:'admin',email:'admin'},allow=true,permissionChecks=0;
   class AppError extends Error{constructor(status,message){super(message);this.status=status;}}
   const server={AppError,identity:async()=>me,fail:e=>Response.json({error:e.message},{status:e.status||500}),required:v=>v,instant:v=>new Date(v).toISOString(),authorizedDataRanges:async(m,id,start,end)=>[{start,end}],permitted:async()=>{permissionChecks++;if(!allow)throw new AppError(403,'denied');}};
-  const deps={'@/lib/server':server,'@/lib/permissions.mjs':permissions,'@/lib/download-segments.mjs':{},'@/lib/data':{fetchPage:()=>{throw new Error('must not query MySQL');}},'@/lib/processed-query.mjs':{processedDataResponse},'@/lib/store.mjs':{getConnection:()=>d}};
+  const deps={'@/lib/export-name.mjs':exportNames,'@/lib/server':server,'@/lib/permissions.mjs':permissions,'@/lib/download-segments.mjs':{},'@/lib/data':{fetchPage:()=>{throw new Error('must not query MySQL');}},'@/lib/processed-query.mjs':{processedDataResponse},'@/lib/store.mjs':{getConnection:()=>d}};
   const code=ts.transpileModule(readFileSync(new URL('../app/api/data/route.ts',import.meta.url),'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;
   const module={exports:{}};new Function('require','module','exports',code)(key=>{assert.ok(key in deps,key);return deps[key];},module,module.exports);
   try{

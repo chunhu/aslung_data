@@ -30,6 +30,7 @@ COPY --from=builder --chown=aslung:aslung /app/scripts ./scripts
 COPY --from=builder --chown=aslung:aslung /app/lib/store.mjs /app/lib/passwords.mjs /app/lib/registration.mjs /app/lib/countries.mjs /app/lib/member-access.mjs /app/lib/permissions.mjs ./lib/
 COPY --from=builder --chown=aslung:aslung /app/lib/maintainer-links.mjs /app/lib/alert-policy.mjs ./lib/
 COPY --from=builder --chown=aslung:aslung /app/lib/s3-storage.mjs /app/lib/processing-storage.mjs ./lib/
+COPY --from=builder --chown=aslung:aslung /app/lib/export-name.mjs ./lib/
 COPY --from=builder --chown=aslung:aslung /app/lib/processing-jobs.mjs /app/lib/processing-raw.mjs /app/lib/global-processing.mjs /app/lib/measurement-processing.mjs /app/lib/calibration.mjs /app/lib/calibration-dates.mjs /app/lib/calibration-google.mjs /app/lib/fleet-import.mjs ./lib/
 RUN mkdir -p /app/data /app/backups && chown -R aslung:aslung /app/data /app/backups
 USER aslung
