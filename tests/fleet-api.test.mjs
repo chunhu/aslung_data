@@ -28,11 +28,16 @@ test('fleet API enforces admin and origin, previews without mutation and validat
     assert.equal((await post({action:'quick',id:'AL-1',field:'status',status:'STANDBY'})).status,403);
     assert.equal((await route.GET(new Request('http://fleet.test/api/fleet?id=AL-1'))).status,403);
     role='admin';
-    const text='lab_id,device_id,device_type,start_date\nN1,AL-1,aslung,2026-10-01';
+    const text='lab_id,device_id,device_type,maintainer,start_date\nN1,AL-1,aslung,XXX,2026-10-01';
     const response=await post({action:'previewImport',text});assert.equal(response.status,200);
     const preview=await response.json();assert.equal(preview.added,1);assert.equal(preview.canApply,true);
+    assert.equal(preview.records[0].maintainer,'XXX');
+    const notice=preview.issues.find(issue=>issue.message.includes('負責人「XXX」尚未建檔'));
+    assert.equal(notice.level,'warning');assert.match(notice.message,/直接匯入/);
     assert.equal(d.prepare('SELECT COUNT(*) AS n FROM devices').get().n,0);
     assert.equal((await post({action:'applyImport',text,fingerprint:preview.fingerprint})).status,200);
+    assert.equal(d.prepare('SELECT maintainer FROM device_locations WHERE aslung_id=?').get('AL-1').maintainer,'XXX');
+    assert.equal(d.prepare('SELECT COUNT(*) AS n FROM maintainers').get().n,0);
     const history=await route.GET(new Request('http://fleet.test/api/fleet?id=AL-1'));assert.equal(history.status,200);
     assert.equal((await history.json()).events[0].actor,'admin@example.test');
     assert.equal((await route.GET(new Request('http://fleet.test/api/fleet?id=unknown'))).status,404);
