@@ -53,7 +53,7 @@ const flags=[
 ];
 const coefficientFlags=[
   ['CALIBRATED','已完成單純係數計算。','Coefficient calculation succeeded.'],
-  ['INVALID_RAW','原始值不是有效的數值型別。','Input is not a valid numeric value.'],
+  ['INVALID_RAW','原始值缺漏、無法解析或不是有限數值。支援十進位數字字串（含前後空白、小數及科學記號）。','Missing, unparseable or non-finite input. Decimal numeric strings, including surrounding whitespace, decimals and scientific notation, are accepted.'],
   ['CONFLICT','有多筆適用係數。','Multiple coefficients match.'],
   ['NO_FACTOR','沒有適用係數。','No applicable coefficient.'],
   ['INVALID_RESULT','計算結果不是有限數值。','Result is not finite.'],
@@ -82,7 +82,7 @@ export function fieldGuideHtml(language){
 <nav aria-label="${t('文件目錄','Contents')}">${[['modes',t('查詢模式','Query modes')],['raw',t('原始欄位','Raw fields')],['stages',t('校正階段','Processing stages')],['meta',t('版本與品質','Versions and quality')],['rules',t('六項規則','Six rules')],['flags',t('旗標對照','Flag reference')],['downloads',t('時間與下載','Time and downloads')]].map(([id,label])=>`<a href="#${id}">${label}</a>`).join('')}</nav>
 <section id="modes"><h2>${t('1. 三種查詢模式','1. Three query modes')}</h2>${table([
   ['原始值 / raw','直接查詢原始量測，不新增清理或校正欄位。','Queries raw measurements without adding cleaning or calibration fields.'],
-  ['原始值＋即時計算係數 / both','只套用係數，新增 *_calibrated、*_calibration_status、版本與記錄 ID；不執行六項清理規則，不產生 *_final。此模式保留負校正結果。','Applies coefficients only; adds *_calibrated, *_calibration_status and coefficient IDs. Does not apply the six cleaning rules or produce *_final. Negative calibrated results are retained in this mode.'],
+  ['原始值＋即時計算係數 / both','只套用係數，新增 *_calibrated、*_calibration_status、版本與記錄 ID；支援原始數值及十進位數字字串，原始內容保留。不執行六項清理規則，不產生 *_final；此模式保留負校正結果。','Applies coefficients only; adds *_calibrated, *_calibration_status and coefficient IDs. Accepts numbers and decimal numeric strings while preserving raw input. Does not apply the six cleaning rules or produce *_final. Negative calibrated results are retained in this mode.'],
   ['已完成清理與校正 / processed','讀取背景已完成的六項規則成果，含原始值、*_clean、*_calibrated、*_final 與品質資訊。未完成期間會列出缺漏，不用原始值補齊。','Reads completed background six-rule results, including raw, *_clean, *_calibrated, *_final and quality fields. Missing periods are reported rather than filled with raw values.'],
 ])}</section>
 <section id="raw"><h2>${t('2. 原始量測欄位','2. Raw measurement fields')}</h2><p>${t('除明確說明的處理欄位外，各欄位沿用設備原始單位與格式；勿僅由欄名推定電壓、速度、濃度或座標的單位與編碼。','Unless specified as a processing field, values retain the device units and format. Do not infer voltage, speed, concentration or coordinate units/encoding solely from a column name.')}</p>${table(raw)}</section>

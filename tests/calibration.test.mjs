@@ -63,6 +63,24 @@ test('parses real headers, maps G3 and GSA independently, and ignores Factor_*',
   assert.equal(output.PM1_GSA_calibrated,31);assert.equal(output['PM2.5_G3_calibrated'],null);
   assert.equal(output['PM2.5_G3_calibration_status'],'INVALID_RAW');assert.equal(readings[0].PM1_G3_calibrated,undefined);
 });
+test('coefficient-only calibration accepts database numeric strings, preserves raw values and distinguishes missing factors',()=>{
+  const records=c.parseCalibrationCsv(csv(row('AL-1143'),row('AL-1143','PM2.5'),row('AL-1143','PM1_GSA'),row('AL-1143','PM2.5_GSA'))).map((r,i)=>({...r,id:i+1,version_id:1}));
+  const readings=['AL-1143','AL-1141','AL-1114'].map(aslung_id=>({aslung_id,timestamp:'2026-10-01T00:00:00Z',PM1_G3:'22','PM2.5_G3':'34',PM10_G3:'45',PM1_GSA:'22','PM2.5_GSA':'37',PM10_GSA:'51'}));
+  const original=JSON.stringify(readings),output=c.calibrateRows(readings,records);
+  assert.equal(output[0].PM1_G3,'22');assert.equal(output[0].PM1_G3_calibrated,64);assert.equal(output[0]['PM2.5_G3_calibrated'],100);
+  for(const channel of ['PM1_G3','PM2.5_G3','PM1_GSA','PM2.5_GSA'])assert.equal(output[0][channel+'_calibration_status'],'CALIBRATED');
+  assert.equal(output[0].PM10_G3_calibration_status,'NO_FACTOR');
+  for(const result of output.slice(1))for(const channel of Object.values(c.CHANNELS))assert.equal(result[channel+'_calibration_status'],'NO_FACTOR');
+  assert.equal(JSON.stringify(readings),original);
+  for(const [value,expected] of [[' 9 ',19],['1e1',28],['10.0',28],['.5',2],['0',1],['-2',-3]]){
+    const r=c.calibrateRows([{...readings[0],PM1_G3:value}],records)[0];assert.equal(r.PM1_G3_calibrated,expected);assert.equal(r.PM1_G3_calibration_status,'CALIBRATED');
+  }
+  const conflicts=c.calibrateRows(readings,[...records,...records]);assert.equal(conflicts[0].PM1_G3_calibration_status,'CONFLICT');
+  for(const value of ['', ' ', '0x10', '1mg', 'NaN', 'Infinity', '1e999',null,undefined,true,[],{},NaN,Infinity]){
+    const r=c.calibrateRows([{...readings[0],PM1_G3:value}],records)[0];assert.equal(r.PM1_G3_calibration_status,'INVALID_RAW');assert.equal(r.PM1_G3_calibrated,null);
+  }
+});
+
 test('blank end dates form consecutive periods; explicit end dates include the whole Taiwan date',()=>{
   const records=c.parseCalibrationCsv(csv(row(),row('AL-0001','PM1','2025/01/01','2025/01/02')));
   assert.equal(records[0].end,records[1].start);assert.equal(records[1].end,'2025-01-02T16:00:00.000Z');
@@ -190,14 +208,14 @@ test('data API pins calibration versions across downloads and pagination, while 
     '@/lib/permissions.mjs':permissions,
     '@/lib/export-name.mjs':exportNames,'@/lib/data':{toCsv:rows=>JSON.stringify(rows),fetchPage:async(device,start,end,cursor)=>{
       fetches++;if(changeDuringFetch&&!cursor)await c.syncCalibrationSource(d,id,'test',async()=>csv(row().replace(',2,1,',',4,1,')),{force:true});
-      return {data:[{aslung_id:device,timestamp:'2024-01-01T01:00:00Z',PM1_G3:5}],next_cursor:cursor?null:'next',has_more:!cursor};
+      return {data:[{aslung_id:device,timestamp:'2024-01-01T01:00:00Z',PM1_G3:'5'}],next_cursor:cursor?null:'next',has_more:!cursor};
     }}
   });
   const request=query=>api.GET(new Request('http://test/api/data?'+new URLSearchParams({aslung_id:'AL-0001',start:'2024-01-01T00:00:00Z',end:'2024-01-02T00:00:00Z',...query})));
   try{
     await c.syncCalibrationSource(d,id,'test',async()=>csv(row()),{force:true});
     let response=await request({calibration:'both'});let first=await response.json();
-    assert.equal(first.data[0].PM1_G3_calibrated,11);assert.equal(first.data[0].PM1_G3,5);
+    assert.equal(first.data[0].PM1_G3_calibrated,11);assert.equal(first.data[0].PM1_G3,'5');
     const snapshot=first.calibration_snapshot;changeDuringFetch=true;
     const archive=await JSZip.loadAsync(await (await request({calibration:'both',download:'1',format:'json'})).arrayBuffer(),{checkCRC32:true});
     const download=JSON.parse(await archive.file('AL-0001_20240101_20240102.json').async('string'));
