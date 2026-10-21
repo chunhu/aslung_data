@@ -228,6 +228,8 @@ S3 清除須在現有 EC2 Role **額外新增** `scripts/iam-calibration-cleanup
 
 新建立的工作以 `rawSchema: all-fields-1` 固定完整原始欄位版本，保留 `rawdata` 所有欄位（時間轉為 `timestamp`），並附電池、加速度、GPS、氣壓、噪音及粒徑數量等易讀欄位名稱；原始 `ch*` 欄位仍保留。原始資料查詢亦提供完整欄位。舊成果不會從 MySQL 即時補欄位，歷史期間需「重新計算新版本」才能取得完整成果；混合新舊成果下載時，CSV 合併所有欄名，舊檔沒有的欄位留空。
 
+「資料查詢 → 查詢條件」提供「欄位資料說明」按鈕，依網站語言另開中／英文說明頁，整理原始欄位、三種查詢模式、清理／校正／最終值、品質旗標及下載時間與命名。說明頁可直接下載自包含 HTML 文件供離線閱讀，或使用列印另存 PDF。靜態文件位於 `public/docs/ASLUNG_Data_Fields_ZH.html` 與 `ASLUNG_Data_Fields_EN.html`；修改 `scripts/generate-data-field-guide.mjs` 後執行 `node scripts/generate-data-field-guide.mjs` 更新兩份文件，`--check` 可檢查文件是否與來源一致。
+
 下載 ZIP 與內部資料檔使用設備 ID 與臺灣日期，例如 `AL-1143_20261001.zip` 或 `AL-1143_20261001_20261031.zip`。單日背景工作結束時間不包含次日零時，檔名只顯示當日；資料查詢包含結束時間，檔名依實際查詢端點日期。每日儲存仍維持獨立成果，資料查詢可合併整段期間為一份 CSV。多設備／多區段下載仍為單一 ZIP，各區段檔名附 `segment-編號` 避免覆蓋，並保留下載清單。
 
 工作建立時固定完整係數快照、規則版本與 up_limit。相同請求可重用同一工作；補傳或修正原始資料後，請按「重新計算新版本」。獨立 worker 一次執行一個工作，以 2,000 筆區塊處理、各加前後最多 25 筆樣本；使用 keyset 分頁讀取 MySQL，不寫入 rawdata。前後背景不足時 `_background_status=INSUFFICIENT_CONTEXT`，後續補算可產生新版。目前依 Python 使用相鄰樣本，不額外依時間間隔切段。
