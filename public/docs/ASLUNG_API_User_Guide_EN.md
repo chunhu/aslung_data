@@ -1,231 +1,152 @@
-# ASLUNG Data Query and Download API User Guide
+# ASLUNG Data Query and Download API Guide
 
-This system provides a standard RESTful API for researchers, developers, and external applications (such as Python analytics scripts, data schedulers, and dashboards) to securely access authorized ASLUNG device monitoring data.
+Revised 22 October 2026. This guide replaces the earlier API instructions. See the Website User and Administration Manual for complete workflows. A token does not expand its owner's role, device or time permissions.
 
----
+## 1 Authentication
 
-## 1. Authentication
+Log in, open Data integration, and generate a token under My API access tokens. External programs send Authorization: Bearer YOUR_TOKEN. A logged-in same-origin browser may use its session cookie. Revoking a token stops applications using it. Never commit real tokens.
 
-The API uses **Bearer Token** authentication. Every HTTP request must include your dedicated token in the Request Header.
-
-### 1.1 How to Obtain an API Token
-1. Sign in to the ASLUNG Data Management Platform.
-2. In the left navigation menu, click **"System Connection Status"** (or Connection).
-3. In the **"My API Access Tokens"** section, click **"Generate Token"**.
-4. Copy the generated token string (e.g., `aslung_9f3a8b2c4d...`).
-
-### 1.2 HTTP Request Header Configuration
 ```http
-Authorization: Bearer aslung_your_token_here
+Authorization: Bearer YOUR_TOKEN
 ```
 
-> **Note**: When called directly within an authenticated browser session, the system automatically authenticates via the HttpOnly Session Cookie (`aslung_session`), and the `Authorization` header can be omitted.
+Use the institution's configured HTTPS base URL, for example `https://api.lunglab.rcec.sinica.edu.tw`. The example does not establish current DNS readiness. A local example is `http://127.0.0.1:3105`; use your actual development port.
 
----
+## 2 Endpoint and permissions
 
-## 2. API Endpoint & HTTP Method
+GET /api/data provides ASLUNG measurements. The server checks role, device, tracking segment and time grants. Viewers may query but cannot download measurements. Other non-admin roles still need data grants. Without segment_id, the whole requested interval must be authorized. With segment_id, the server queries the permitted intersection for that tracking segment.
 
-- **Server URL**: `https://api.lunglab.rcec.sinica.edu.tw/`
-- **Endpoint URL**: `https://api.lunglab.rcec.sinica.edu.tw/api/data` (Local development: `http://localhost:3000/api/data`)
-- **HTTP Method**: `GET`
-- **Data Protection**: Enforces server-side permission verification. Users can only query devices and time ranges explicitly granted by administrators.
+Non-admin queries and downloads are limited to 31 days. Admin is exempt from that date limit but remains subject to export, result-version and resource protections. Creating background processing jobs is independently limited to 31 days per request even for admin.
 
----
+## 3 Request parameters
 
-## 3. Query Parameters
+| Parameter | Required | Meaning |
+| --- | --- | --- |
+| aslung_id | Yes | Registered ASLUNG device ID |
+| start | Yes | Start time; explicitly zoned ISO 8601 recommended |
+| end | Yes | End time, not before start; both endpoints inclusive |
+| segment_id | No | Authorized tracking segment |
+| cursor | No | Previous next_cursor; treat as opaque |
+| calibration | No | raw default; both coefficient calculation; processed full background results |
+| calibration_snapshot | No | Reuse the returned both/processed snapshot |
+| download | No | 1 for a full download; otherwise paginated JSON |
+| format | No | csv or json; csvzip/jsonzip also accepted; all downloads are ZIP |
 
-| Parameter | Type | Required | Description | Example |
-| :--- | :--- | :---: | :--- | :--- |
-| `aslung_id` | `string` | **Yes** | Device identifier to query. | `AL-0001` |
-| `start` | `string` | **Yes** | Query start timestamp (**ISO 8601** format with timezone). | `2026-10-01T00:00:00+08:00` |
-| `end` | `string` | **Yes** | Query end timestamp (**ISO 8601** format with timezone). | `2026-10-07T23:59:59+08:00` |
-| `cursor` | `string` | No | Pagination cursor. When records exceed page limit, supply the `next_cursor` from the previous response. | `eyJ0aW1lIjoi...` |
-| `download` | `string` | No | When set to `1`, enables full download mode. The server automatically merges all pages within the interval. | `1` |
-| `format` | `string` | No | Export format: `json` or `csv` (default is `json`, requires `download=1`). | `csv` |
+Use a timestamp such as 2026-10-01T00:00:00+08:00 or 2026-09-30T16:00:00Z. Encode a plus sign as %2B. Prefer requests params or URLSearchParams. Although the server accepts some compatible Taiwan date forms, external programs should always provide an explicit timezone.
 
-> **Important Constraints**:
-> 1. The query duration (`end - start`) **must not exceed 31 days**. Requests exceeding 31 days will return HTTP 400.
-> 2. `start` must not be later than `end`.
-> 3. If you need data spanning more than 31 days, please split the requests into monthly batches.
+raw applies no coefficient. both retains originals and adds calibrated values, status and coefficient versions; equality at a breakpoint uses segment 2, and negative results are preserved. processed reads completed six-rule results rather than calculating them on demand. Incomplete coverage returns 409 without raw fallback, and actual Ghost Peak context samples must also be authorized.
 
----
+## 4 Fields and quality
 
-## 4. Sensor Data Field Specifications
+| Field | Mapping or interpretation |
+| --- | --- |
+| timestamp | UTC ISO 8601 measurement time normalized from time |
+| aslung_id / uid | Device identity; original names/aliases depend on mode |
+| PM1_G3, PM2.5_G3, PM10_G3 | Original G3 channels ch1 to ch3 |
+| temperature, rh, co2 | Original ch4 to ch6 readings |
+| battery | Raw ch7; device-defined units, not necessarily percent |
+| acc_x, acc_y, acc_z | Original ch8 to ch10 |
+| gps, gps_speed, gps_direction, gps_height | ch11 to ch14; encoding/units depend on device |
+| air_pressure, noise1, noise2, noise3 | Original ch21 to ch24 |
+| PM1_GSA, PM2.5_GSA, PM10_GSA | ch29 to ch31, processed separately from G3 |
+| Num_0.3_GSA through Num_10_GSA | Original ch32 to ch37 number channels |
+| ch* and other source columns | Current full-field outputs preserve rawdata columns |
+| clean, calibrated and final suffixes | Cleaning, coefficient and full-pipeline output as applicable |
+| calibration status/version fields | Preserve for traceability |
+| _quality and _background_status | Full-pipeline flags and context information |
 
-Each measurement record returned by the API contains the following fields:
+Sources may return numbers or numeric strings. Current calculations parse finite decimal strings while retaining original types. Null/blank is not zero. NO_FACTOR means no applicable coefficient; INVALID_RAW means invalid source input; CONFLICT or FACTOR_CONFLICT indicates ambiguous coefficients. Quality counts can include several flags on one observation and are not a count of deleted rows. See the website field guide for all fields and rules.
 
-| Field Name | Type | Unit / Description |
-| :--- | :--- | :--- |
-| `timestamp` | `string` | Measurement timestamp (ISO 8601 UTC format, e.g. `2026-10-01T08:00:15.000Z`) |
-| `aslung_id` | `string` | ASLUNG device identifier |
-| `PM1_G3` | `number` | PM1.0 mass concentration (Plantower G3 sensor, $\mu g/m^3$) |
-| `PM2.5_G3` | `number` | PM2.5 mass concentration (Plantower G3 sensor, $\mu g/m^3$) |
-| `PM10_G3` | `number` | PM10 mass concentration (Plantower G3 sensor, $\mu g/m^3$) |
-| `temperature` | `number` | Ambient temperature ($^\circ\text{C}$) |
-| `rh` | `number` | Relative humidity ($\%$) |
-| `co2` | `number` | Carbon dioxide concentration ($\text{ppm}$) |
-| `battery` | `number` | Device battery percentage ($\%$) |
-| `acc_x` | `number` | X-axis accelerometer reading |
-| `acc_y` | `number` | Y-axis accelerometer reading |
-| `acc_z` | `number` | Z-axis accelerometer reading |
-| `gps` | `string` | GPS coordinates |
-| `gps_speed` | `number` | Movement speed ($\text{km/h}$) |
-| `gps_direction` | `number` | Heading direction (degrees) |
-| `gps_height` | `number` | Altitude (meters) |
-| `air_pressure` | `number` | Atmospheric pressure ($\text{hPa}$) |
-| `noise1` | `number` | Noise sensor channel 1 ($\text{dB}$) |
-| `noise2` | `number` | Noise sensor channel 2 ($\text{dB}$) |
-| `noise3` | `number` | Noise sensor channel 3 ($\text{dB}$) |
-| `PM1_GSA` | `number` | PM1.0 mass concentration (GSA sensor, $\mu g/m^3$) |
-| `PM2.5_GSA` | `number` | PM2.5 mass concentration (GSA sensor, $\mu g/m^3$) |
-| `PM10_GSA` | `number` | PM10 mass concentration (GSA sensor, $\mu g/m^3$) |
-| `Num_0.3_GSA` | `number` | Particle count $\ge 0.3\,\mu m$ |
-| `Num_0.5_GSA` | `number` | Particle count $\ge 0.5\,\mu m$ |
-| `Num_1.0_GSA` | `number` | Particle count $\ge 1.0\,\mu m$ |
-| `Num_2.5_GSA` | `number` | Particle count $\ge 2.5\,\mu m$ |
-| `Num_5.0_GSA` | `number` | Particle count $\ge 5.0\,\mu m$ |
-| `Num_10_GSA` | `number` | Particle count $\ge 10\,\mu m$ |
+## 5 Responses and downloads
 
----
+Ordinary paginated JSON normally returns up to 1,000 observations with data, has_more, next_cursor, calibration, calibration_snapshot and authorization metadata. Processed mode adds result-specific job/snapshot information. Follow has_more and next_cursor rather than guessing total history from an empty page.
 
-## 5. Response Examples
-
-### 5.1 Paginated Query Mode (Default)
-```http
-GET /api/data?aslung_id=AL-0001&start=2026-10-01T00:00:00%2B08:00&end=2026-10-02T00:00:00%2B08:00
-```
-
-**JSON Response Example**:
 ```json
 {
   "aslung_id": "AL-0001",
-  "start": "2026-09-30T16:00:00.000Z",
-  "end": "2026-10-01T16:00:00.000Z",
-  "data": [
-    {
-      "id": 105820,
-      "aslung_id": "AL-0001",
-      "timestamp": "2026-09-30T16:00:15.000Z",
-      "PM1_G3": 11.2,
-      "PM2.5_G3": 15.6,
-      "PM10_G3": 22.4,
-      "temperature": 27.5,
-      "rh": 68.2,
-      "co2": 510,
-      "battery": 98,
-      "PM1_GSA": 10.8,
-      "PM2.5_GSA": 14.9,
-      "PM10_GSA": 21.8
-    }
-  ],
-  "has_more": true,
-  "next_cursor": "eyJ0aW1lIjoiMjAyNi0wOS0zMCAxNjowMDoxNSIsImlkIjoxMDU4MjB9"
+  "data": [{"timestamp": "2026-10-01T00:00:00.000Z", "PM1_G3": 12}],
+  "has_more": false,
+  "next_cursor": null,
+  "calibration": "raw",
+  "calibration_snapshot": ""
 }
 ```
 
-> **Pagination note**: Each page returns up to 1,000 records. If `has_more` is `true`, pass `next_cursor` as the `cursor` query parameter in the subsequent request to retrieve the next page.
+With download=1, csv/csvzip returns a ZIP containing CSV, and json/jsonzip returns a ZIP containing JSON. Filenames use the device and Taiwan dates. The server streams and combines pages with iteration protections; excess data causes an error rather than silent truncation. The old fixed 50,000-row statement is obsolete. Inspect Content-Type and the actual downloaded file rather than assuming plain CSV or JSON.
 
----
+## 6 Program example
 
-### 5.2 Full Download Mode (CSV File)
-```http
-GET /api/data?aslung_id=AL-0001&start=2026-10-01T00:00:00%2B08:00&end=2026-10-07T23:59:59%2B08:00&download=1&format=csv
-```
-- Directly streams and downloads the CSV file (`aslung_AL-0001_export.csv`, UTF-8 encoded).
-
----
-
-## 6. Code Examples
-
-### 6.1 cURL Commands
-
-#### (1) Query Paginated JSON Data
-```bash
-curl -X GET "https://api.lunglab.rcec.sinica.edu.tw/api/data?aslung_id=AL-0001&start=2026-10-01T00:00:00%2B08:00&end=2026-10-03T00:00:00%2B08:00" \
-     -H "Authorization: Bearer aslung_your_token_here"
-```
-
-#### (2) Download Complete CSV File Directly
-```bash
-curl -X GET "https://api.lunglab.rcec.sinica.edu.tw/api/data?aslung_id=AL-0001&start=2026-10-01T00:00:00%2B08:00&end=2026-10-07T23:59:59%2B08:00&download=1&format=csv" \
-     -H "Authorization: Bearer aslung_your_token_here" \
-     -o output.csv
-```
-
----
-
-### 6.2 Python Script (Using `requests` and `pandas`)
+This example uses a placeholder device and environment variables. Supply a working URL, token and data authorization.
 
 ```python
+import os
 import io
+import zipfile
 import requests
-import pandas as pd
 
-API_URL = "https://api.lunglab.rcec.sinica.edu.tw/api/data"
-API_TOKEN = "aslung_your_token_here"
-DEVICE_ID = "AL-0001"
-START_TIME = "2026-10-01T00:00:00+08:00"
-END_TIME = "2026-10-05T23:59:59+08:00"
-
-headers = {
-    "Authorization": f"Bearer {API_TOKEN}"
+base = os.environ['ASLUNG_BASE_URL'].rstrip('/')
+headers = {'Authorization': 'Bearer ' + os.environ['ASLUNG_TOKEN']}
+params = {
+    'aslung_id': 'AL-0001',
+    'start': '2026-10-01T00:00:00+08:00',
+    'end': '2026-10-02T00:00:00+08:00',
+    'calibration': 'both',
 }
+while True:
+    response = requests.get(base + '/api/data', headers=headers,
+                            params=params, timeout=120)
+    response.raise_for_status()
+    page = response.json()
+    for row in page['data']:
+        print(row['timestamp'])
+    if 'calibration_snapshot' in page:
+        params['calibration_snapshot'] = page['calibration_snapshot']
+    if not page.get('has_more'):
+        break
+    cursor = page.get('next_cursor')
+    if not cursor or cursor == params.get('cursor'):
+        raise RuntimeError('Pagination did not advance')
+    params['cursor'] = cursor
 
-# Method 1: Directly stream into pandas DataFrame via download=1&format=csv
-csv_url = f"{API_URL}?aslung_id={DEVICE_ID}&start={START_TIME}&end={END_TIME}&download=1&format=csv"
-response = requests.get(csv_url, headers=headers)
-
-if response.status_code == 200:
-    df = pd.read_csv(io.StringIO(response.text))
-    print(f"Successfully downloaded {len(df)} records!")
-    print(df[["timestamp", "PM2.5_G3", "temperature", "rh", "co2"]].head())
-else:
-    print(f"Request failed ({response.status_code}):", response.text)
+params.pop('cursor', None)
+params.update(download='1', format='csv')
+response = requests.get(base + '/api/data', headers=headers,
+                        params=params, timeout=300)
+response.raise_for_status()
+with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+    csv_name = next(n for n in archive.namelist() if n.endswith('.csv'))
+    csv_text = archive.read(csv_name).decode('utf-8-sig')
+    print(csv_text.splitlines()[0])
 ```
 
----
+Website batch downloads additionally include a bilingual download_manifest.txt. Export success means the file was produced, not that every channel passed all quality conditions. Preserve manifests and versions.
 
-### 6.3 JavaScript / Node.js Example
+## 7 Errors
 
-```javascript
-const API_URL = "https://api.lunglab.rcec.sinica.edu.tw/api/data";
-const API_TOKEN = "aslung_your_token_here";
+| HTTP | Action |
+| --- | --- |
+| 400 | Correct dates, parameters, mode or the non-admin 31-day interval |
+| 401 | Log in or check the ASLUNG token |
+| 403 | Check device/segment/time grants, viewer restrictions and context permission |
+| 404 | Check that the device, job or file exists |
+| 409 | Wait for complete results or obtain a fresh snapshot/query |
+| 413 | Shorten the export interval or reduce result versions |
+| 502 or 503 | Check source, S3, configuration and worker; do not interpret as zero records |
 
-async function fetchSensorData() {
-  const params = new URLSearchParams({
-    aslung_id: "AL-0001",
-    start: "2026-10-01T00:00:00+08:00",
-    end: "2026-10-03T00:00:00+08:00"
-  });
+Avoid endless retries. Provide an administrator with the HTTP code, sanitized message, device and interval. The health endpoint does not validate every external service.
 
-  const res = await fetch(`${API_URL}?${params.toString()}`, {
-    method: "GET",
-    headers: {
-      "Authorization": `Bearer ${API_TOKEN}`,
-      "Accept": "application/json"
-    }
-  });
+## 8 Website HOBO query API
 
-  if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.error || "Query failed");
-  }
+HOBO and original ASLUNG observations are different datasets. GET /api/hobo currently requires admin. It searches imported local/S3 data and does not expose the LI-COR token to the browser.
 
-  const result = await res.json();
-  console.log(`Retrieved ${result.data.length} records:`, result.data[0]);
-}
+| Parameter | Meaning |
+| --- | --- |
+| action | query for pages; csv for a direct CSV; omitted for admin status |
+| serial | Logger Serial Number; required for query/csv |
+| start, end | Explicitly zoned ISO 8601, inclusive |
+| measurement | Optional case-insensitive substring of measurement type |
+| sensor | Optional case-insensitive substring of sensor serial |
+| q | Optional keyword across original fields; search strings limited to 160 characters |
+| after | Previous numeric next for query; first page 0 |
 
-fetchSensorData();
-```
-
----
-
-## 7. HTTP Status Codes & Error Handling
-
-| Status Code | Error Reason | Resolution |
-| :--- | :--- | :--- |
-| `400 Bad Request` | Missing required parameters, invalid date format, start time is after end time, or **interval exceeds 31 days**. | Verify parameter names, ISO 8601 formatting, and ensure the date range is $\le$ 31 days. |
-| `401 Unauthorized` | Missing Authorization token or invalid/revoked token. | Verify that the `Authorization: Bearer <Token>` header is properly configured. |
-| `403 Forbidden` | The account is **not authorized for this device**, or the queried interval is outside the approved access window. | Submit an access request via "Request Device Access" in the workspace, or contact the administrator. |
-| `404 Not Found` | Device ID (`aslung_id`) does not exist in the database. | Confirm the device ID spelling and status. |
-| `502 Bad Gateway` | EC2 MySQL database connection failed or query error. | Retry later or contact the system administrator to verify EC2 connection status. |
+query returns rows and next, up to 200 observations per page. next=null ends pagination. csv applies the same filters to all matching observations and returns direct CSV, unlike ASLUNG ZIP exports. Fields are logger_sn, sensor_sn, timestamp, data_type, data_type_id, value, unit and sensor_measurement_type, preserving UTC and source units. POST imports, cancellation, bulk operations and permanent cleanup are administrative actions that also require an Origin matching APP_ORIGIN. Keep research download scripts separate from destructive administration.

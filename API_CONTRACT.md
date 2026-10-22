@@ -1,79 +1,37 @@
-# 量測 API 規格
+# ASLUNG 資料存取規格
 
-會員 / 授權網站已完整包含；您原有資料庫的查詢服務尚待串接。
-若已有 API，可增加回應格式轉換。若沒有 API，需取得資料庫種類及欄位後建立。
+本文件更新於 2026-10-22。完整參數、欄位及程式範例請見 [中文 API 指南](docs/ASLUNG_API_User_Guide_ZH.md) 與 [English API guide](docs/ASLUNG_API_User_Guide_EN.md)。網站功能與管理操作請見 [完整網站手冊](docs/ASLUNG_Website_User_Manual_ZH.md)。
 
-## 來源設定
+## 資料來源與保存
 
-~~~dotenv
-EC2_DATA_API_URL=https://measurements.your-domain.com/api/measurements
-EC2_DATA_API_TOKEN=YOUR_SECRET_BEARER_TOKEN
-~~~
+ASLUNG 原始量測由後端透過 `mysql2` 直接查詢既有 MySQL `rawdata` 表；以 `uid` 對應設備、`time` 與 `id` 穩定分頁，保留來源欄位並提供量測別名。查詢使用參數化 SQL。量測來源應使用唯讀資料庫帳號，網路連線僅開放必要來源。
 
-URL 必須為有可信任憑證的 HTTPS；不忽略 TLS 驗證、不跟隨重新導向。
-Token 只從網站後端讀取。即使 API 位於同一 EC2，也需有可驗證的 HTTPS 端點。
-本包不直接連線 MySQL / PostgreSQL / MongoDB，不假設資料庫欄位。
+在 `.env` 設定 `MYSQL_HOST`、`MYSQL_USER`、`MYSQL_PASSWORD`、`MYSQL_DATABASE`。此版本不使用舊版文件中的 `EC2_DATA_API_URL`／`EC2_DATA_API_TOKEN` 代理架構。資料庫密碼只保存在後端，不寫入文件或前端。
 
-網站向來源送出 GET，Header 為 Authorization: Bearer YOUR_SECRET_BEARER_TOKEN。
+SQLite 保存會員、授權、設備履歷、工作紀錄、校正索引及 HOBO 本機資料等。校正成果與 HOBO 觀測可分別設定 `CALIBRATION_STORAGE=s3`、`HOBO_STORAGE=s3`，共用 `AWS_REGION`／`S3_BUCKET` 與 EC2 Role；SQLite 備份不等於 MySQL、S3 或本機成果目錄的完整備份。
 
-| 參數 | 規格 |
+## 網站提供的 API
+
+`GET /api/data` 使用登入 Cookie 或「資料串接」建立的 Bearer token；兩者均執行相同設備、期間與角色授權。停用帳號或撤銷 token 後不能繼續存取。一般帳號單次最多查詢 31 天；管理員不受此日期上限限制。
+
+| 參數 | 用途 |
 | --- | --- |
-| aslung_id | 完全相符的設備識別碼 |
-| start / end | 含 Z 的 ISO 8601 UTC，起訖均包含 |
-| limit | 每頁最多 1,000 筆 |
-| cursor | 下一頁游標，第一頁省略 |
+| `aslung_id` | 指定設備 |
+| `start` / `end` | ISO 8601，包含時區；原始量測查詢包含起訖 |
+| `segment_id` | 指定設備追蹤區段，依實際授權判斷 |
+| `calibration` | `raw`（預設）、`both`（即時係數）、`processed`（背景成果） |
+| `cursor` | 上頁回傳的游標；沿用相同設備、期間與模式 |
+| `calibration_snapshot` | 固定校正版本；背景成果分頁須沿用回應中的版本 |
+| `download` / `format` | `download=1` 配合 `csv`、`json`、`csvzip`、`jsonzip`；皆回傳 ZIP |
 
-來源應驗證 token，執行參數化查詢，以 timestamp + 唯一資料列 ID 穩定排序。
-游標須避免重複 / 遺漏。網站會再次驗證設備及時間，防止來源回傳越權資料。
+一般分頁回傳 `data`、`has_more`、`next_cursor` 等資訊，單頁最多 1,000 筆。背景成果未涵蓋所選區間會明確回報錯誤；不以原始資料冒充校正結果。下載 ZIP 的內容依模式包含資料檔及說明，應先解壓縮再解析 CSV／JSON，不能直接把 HTTP 回應當作純文字 CSV。請依設備及合理期間分批下載，勿假設固定 50,000 筆上限。
 
-回應範例（非實際資料）：
+CSV 包含 UTF-8 BOM，並保留來源欄位、校正中間值、品質標記及版本資訊（依模式與來源決定）。電池為來源 `ch7` 值，不可未經規格確認就視為百分比。
 
-~~~json
-{
-  "aslung_id": "ASLUNG_001",
-  "data": [
-    {
-      "timestamp": "2026-10-01T08:00:00+08:00",
-      "pn23_cm3": 125,
-      "pn10_cm3": 98,
-      "temperature_c": 26.5
-    }
-  ],
-  "has_more": false,
-  "next_cursor": null
-}
-~~~
+## HOBO
 
-- 外層 aslung_id 與請求一致。
-- data 為陣列，最多 1,000 筆、JSON 最多 5 MB。
-- 每列 timestamp 可解析且有 Z 或明確時區，落在請求期間內。
-- 每列若帶 aslung_id 也要與請求一致。
-- has_more 為布林值；true 時 next_cursor 為非空、不同於本頁的字串。
-- 最後一頁 has_more=false、next_cursor=null。
-- 無資料仍回 HTTP 200、data=[]、has_more=false。
-- 錯誤回適當 HTTP 狀態，不可假成功。
-- 單頁連線逾時 20 秒，完整下載最多 50 頁 / 50,000 筆；超限拒絕，不截斷。
-- 除 timestamp 外可增加量測欄位；pn23_cm3、pn10_cm3 保持來源各自原值。
+HOBO 來源使用伺服器端 `LICOR_API_TOKEN`，與本站會員 token 不同。`GET /api/hobo?action=query` 及 `action=csv` 限管理員，支援 `serial`、`start`、`end`、`measurement`、`sensor`、`q`；資料查詢另支援 `after`。HOBO CSV 是直接 CSV，與 ASLUNG ZIP 格式不同。同步工作按臺灣月份切割、按日請求，共用請求間隔與重試等待；詳見完整網站手冊。
 
-## 網站給會員的 JSON API
+## 錯誤與安全
 
-登入後，使用同源 Cookie：
-
-~~~http
-GET /api/data?aslung_id=ASLUNG_001&start=2026-10-01T00%3A00%3A00Z&end=2026-10-02T00%3A00%3A00Z
-~~~
-
-回應 aslung_id、start、end、data、has_more、next_cursor。
-下一頁沿用設備及期間，加上上頁 next_cursor 作為 cursor。
-
-加 download=1&format=json 可下載完整 JSON，format=csv 為 CSV。
-JSON 下載含 count；CSV 為 UTF-8 BOM。CSV 防範文字公式，數值維持原值。
-
-EC2_DATA_API_TOKEN 是來源 API 的憑證，不能用來略過本站會員權限。
-本站 API 沒有機器帳號 API key，若要自動跨系統傳遞需另外實作。
-
-## 後續需提供
-
-資料庫種類、設備 ID 欄位、時間欄位與時區、量測欄位與單位、
-唯一資料列 ID、既有 API 參數 / 回應範例。
-不需要把正式資料庫密碼寫進文件或提供給前端。
+401 表示尚未驗證或 token 無效，403 表示角色／資料授權不足，409 常見於背景成果尚未備齊或版本衝突。錯誤內容應作為排查線索，不將失敗回應視為成功資料。使用 HTTPS；不要將來源 token、會員 token 或資料庫密碼放在 URL、Git 或公開文件。

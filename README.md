@@ -1,5 +1,12 @@
 # ASLUNG EC2 部署版
 
+## 完整說明文件（2026-10-22）
+
+- [繁體中文網站手冊](docs/ASLUNG_Website_User_Manual_ZH.md)／[English website manual](docs/ASLUNG_Website_User_Manual_EN.md)
+- [中文 API 指南](docs/ASLUNG_API_User_Guide_ZH.md)／[English API guide](docs/ASLUNG_API_User_Guide_EN.md)
+- Word 與可離線閱讀的 HTML 在 `public/docs/`；網站「資料串接」提供閱讀與下載。
+- 維護 Markdown 後執行 `scripts/generate-website-docs.py`，同步四份 Word、HTML 與公開副本；`--check` 檢查副本一致性。
+
 維護人員可在新增／編輯表單填寫 `english_name`（英文完整稱呼，選填，最多 160 字）。中文介面保留原姓名，英文介面顯示已填寫的英文稱呼；未填時保留原名稱，姓名標記為不自動翻譯，名單不再顯示姓名首字圓形頭像。設備負責人、快速更新選單、維修保養與告警名單共用此顯示規則，選單儲存值仍使用原姓名，既有設備關聯及通知信箱不變。Google 試算表建議表頭為 `Cht_name | Eng_name | mail | mail_test`（不分大小寫、前後空白可忽略），`Cht_name` 作為中文姓名識別、`Eng_name` 作為英文稱呼，保留舊版 `maintainer` 表頭；若新舊表頭同時存在，以 `Cht_name`／`Eng_name` 優先。英文欄位亦相容 `english_name`、`name_en`、`英文名`、`英文名稱`、`英文稱呼` 或 `英文姓名` 欄位；沒有該欄位時保留手動設定，有該欄位但空白則清除英文稱呼。
 
 語系按鈕顯示可切換的目標語言：中文介面顯示 `English`，英文介面顯示 `中文`，不使用語系下拉選單。未手動選擇時依瀏覽器首選語言判定；`zh-TW`、`zh-Hant`、`zh-HK`、`zh-MO` 顯示繁體中文，簡體中文及其他語系顯示英文。明確的語言連結與手動切換會記住選擇，登入、註冊、Email 驗證及工作空間共用設定。登入與註冊頁切換語言不重新載入，保留表單內容；工作空間沿用現有 Google 翻譯機制並重新載入套用。
@@ -23,10 +30,12 @@ EC2 若已有獨立的 Nginx 設定，請在網站的 `server` 區塊設定 `cli
 
 ## 已包含功能
 
-- Email / 密碼登入；管理員開通或停用會員，無公開自行註冊。
+- Email / 密碼登入、自助註冊、Email 驗證與管理員審核；角色與資料授權分開管理。
 - 管理員建立 ASLUNG ID，指派各會員可存取的設備與資料起訖期間。
 - 期間查詢、資料表、JSON 預覽、CSV ZIP / JSON ZIP 下載。
-- 下載合併分頁，上限 50,000 筆；所有查詢與下載均檢查伺服器端授權。
+- 下載合併分頁；一般帳號單次最多 31 天，所有查詢與下載均檢查伺服器端授權。
+- 設備追蹤、維修、告警、校正管理、HOBO 定期同步，以及本機／S3 成果清除。
+- 個人 API token、原始／即時係數／背景成果查詢與中英文下載說明。
 - 密碼加鹽 scrypt 雜湊、HttpOnly Cookie、HTTPS 下 Secure Cookie。
 - 會員修改密碼；管理員終端建立帳號、重設密碼、一致性備份。
 - 修改、重設密碼或停用帳號後，該帳號所有登入工作階段失效。
@@ -36,7 +45,8 @@ EC2 若已有獨立的 Nginx 設定，請在網站的 `server` 區塊設定 `cli
 | 資料 | 保存位置 |
 | --- | --- |
 | 會員、登入、設備名稱與期間授權 | EC2 本機 SQLite，Docker 的 aslung-data 持久磁碟區 |
-| 量測資料 | 您原有 EC2 資料庫；網站透過 HTTPS API 查詢 |
+| 量測資料 | 既有 MySQL rawdata 表，由網站後端直接唯讀查詢 |
+| 校正成果、HOBO 觀測 | 本機持久目錄或 S3；設定與索引保存在 SQLite |
 | SQLite 備份 | Docker 的 aslung-backups 持久磁碟區 |
 
 此包不含您的真實量測資料、線上會員設定或任何密碼。
@@ -84,10 +94,7 @@ sudo docker compose exec app node scripts/create-admin.mjs
 設定正式 HTTPS 網域並完成 Nginx / TLS 後即可登入。
 管理員不會由第一位訪客自動建立，必须使用終端工具建立。
 
-未設定 EC2_DATA_API_URL / EC2_DATA_API_TOKEN 時，會員、設備與授權可正常設定。
-量測查詢會顯示尚未連接，不會填入模擬資料。
-若既有資料庫尚無 API，仍需依 API_CONTRACT.md 建立資料查詢服务。
-本包不假設您使用哪一種資料庫，也不會直接更動既有量測資料。
+ASLUNG 量測查詢須設定 `MYSQL_HOST`、`MYSQL_USER`、`MYSQL_PASSWORD`、`MYSQL_DATABASE`，並確認資料庫網路可達。HOBO 須另設 `LICOR_API_TOKEN`；寄信功能須完成網站 SMTP 設定。服務健康檢查不代表外部資料來源均已連通。
 
 ## 本機開發 / 非 Docker 執行
 
@@ -107,7 +114,7 @@ DATABASE_PATH=./data/aslung.sqlite
 BACKUP_PATH=./backups
 ~~~
 
-量測 API 設定可先留空。HTTP 僅適合本機測試。
+僅測試登入介面時可暫不設定 MySQL；實際量測查詢需完成來源連線。HTTP 僅適合本機測試。
 
 ~~~bash
 corepack pnpm admin:create
@@ -151,10 +158,8 @@ HTTP 測試自動選擇空閒本機埠，使用臨時 SQLite / 帳號，結束�
 
 ## 範圍
 
-此包適用單一 EC2 / 單一應用實例。SQLite 保存會員與授權，非量測資料倉庫。
-不含多實例共享帳號資料、自助註冊、郵件驗證、Email 寄送或 MFA。
-忘記密碼使用管理員終端重設工具。本站 JSON API 使用會員工作階段；
-機器帳號 API key / OAuth 需另外實作。
+此包適用單一 EC2 / 單一應用實例，網站與校正 worker 共用 SQLite 持久磁碟區。SQLite 保存設定、授權、工作索引及 HOBO 本機資料；ASLUNG 原始量測仍由 MySQL 提供。
+已包含自助註冊、郵件驗證、SMTP 通知與個人 API token；未提供多實例共享部署、OAuth 或 MFA。忘記密碼使用管理員終端重設工具。備份 SQLite 時，仍須另外保護 MySQL、本機成果及 S3 物件。
 
 
 ### 告警寄信規則與會員收信偏好

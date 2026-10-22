@@ -1,5 +1,7 @@
 # AWS EC2 部署指南
 
+更新：2026-10-22。使用者與管理功能另見 [中文完整手冊](docs/ASLUNG_Website_User_Manual_ZH.md)／[English manual](docs/ASLUNG_Website_User_Manual_EN.md)。API 範例請見 `docs/ASLUNG_API_User_Guide_ZH.md` 與 `_EN.md`。
+
 本專案使用 **Ubuntu 24.04 LTS**、**Docker Engine / Compose**、**Nginx**，並強烈建議配置正式網域與 HTTPS，以符合安全性最佳實踐。
 
 建置建議預留至少 4 GB 記憶體與 10 GB 可用磁碟空間（非強制規格）。
@@ -11,8 +13,8 @@
 
 1. **DNS 設定**：將您的網域 A 記錄（例如 `aslung.your-domain.com`）指向 EC2 的公開固定 IP（建議使用 AWS Elastic IP）。
 2. **Security Group 防火牆**：
-   * SSH `TCP 22`：僅允許管理員的 IP 存取。
-   * HTTP/HTTPS `TCP 80` 及 `TCP 443`：對全球開放（`0.0.0.0/0`）。
+   * SSH 實際使用的 TCP 埠（預設 22；若已改為 2222 則使用 2222）：僅允許管理員的 IP 存取。
+   * HTTP/HTTPS `TCP 80` 及 `TCP 443`：依機構政策開放需要的來源；公眾服務才開放全球。
    * 系統內部運行於 `127.0.0.1:3000`，**不需要**對外開放 3000 埠。
 3. **安裝 Docker 與 Nginx**：
    依據官方指示安裝 Docker Engine 與 Docker Compose，並安裝 Nginx 與 Unzip：
@@ -36,7 +38,8 @@ mkdir -p ~/aslung-deployment
 cd ~/aslung-deployment
 
 # 從 GitHub 拉取最新程式碼 (或上傳檔案)
-git clone https://github.com/chunhu/aslung_data.git .
+git clone --branch codex/calibration-management https://github.com/chunhu/aslung_data.git aslung_data
+cd aslung_data
 
 # 建立並編輯設定檔
 cp .env.example .env
@@ -52,9 +55,20 @@ APP_ORIGIN=https://aslung.your-domain.com
 DATABASE_PATH=/app/data/aslung.sqlite
 BACKUP_PATH=/app/backups
 
-# 若尚未串接測站資料庫，這兩項可留空
-EC2_DATA_API_URL=
-EC2_DATA_API_TOKEN=
+# ASLUNG 原始量測來源：既有 MySQL，使用唯讀帳號
+MYSQL_HOST=your-database-host
+MYSQL_USER=your-readonly-user
+MYSQL_PASSWORD=your-secret
+MYSQL_DATABASE=your-database
+
+# local 或 s3，兩種資料可獨立選擇儲存方式
+CALIBRATION_STORAGE=local
+HOBO_STORAGE=local
+AWS_REGION=ap-northeast-1
+S3_BUCKET=your-bucket
+LICOR_API_TOKEN=your-private-token
+HOBO_API_INTERVAL_MS=15000
+HOBO_MONTH_PAUSE_MS=60000
 
 NEXT_TELEMETRY_DISABLED=1
 ```
@@ -65,10 +79,10 @@ NEXT_TELEMETRY_DISABLED=1
 
 ```bash
 # 在背景啟動並建立容器
-sudo docker compose up -d --build
+sudo docker compose --profile calibration up -d --build
 
 # 確認服務運行狀態
-sudo docker compose ps
+sudo docker compose --profile calibration ps -a
 curl http://127.0.0.1:3000/api/health
 # 若回傳 {"status":"ok"} 代表啟動成功
 
@@ -134,20 +148,20 @@ curl --fail http://127.0.0.1:3000/api/health
 
 預期服務為 `enabled` / `active`，容器為 `healthy`，健康檢查回傳 `{"status":"ok"}`；最後以正式 HTTPS 網址確認網站可使用。失敗時查看 `sudo docker compose logs --tail=80 app` 及 `sudo journalctl -u docker -u nginx -b --no-pager -n 80`。
 
-## 5. 後續設定與資料庫串接
+## 5. 後續設定與資料來源驗證
 
 登入系統後，您可以開始進行下列管理：
 1. **ASLUNG ID 管理**：建立對應的設備 ID 供授權使用。
 2. **會員管理**：建立其他會員帳號（包含帳號暱稱與初始密碼），並將帳密交給對方。
 3. **資料授權**：指派特定會員可查詢的 ASLUNG ID 及時間範圍。
 
-若後續完成測站資料庫的串接 API 開發：
-```bash
-# 修改環境變數
-nano .env
+ASLUNG 已由後端直接查詢 MySQL，無須另建舊版文件中的量測代理 API。確認 MySQL 網路可達、帳密正確及 `rawdata` 結構，再用一台設備一天的期間驗證原始資料。SMTP 在網站管理頁設定；自助註冊需要驗證信及管理員審核，核准後仍須配置資料授權。
 
-# 重新建立容器載入最新環境變數
-sudo docker compose up -d --force-recreate
+HOBO 另需 `LICOR_API_TOKEN`。使用 S3 時，將讀寫政策及清除補充政策新增至目前 EC2 Role，依實際桶名替換政策範本資源；保留原有讀寫權限。範本為 `scripts/iam-calibration-cleanup.json`、`scripts/iam-hobo-cleanup.json`。先驗證一台一天的同步、查詢與下載，再執行歷史匯入。校正與 HOBO 排程沿用資料庫設定，啟動 worker 不代表已啟用排程。
+
+變更 `.env` 後需重新建立容器，單純 restart 不會載入新的容器環境變數：
+```bash
+sudo docker compose --profile calibration up -d --force-recreate
 ```
 
 ---
@@ -164,12 +178,14 @@ mkdir -p ~/aslung-backups
 sudo docker compose cp app:/app/backups/. ~/aslung-backups/
 ```
 
-**還原備份**（將備份檔覆蓋回資料庫）：
+**還原備份**（會覆蓋目前設定與紀錄，先另存目前備份並確認 restore.sqlite 是正確且完整的 SQLite 備份）：
+
+停止網站及 worker 後才能覆蓋。還原命令只處理 SQLite；一般上傳檔案、本機校正成果、MySQL 與 S3 需另外備份與一致性還原。刪除測試資料前建立的 SQLite 備份不會恢復已永久刪除的 S3 物件。
 ```bash
-sudo docker compose stop app
+sudo docker compose --profile calibration stop app calibration-worker
 # 將 restore.sqlite 覆蓋現有資料庫並清除暫存日誌
 sudo docker compose run --rm --no-deps -u root --entrypoint sh -v "$PWD/restore.sqlite:/restore.sqlite:ro" app -c 'cp /restore.sqlite /app/data/aslung.sqlite && rm -f /app/data/aslung.sqlite-wal /app/data/aslung.sqlite-shm && chown 1001:1001 /app/data/aslung.sqlite && chmod 600 /app/data/aslung.sqlite'
-sudo docker compose up -d
+sudo docker compose --profile calibration up -d
 ```
 
 ---
@@ -196,10 +212,26 @@ sudo docker compose up -d
 * **常見問題檢查清單**：
   * **無法登入**：請確認您使用的是 HTTPS 網址，並且網址列與 `.env` 中的 `APP_ORIGIN` 完全一致。
   * **發生 403 錯誤 (請從網站內送出操作)**：這通常也是因為網域設定不匹配導致 CSRF 阻擋，請檢查 `APP_ORIGIN`。
-  * **查詢資料 502 / 503**：請確認 `.env` 內的 API Token 格式正確或 API Endpoint 連線暢通。
+  * **查詢資料 502 / 503**：請先分辨 ASLUNG MySQL、背景成果覆蓋或 HOBO 來源錯誤；檢查對應連線、權限及 worker 日誌。
 
 
-## 後續部署：快取與耗時紀錄
+## 後續部署：網站與校正 worker
+
+目前包含校正與 HOBO 的部署請使用：
+
+```bash
+cd ~/aslung-deployment/aslung_data
+sudo bash scripts/deploy_cal.sh
+sudo docker compose --profile calibration ps -a
+curl -sS --max-time 15 http://127.0.0.1:3000/api/health
+sudo docker compose --profile calibration logs --tail=80 calibration-worker
+```
+
+腳本會檢查 Git 狀態、建置、檢查儲存設定、備份並更新網站與 worker；排程沿用資料庫設定。`health=ok` 只表示網站可回應，外部資料來源須另行驗證。手動停止的 worker 不會僅因開機就恢復，可用 `sudo docker compose --profile calibration start calibration-worker` 明確啟動現有容器。
+
+## 一般網站部署腳本：快取與耗時紀錄
+
+以下 `deploy.sh` 說明適用一般網站更新；完整校正／HOBO 部署以本節前述 `deploy_cal.sh` 為準。
 
 在 EC2 專案根目錄執行：
 
