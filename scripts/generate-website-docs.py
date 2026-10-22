@@ -223,16 +223,25 @@ def main():
         source = source_path.read_text(encoding="utf-8")
         web = web_document(stem, source)
         target_docx = ROOT / "docs" / (stem + ".docx")
+        private = "Website_User_Manual" in stem
+        destination = ROOT / "docs" if private else output
         if args.check:
-            assert (output / (stem + ".md")).read_text(encoding="utf-8") == source, stem
-            assert (output / (stem + ".html")).read_text(encoding="utf-8") == web, stem
-            assert (output / (stem + ".docx")).read_bytes() == target_docx.read_bytes(), stem
+            assert (destination / (stem + ".md")).read_text(encoding="utf-8") == source, stem
+            assert (destination / (stem + ".html")).read_text(encoding="utf-8") == web, stem
+            assert (destination / (stem + ".docx")).read_bytes() == target_docx.read_bytes(), stem
+            if private:
+                assert not any((output / (stem + suffix)).exists() for suffix in (".md", ".html", ".docx")), stem
         else:
             if not args.publish_only:
                 word_document(stem, source, target_docx)
-            (output / (stem + ".md")).write_text(source, encoding="utf-8")
-            (output / (stem + ".html")).write_text(web, encoding="utf-8")
-            shutil.copyfile(target_docx, output / target_docx.name)
+            (destination / (stem + ".html")).write_text(web, encoding="utf-8")
+            if not private:
+                (output / (stem + ".md")).write_text(source, encoding="utf-8")
+                shutil.copyfile(target_docx, output / target_docx.name)
+            else:
+                # Remove stale public copies when republishing an older checkout.
+                for suffix in (".md", ".html", ".docx"):
+                    (output / (stem + suffix)).unlink(missing_ok=True)
         print(("Checked " if args.check else "Published ") + stem)
 
 

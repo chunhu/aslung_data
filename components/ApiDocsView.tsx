@@ -5,9 +5,10 @@ import { BookOpen, Download, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
-export default function ApiDocsView({ initialLang }: { initialLang?: "zh" | "en" } = {}) {
+export default function ApiDocsView({ initialLang, isAdmin = false }: { initialLang?: "zh" | "en"; isAdmin?: boolean } = {}) {
   const [lang, setLang] = useState<"zh" | "en">(initialLang || "zh");
-  const [guide, setGuide] = useState("website");
+  const [selectedGuide, setGuide] = useState(isAdmin ? "website" : "api");
+  const guide = isAdmin && selectedGuide === "website" ? "website" : "api";
   useEffect(() => { if (initialLang) setLang(initialLang); }, [initialLang]);
   const isZh = lang === "zh";
   const title = guide === "website"
@@ -20,16 +21,18 @@ export default function ApiDocsView({ initialLang }: { initialLang?: "zh" | "en"
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h2 className="flex items-center gap-2 text-2xl font-semibold"><BookOpen className="size-6" />{isZh ? "說明文件" : "Documentation"}</h2>
-          <p className="mt-2 text-sm text-muted-foreground">{isZh ? "涵蓋資料查詢、下載、設備管理、校正、HOBO 與維運；可線上閱讀或下載。" : "Read or download instructions for queries, exports, fleet management, calibration, HOBO and operations."}</p>
+          <p className="mt-2 text-sm text-muted-foreground">{isAdmin
+            ? (isZh ? "涵蓋資料查詢、下載、設備管理、校正、HOBO 與維運；可線上閱讀或下載。" : "Read or download instructions for queries, exports, fleet management, calibration, HOBO and operations.")
+            : (isZh ? "閱讀或下載 API 串接、資料查詢與下載說明。" : "Read or download API integration, query and export instructions.")}</p>
         </div>
         <Button variant="outline" onClick={() => setLang(isZh ? "en" : "zh")}>{isZh ? "English" : "中文"}</Button>
       </div>
-      <Tabs value={guide} onValueChange={setGuide}>
+      {isAdmin && <Tabs value={guide} onValueChange={setGuide}>
         <TabsList className="h-auto flex-wrap">
           <TabsTrigger value="website">{isZh ? "完整網站說明" : "Website manual"}</TabsTrigger>
           <TabsTrigger value="api">{isZh ? "API 使用說明" : "API guide"}</TabsTrigger>
         </TabsList>
-      </Tabs>
+      </Tabs>}
       <div className="flex flex-wrap gap-3">
         <Button asChild variant="outline"><a href={`${stem}.docx`} download><Download className="size-4" />{isZh ? "下載 Word" : "Download Word"}</a></Button>
         <Button asChild variant="outline"><a href={`${stem}.md`} download>{isZh ? "下載 Markdown" : "Download Markdown"}</a></Button>
