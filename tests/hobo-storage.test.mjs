@@ -5,7 +5,7 @@ import {Readable} from 'node:stream';
 import {readFileSync} from 'node:fs';
 import ts from 'typescript';
 import {ensureHoboSchema,saveHoboLogger,queueHoboSync,manageHoboJobs,runHoboSync,hoboRevision,hoboStatus,withHoboLock,HoboError} from '../lib/hobo.mjs';
-import {archiveNextHoboDay,queryStoredHobo,storedHoboCsvStream,readHoboArchive,hoboObjectVersions,purgeHoboScope,hoboStorageConfiguration,hoboDayRange} from '../lib/hobo-storage.mjs';
+import {hoboDeviceOverview,archiveNextHoboDay,queryStoredHobo,storedHoboCsvStream,readHoboArchive,hoboObjectVersions,purgeHoboScope,hoboStorageConfiguration,hoboDayRange} from '../lib/hobo-storage.mjs';
 import {previewHoboCleanup,confirmHoboCleanup,runHoboCleanup,hoboCleanupStatus} from '../lib/hobo-cleanup.mjs';
 const serial='20720755',start='2026-10-01T00:00:00.000Z',end='2026-10-01T00:00:01.000Z';
 const configuration={mode:'s3',bucket:'aslung-calibration-prod-20261020',region:'ap-northeast-1'};
@@ -212,4 +212,43 @@ test('repeat archival verifies remote content before dropping staging and still 
   await archiveNextHoboDay(d,migrated);
   assert.equal(client.objects.size,2);assert.equal(d.prepare('SELECT bucket FROM hobo_archives').get().bucket,'another-hobo-bucket');
   assert.equal(d.prepare('SELECT COUNT(*) n FROM hobo_observations').get().n,0);d.close();
+});
+
+
+test('device overview includes empty devices, exact mixed bounds and separate overlapping counts without S3 reads for new archives',async()=>{
+  const d=database(),client=new FakeS3(),options={configuration,clientFor:()=>client};
+  saveHoboLogger(d,{serial:'20611824',name:'empty',start,enabled:false});
+  await seed(d,[row(start,1),row(end,2)]);await archiveNextHoboDay(d,options);
+  await seed(d,[row(end,3)]);client.calls=[];
+  const result=await hoboDeviceOverview(d,options),logger=result.loggers.find(l=>l.serial===serial),empty=result.loggers.find(l=>l.serial==='20611824');
+  assert.equal(result.loggers.length,2);assert.equal(logger.observations,1);assert.equal(logger.archived,2);
+  assert.equal(logger.first,start);assert.equal(logger.latest,end);assert.equal(logger.first_error,'');
+  assert.equal(empty.first,null);assert.equal(empty.latest,null);assert.equal(empty.observations,0);
+  assert.equal(client.calls.length,0);d.close();
+});
+
+test('legacy overview reads only the earliest device day once and caches its exact first timestamp',async()=>{
+  const d=database(),client=new FakeS3(),options={configuration,clientFor:()=>client};
+  await seed(d,[row(start,1),row(end,2)]);await archiveNextHoboDay(d,options);
+  const r=row('2026-10-02T00:00:00.000Z',4);
+  d.prepare('INSERT INTO hobo_observations VALUES(?,?,?,?,?,?,?,?)').run(...['logger_sn','sensor_sn','timestamp','data_type','data_type_id','value','unit','sensor_measurement_type'].map(key=>r[key]));
+  await archiveNextHoboDay(d,options);d.exec('DELETE FROM hobo_archive_bounds');client.calls=[];
+  assert.equal((await hoboDeviceOverview(d,options)).loggers[0].first,start);
+  assert.equal(client.calls.filter(c=>c.name==='GetObjectCommand').length,1);
+  await hoboDeviceOverview(d,options);assert.equal(client.calls.length,1);
+  d.exec('DELETE FROM hobo_archives');assert.equal(d.prepare('SELECT COUNT(*) n FROM hobo_archive_bounds').get().n,0);d.close();
+});
+
+test('overview reports partial errors and refuses stale bounds if data changes during a legacy archive read',async()=>{
+  const d=database(),client=new FakeS3(),options={configuration,clientFor:()=>client};
+  saveHoboLogger(d,{serial:'20611824',name:'empty',start,enabled:false});
+  await seed(d);await archiveNextHoboDay(d,options);d.exec('DELETE FROM hobo_archive_bounds');client.badDigest=true;
+  let result=await hoboDeviceOverview(d,options),logger=result.loggers.find(l=>l.serial===serial);
+  assert.equal(logger.first,null);assert.ok(logger.first_error);assert.equal(logger.archived,1);
+  assert.equal(result.loggers.find(l=>l.serial==='20611824').first_error,'');
+  client.badDigest=false;const send=client.send.bind(client);
+  client.send=async command=>{const result=await send(command);if(command.constructor.name==='GetObjectCommand')hoboRevision(d,serial);return result;};
+  logger=(await hoboDeviceOverview(d,options)).loggers.find(l=>l.serial===serial);
+  assert.match(logger.first_error,/已更新/);assert.equal(logger.first,null);
+  assert.equal(d.prepare('SELECT COUNT(*) n FROM hobo_archive_bounds').get().n,0);d.close();
 });

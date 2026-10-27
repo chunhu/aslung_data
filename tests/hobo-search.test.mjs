@@ -16,6 +16,7 @@ function component(file,states,extra={}){
     '@/components/HoboDeviceSelect':{default:()=>React.createElement('button',{role:'combobox'},'選擇 HOBO 設備')},
     '@/components/HoboDataSearch':{default:()=>React.createElement('section',null,'HOBO 資料搜尋')},
     '@/components/HoboSyncJobs':{default:()=>null},
+    '@/components/HoboDeviceOverview':{default:()=>null},
     '@/components/ui/dialog':Object.fromEntries(['Dialog','DialogContent','DialogHeader','DialogTitle','DialogDescription'].map(name=>[name,tag('div')])),
     '@/components/HoboCleanup':{default:()=>null},'@/components/HoboCancelSync':{default:()=>null},
     '@/lib/hobo-rcec-loggers.json':{default:JSON.parse(readFileSync(new URL('../lib/hobo-rcec-loggers.json',import.meta.url),'utf8'))},...extra};
@@ -86,4 +87,37 @@ test('bulk confirmation sends the frozen selected job IDs rather than other visi
   let changed=0;const tree=View({api:async(url,options)=>{calls.push(JSON.parse(options.body));return {cancelled:1,skipped:0};},jobs,timezone:'Asia/Taipei',onChange:()=>{changed++;}});
   find(tree,node=>node.props.children==='確認批量取消').props.onClick();await new Promise(resolve=>setImmediate(resolve));
   assert.deepEqual(calls,[{action:'jobsBulk',operation:'cancel',ids:['one'],confirmation:'CANCEL'}]);assert.equal(changed,1);
+});
+
+
+test('all-device overview is optional and renders every device with counts and first/last UTC times',()=>{
+  const loggers=[{serial:'20720755',name:'first',observations:2,archived:10,first:'2025-01-01T00:00:00Z',latest:'2026-10-01T00:00:00Z'},{serial:'20611824',name:'empty',observations:0,archived:0,first:null,latest:null}];
+  let {View}=component('HoboDeviceOverview.tsx',[]);
+  let html=renderToStaticMarkup(React.createElement(View,{api:()=>assert.fail(),loggers,selectedSerial:'',onSelect:()=>{},refreshKey:0}));
+  assert.ok(html.includes('顯示全部設備摘要'));assert.ok(!html.includes('<table'));
+  const chosen=[];
+  ({View}=component('HoboDeviceOverview.tsx',[true,{loggers,generated_at:'2026-10-27T00:00:00Z'},false,'',0]));
+  const tree=View({api:()=>assert.fail(),loggers,selectedSerial:'20720755',onSelect:id=>chosen.push(id),refreshKey:0});html=renderToStaticMarkup(tree);
+  for(const text of ['20720755','20611824','2025-01-01T00:00:00Z','2026-10-01T00:00:00Z','第一筆時間','最後一筆時間','請勿直接相加'])assert.ok(html.includes(text),text);
+  assert.equal((html.match(/<tr/g)||[]).length,3);assert.match(html,/>0<\/td>/);
+  find(tree,node=>node.props.children==='選取').props.onClick();assert.deepEqual(chosen,['20720755']);
+});
+
+test('registered device heading follows actual device count rather than the initial preset',()=>{
+  const loggers=Array.from({length:25},(_,i)=>({serial:String(20720700+i),name:'device',observations:0,archived:0}));
+  const {View}=component('HoboView.tsx',[{configured:true,loggers,jobs:[]},'','',false,'']);
+  const html=renderToStaticMarkup(React.createElement(View,{api:()=>assert.fail(),timezone:'Asia/Taipei'}));assert.ok(html.includes('HOBO 設備（25 台）'));
+});
+
+
+test('overview loads only when expanded, and ignores a late response after closing',async()=>{
+  const effects=[],calls=[];let resolveRequest;
+  const react={...React,useState:initial=>[initial===false?true:initial,()=>{}],useEffect:effect=>effects.push(effect)};
+  const {View}=component('HoboDeviceOverview.tsx',[],{react});
+  View({api:(url,options)=>{calls.push({url,options});return new Promise(resolve=>{resolveRequest=resolve;});},loggers:[{serial:'20720755'}],selectedSerial:'',onSelect:()=>{},refreshKey:0});
+  const cleanup=effects[0]();assert.equal(calls.length,1);assert.equal(calls[0].url,'/api/hobo?action=overview');
+  cleanup();assert.equal(calls[0].options.signal.aborted,true);resolveRequest({loggers:[],generated_at:''});await new Promise(resolve=>setImmediate(resolve));
+  const collapsed=[];
+  const {View:Closed}=component('HoboDeviceOverview.tsx',[],{react:{...React,useState:initial=>[initial,()=>{}],useEffect:effect=>collapsed.push(effect)}});
+  Closed({api:()=>assert.fail('collapsed overview must not fetch'),loggers:[],selectedSerial:'',onSelect:()=>{},refreshKey:0});collapsed[0]();
 });

@@ -1,7 +1,7 @@
 import {identity,writeGuard,AppError,fail} from '@/lib/server';
 import {getConnection} from '@/lib/store.mjs';
 import {HoboError,hoboStatus,saveHoboLogger,saveHoboBatch,queueHoboSync,retryHoboSync,cancelHoboSync,manageHoboJobs,hoboRange,hoboSerial} from '@/lib/hobo.mjs';
-import {queryStoredHobo,storedHoboCsvStream} from '@/lib/hobo-storage.mjs';
+import {queryStoredHobo,storedHoboCsvStream,hoboDeviceOverview} from '@/lib/hobo-storage.mjs';
 export const runtime='nodejs';
 export const dynamic='force-dynamic';
 const headers={'Cache-Control':'no-store'};
@@ -10,6 +10,7 @@ function failure(e:unknown){return fail(e instanceof HoboError?new AppError(e.st
 export async function GET(req:Request){try{
   await access(req);const url=new URL(req.url),action=url.searchParams.get('action')||'status',d=getConnection();
   if(action==='status')return Response.json(hoboStatus(d),{headers});
+  if(action==='overview')return Response.json(await hoboDeviceOverview(d),{headers});
   const serial=hoboSerial(url.searchParams.get('serial'));
   const {start,end}=hoboRange(url.searchParams.get('start'),url.searchParams.get('end'));
   const filters={measurement:url.searchParams.get('measurement')||'',sensor:url.searchParams.get('sensor')||'',q:url.searchParams.get('q')||''};

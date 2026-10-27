@@ -268,10 +268,13 @@ test('HOBO API rejects non-admin read/write/download, enforces origin, and expor
   const {GET,POST}=module.exports;const params=new URLSearchParams({action:'csv',serial:'12345678',start,end});
   assert.equal((await GET(new Request('http://local/api/hobo?'+params))).status,403);
   assert.equal((await POST(new Request('http://local/api/hobo',{method:'POST',body:JSON.stringify({action:'save'})}))).status,403);
+  assert.equal((await GET(new Request('http://local/api/hobo?action=overview'))).status,403);
   role='admin';origin=false;assert.equal((await POST(new Request('http://local/api/hobo',{method:'POST'}))).status,403);
   const response=await GET(new Request('http://local/api/hobo?'+params));assert.equal(response.status,200);assert.match(response.headers.get('Content-Disposition'),/HOBO_12345678_20261001_20261003/);assert.match(await response.text(),/logger_sn/);
   const insert=d.prepare('INSERT INTO hobo_observations VALUES(?,?,?,?,?,?,?,?)');
   for(const [sensor,type,unit] of [['s-1','Temperature','°C'],['s-2','RH','%']])insert.run('12345678',sensor,start,'CURRENT','1',12,unit,type);
+  const overview=await GET(new Request('http://local/api/hobo?action=overview'));assert.equal(overview.status,200);assert.equal(overview.headers.get('Cache-Control'),'no-store');
+  const summary=(await overview.json()).loggers.find(l=>l.serial==='12345678');assert.equal(summary.observations,2);assert.equal(summary.first,start);assert.equal(summary.latest,start);
   params.set('action','query');params.set('measurement','temperature');params.set('sensor','s-1');params.set('q','°C');
   const searched=await GET(new Request('http://local/api/hobo?'+params));assert.equal(searched.status,200);const data=await searched.json();assert.equal(data.rows.length,1);assert.equal(data.rows[0].sensor_sn,'s-1');
   params.set('action','csv');const filtered=await (await GET(new Request('http://local/api/hobo?'+params))).text();assert.ok(filtered.includes('Temperature'));assert.ok(!filtered.includes('"RH"'));
