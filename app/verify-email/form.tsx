@@ -9,7 +9,7 @@ export default function VerifyEmailForm({token:initialToken,isEnglish}:{token:st
   useEffect(()=>{const fragment=new URLSearchParams(window.location.hash.slice(1)).get('token');if(fragment)setToken(fragment);},[]);
   const [busy,setBusy]=useState(false),[error,setError]=useState(''),[verified,setVerified]=useState(false);
   return <main translate="no" lang={en?"en":"zh-Hant"} className="min-h-screen bg-[#102d40] p-6 flex items-center justify-center"><section className="panel max-w-lg w-full p-8 space-y-5">
-    <div className="flex justify-end"><LanguageSwitcher reloadOnChange={false} translatePage={false}/></div><p className="eyebrow">ASLUNG DATA MANAGEMENT</p><h1 className="text-2xl font-semibold">{en?'Verify your email':'驗證 Email'}</h1>
+    <div className="flex justify-end"><LanguageSwitcher reloadOnChange={false} translatePage={false}/></div><p className="eyebrow">{en?"Environmental Observation Data Hub":"環境觀測資料平台"}</p><h1 className="text-2xl font-semibold">{en?'Verify your email':'驗證 Email'}</h1>
     {verified?<p role="status" className="text-teal-800">{en?'Email verified. Your application is awaiting administrator review. Approval and data access are assigned separately.':'Email 驗證完成，申請已送交管理員審核。帳號啟用與資料授權將分別處理。'}</p>:<>
       <p>{en?'Confirm your email to send your application for administrator review.':'請確認驗證 Email，完成後會將申請送交管理員審核。'}</p>
       <Button disabled={busy||!token} onClick={async()=>{setBusy(true);setError('');try{

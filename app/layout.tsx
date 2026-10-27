@@ -3,8 +3,8 @@ import Script from "next/script";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "ASLUNG 資料管理",
-  description: "ASLUNG 會員權限、量測資料查詢與 JSON 交換平台。",
+  title: "環境觀測資料平台 | Environmental Observation Data Hub",
+  description: "整合環境感測資料、設備追蹤與校正管理。Environmental sensor data, device tracking, and calibration management.",
   icons: {
     icon: "/favicon.svg",
     shortcut: "/favicon.svg",

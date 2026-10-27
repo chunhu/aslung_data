@@ -23,7 +23,7 @@ export default function LoginForm(){
    </div>
    <section className="panel p-8 sm:p-12 w-full max-w-md">
     <div className="brand-mark mb-6"><Activity/></div>
-    <p className="eyebrow">ASLUNG DATA MANAGEMENT</p>
+    <p className="eyebrow">{en?"Environmental Observation Data Hub":"環境觀測資料平台"}</p>
     <h1>{en?"Sign in":"會員登入"}</h1>
     <p className="subheading mb-6">{en?"Sign in to access your authorized devices and measurement data.":"登入以查詢您的授權設備與量測資料。"}</p>
     <form className="modal-form" onSubmit={async e=>{

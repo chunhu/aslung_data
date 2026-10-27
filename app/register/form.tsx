@@ -16,7 +16,7 @@ export default function RegistrationForm({initialLanguage}:{initialLanguage?:str
     <section className="panel w-full max-w-2xl mx-auto p-6 sm:p-10">
       <div className="flex justify-between gap-3 items-center mb-6"><a href="/login" className="text-teal-700 text-sm underline">{en?'Back to sign in':'返回登入'}</a>
         <LanguageSwitcher reloadOnChange={false} translatePage={false}/></div>
-      <p className="eyebrow">ASLUNG DATA MANAGEMENT</p><h1 className="text-2xl font-semibold mt-2">{mode==='resend'?(en?'Resend verification email':'重新寄送驗證信'):(en?'Membership application':'申請會員帳號')}</h1>
+      <p className="eyebrow">{en?"Environmental Observation Data Hub":"環境觀測資料平台"}</p><h1 className="text-2xl font-semibold mt-2">{mode==='resend'?(en?'Resend verification email':'重新寄送驗證信'):(en?'Membership application':'申請會員帳號')}</h1>
       <p className="text-sm text-slate-600 my-4">{en?'Verify your email, then wait for administrator approval. Data access is granted separately.':'註冊後請先驗證 Email，再等待管理員審核；設備與資料期間由管理員另行授權。'}</p>
       {success?<div role="status" className="bg-teal-50 border border-teal-200 rounded p-4 space-y-3">
         <p>{en?'If eligible, a verification email has been sent. Check your inbox and spam folder. The link expires in 24 hours.':'符合寄送條件時，驗證信已寄出。請查看收件匣及垃圾郵件，連結有效期限為 24 小時。'}</p>
