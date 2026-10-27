@@ -270,6 +270,7 @@ test('HOBO API rejects non-admin read/write/download, enforces origin, and expor
   assert.equal((await POST(new Request('http://local/api/hobo',{method:'POST',body:JSON.stringify({action:'save'})}))).status,403);
   assert.equal((await GET(new Request('http://local/api/hobo?action=overview'))).status,403);
   role='admin';origin=false;assert.equal((await POST(new Request('http://local/api/hobo',{method:'POST'}))).status,403);
+  origin=true;const unsafeSave=await POST(new Request('http://local/api/hobo',{method:'POST',body:JSON.stringify({action:'save',serial:'12345678',name:'stale',start,enabled:true})}));assert.equal(unsafeSave.status,409);
   const response=await GET(new Request('http://local/api/hobo?'+params));assert.equal(response.status,200);assert.match(response.headers.get('Content-Disposition'),/HOBO_12345678_20261001_20261003/);assert.match(await response.text(),/logger_sn/);
   const insert=d.prepare('INSERT INTO hobo_observations VALUES(?,?,?,?,?,?,?,?)');
   for(const [sensor,type,unit] of [['s-1','Temperature','°C'],['s-2','RH','%']])insert.run('12345678',sensor,start,'CURRENT','1',12,unit,type);
@@ -320,4 +321,68 @@ test('device schedule state and active job status remain distinct after manual s
   const id=queueHoboSync(d,{serial:'12345678',start,end});logger=hoboStatus(d).loggers[0];assert.equal(logger.enabled,0);assert.equal(logger.active_job_status,'QUEUED');
   d.prepare("UPDATE hobo_jobs SET status='RUNNING' WHERE id=?").run(id);assert.equal(hoboStatus(d).loggers[0].active_job_status,'RUNNING');
   cancelHoboSync(d,id);assert.equal(hoboStatus(d).loggers[0].active_job_status,null);assert.equal(hoboStatus(d).loggers[0].enabled,0);d.close();
+});
+
+
+test('explicit schedule start moves from 2025 to 2026 without a completed manual job restarting old history',async()=>{
+  const d=store(),serial='12345678',old='2024-12-31T16:00:00.000Z',recent='2026-10-26T16:00:00.000Z',now=Date.parse('2026-10-27T03:00:00Z');
+  d.prepare('UPDATE hobo_loggers SET sync_from=?,enabled=1').run(old);
+  saveHoboLogger(d,{serial,name:'recent schedule',start:recent,scheduleStart:recent,enabled:true,expectedSchedule:{sync_from:old,enabled:1}});
+  assert.equal(hoboStatus(d).loggers[0].sync_from,recent);
+  queueHoboSync(d,{serial,start:recent,end:new Date(now).toISOString(),actor:'admin'});
+  await runHoboSync(d,async()=>[],now);await runHoboSync(d,async()=>[],now+3600000);
+  assert.equal(d.prepare('SELECT COUNT(*) n FROM hobo_jobs WHERE start<?').get(recent).n,0);d.close();
+});
+
+test('a stale settings form cannot re-enable a schedule after cancellation and record deletion',()=>{
+  const d=store(),serial='12345678';saveHoboLogger(d,{serial,name:'test',start,enabled:true});
+  const expectedSchedule={sync_from:start,enabled:1},id=queueHoboSync(d,{serial,start,end});
+  cancelHoboSync(d,id);manageHoboJobs(d,{ids:[id],operation:'delete',confirmation:'DELETE'});
+  assert.throws(()=>saveHoboLogger(d,{serial,name:'stale',start,scheduleStart:start,enabled:true,expectedSchedule}),/已變更/);
+  assert.equal(hoboStatus(d).loggers[0].enabled,0);d.close();
+});
+
+test('failed hourly work is not recreated as a new job after the retry budget ends',async()=>{
+  const d=store(),serial='12345678',now=Date.parse(end);saveHoboLogger(d,{serial,name:'test',start,enabled:true});
+  for(let i=0;i<3;i++)await runHoboSync(d,async()=>{throw new HoboError(502,'temporary');},now+i*3600000);
+  assert.equal(hoboStatus(d).jobs[0].status,'FAILED');
+  await runHoboSync(d,async()=>assert.fail('must wait for explicit retry'),now+4*3600000);
+  assert.equal(hoboStatus(d).jobs_total,1);d.close();
+});
+
+
+test('HTTP 400 is terminal, disables hourly sync, and cannot restart after its record is deleted',async()=>{
+  const d=store(),serial='12345678';saveHoboLogger(d,{serial,name:'test',start,enabled:true});
+  let requests=0;
+  const failed=await runHoboSync(d,r=>fetchHoboWindow({...r,token:'FAKE_TEST_SECRET',fetchImpl:async()=>{requests++;return new Response('FAKE_TEST_SECRET',{status:400});}}),Date.parse(end));
+  assert.equal(failed.status,'FAILED');assert.equal(requests,1);let status=hoboStatus(d);
+  assert.equal(status.loggers[0].enabled,0);assert.match(status.jobs[0].error,/HTTP 400/);assert.ok(!status.jobs[0].error.includes('FAKE_TEST_SECRET'));
+  manageHoboJobs(d,{ids:[failed.id],operation:'delete',confirmation:'DELETE'});
+  await runHoboSync(d,async()=>assert.fail('deleted failed work must stay stopped'),Date.parse(end)+7200000);
+  assert.equal(hoboStatus(d).jobs_total,0);d.close();
+});
+
+test('changing schedule origin requires cancelling active work and resets progress without deleting observations',async()=>{
+  const d=store(),serial='12345678';queueHoboSync(d,{serial,start,end:start});await runHoboSync(d,async()=>[observation()]);
+  const id=queueHoboSync(d,{serial,start,end});
+  const change={serial,name:'changed',start,scheduleStart:end,enabled:true,expectedSchedule:{sync_from:start,enabled:0}};
+  assert.throws(()=>saveHoboLogger(d,change),/先取消/);assert.equal(hoboStatus(d).loggers[0].sync_from,start);
+  cancelHoboSync(d,id);saveHoboLogger(d,change);
+  const logger=hoboStatus(d).loggers[0];assert.equal(logger.sync_from,end);assert.equal(logger.synced_until,null);assert.equal(logger.next_sync,0);
+  assert.equal(logger.observations,1);d.close();
+});
+
+test('enabled batch imports replace old schedule origins and preserve settings of devices already active',()=>{
+  const d=store(),serial='12345678';
+  d.prepare('UPDATE hobo_loggers SET sync_from=?').run('2024-12-31T16:00:00.000Z');
+  saveHoboBatch(d,{serials:[serial],start,end,enabled:true,queue:true,actor:'admin'});
+  assert.equal(hoboStatus(d).loggers[0].sync_from,start);
+  saveHoboBatch(d,{serials:[serial],start:end,end,enabled:false,queue:true,actor:'admin'});
+  assert.equal(hoboStatus(d).loggers[0].enabled,1);assert.equal(hoboStatus(d).loggers[0].sync_from,start);d.close();
+});
+
+test('an existing failed job blocks automatic recreation even when upgrading from an older enabled schedule',async()=>{
+  const d=store(),serial='12345678',id=queueHoboSync(d,{serial,start,end});
+  d.prepare("UPDATE hobo_jobs SET status='FAILED' WHERE id=?").run(id);d.prepare('UPDATE hobo_loggers SET enabled=1').run();
+  assert.equal(await runHoboSync(d,async()=>assert.fail(),Date.parse(end)),null);assert.equal(hoboStatus(d).jobs_total,1);d.close();
 });

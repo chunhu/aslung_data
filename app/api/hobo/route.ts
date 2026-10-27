@@ -1,6 +1,6 @@
 import {identity,writeGuard,AppError,fail} from '@/lib/server';
 import {getConnection} from '@/lib/store.mjs';
-import {HoboError,hoboStatus,saveHoboLogger,saveHoboBatch,queueHoboSync,retryHoboSync,cancelHoboSync,manageHoboJobs,hoboRange,hoboSerial} from '@/lib/hobo.mjs';
+import {HoboError,ensureHoboSchema,hoboStatus,saveHoboLogger,saveHoboBatch,queueHoboSync,retryHoboSync,cancelHoboSync,manageHoboJobs,hoboRange,hoboSerial} from '@/lib/hobo.mjs';
 import {queryStoredHobo,storedHoboCsvStream,hoboDeviceOverview} from '@/lib/hobo-storage.mjs';
 export const runtime='nodejs';
 export const dynamic='force-dynamic';
@@ -27,7 +27,11 @@ export async function POST(req:Request){try{
     if(body.queue&&!process.env.LICOR_API_TOKEN?.trim())throw new AppError(503,'請先在 EC2 .env 設定 LICOR_API_TOKEN 並重建容器。');
     return Response.json(saveHoboBatch(d,{...body,actor:me.email}),{headers});
   }
-  else if(body?.action==='save')saveHoboLogger(d,body);
+  else if(body?.action==='save'){
+    ensureHoboSchema(d);
+    if(d.prepare('SELECT 1 FROM hobo_loggers WHERE serial=?').get(hoboSerial(body.serial))&&!body.expectedSchedule)throw new AppError(409,'請重新整理頁面後再修改設備排程。');
+    saveHoboLogger(d,body);
+  }
   else if(body?.action==='sync'){
     if(!process.env.LICOR_API_TOKEN?.trim())throw new AppError(503,'請先在 EC2 .env 設定 LICOR_API_TOKEN 並重建容器。');
     return Response.json({id:queueHoboSync(d,{...body,actor:me.email})},{status:202,headers});

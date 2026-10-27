@@ -49,7 +49,7 @@
 
 批次新增區塊預填使用者提供的 24 台序號，來源清單為 `lib/hobo-rcec-loggers.json`。初始起日為 **2025/01/01 00:00 Asia/Taipei**，送至 API 的 UTC 起日為 **2024/12/31 16:00**；結束時間為按下按鈕當下。清單及日期均可在送出前修改。
 
-按「儲存並從起日匯入至今」會一次建立設備與工作，每台以 `RCEC_序號` 命名。已有執行中工作的設備會跳過建立新工作、保留原進度。勾選「同時啟用每小時同步」才會延續定期抓取。此按鈕會儲存所選同步設定，請在送出前確認勾選狀態。
+按「儲存並從起日匯入至今」會一次建立設備與工作，每台以 `RCEC_序號` 命名。已有排隊或執行中工作的設備會保留原設定與進度、不重建工作。沒有執行中工作的設備，勾選每小時同步時會將排程起日同步更新為本次批次起日；未勾選時保留既有排程起日並停用同步。勾選「同時啟用每小時同步」才會延續定期抓取。此按鈕會儲存所選同步設定，請在送出前確認勾選狀態。
 
 24 台會按日輪流抓取，避免第一台的長期歷史阻塞其他設備；長期歷史需要多次 API 請求，排隊與抓取進度會保留。各台獨立請求，不依賴 LI-COR 對大量序號合併查詢的支援。
 
@@ -62,10 +62,10 @@ LI-COR 對指定區間無資料時可能仍回覆 HTTP 200，因此空結果不�
 - 月份進度保存在 `hobo_months`，介面顯示已完成月份、目前月份及每日續傳游標。舊版已排隊的長期工作會從既有游標接續，不會重抓已完成的月份。每個月完成後，該設備預設暫停 60 秒再進入下個月，其他設備仍遵守共用請求間隔。
 - 全部設備共用至少 15 秒的 LI-COR 請求間隔，包含資料量超限後的切分請求。下次可請求時間保存在 SQLite，worker 重啟後仍沿用；限速僅影響 LI-COR API，不會讓整個背景 worker 閒置等待。單一工作內切分請求需要等待時，會暫留在該工作。
 - HTTP 429／509 會暫停全部設備至少 5 分鐘，連續遇到時依序延長至 10、20、40、60 分鐘；若 `Retry-After` 要求更久則依其等待。這類限流不消耗一般失敗的三次重試額度，日游標保留原位。
-- 新增設備後，首次同步起日固定；欲補抓更早或更久之前修訂的資料，使用指定範圍匯入。
+- 新增設備後，自動同步起日與手動匯入、資料搜尋日期分開。選取設備後，設定「自動同步起日」並按「儲存設備與排程」可更新既有起日；變更前需取消排隊／執行中工作。修改起日會重設同步游標與下次排程時間，保留量測及已完成紀錄；舊起日失敗工作改為已取消。設定變更使用伺服器狀態比對，取消後的舊表單不能意外重新啟用排程。欲補抓更早或更久之前修訂的資料，使用指定範圍匯入，不會變更自動同步起日。
 - 背景工作每次處理一台設備的一日區間，與校正 worker 共用程序。worker 停止期間不會同步，重新啟動後會續傳。上游逾時或資料密集時可能延後其他背景工作。
 - 上游回覆 `max_results=true` 時，捨棄截斷內容，切分時間區間重新下載；若單秒資料仍超限，顯示失敗，不把截斷的資料視為完成。
-- 同步工作有鎖定與持續進度，一般失敗最多自動嘗試三次；之後可按「重試」。已成功完成的區塊保留，失敗區塊不推進進度。
+- 同步工作有鎖定與持續進度，暫時性失敗最多自動嘗試三次；HTTP 400／401／403／404／422 直接停止自動重試。最終失敗時停用該設備每小時同步，保留游標；既有失敗工作也會阻止排程另建同區間工作，需先檢查設定再按「重試」或取消舊工作。已成功完成的區塊保留，失敗區塊不推進進度。
 - 重疊資料以設備、感測器、時間、資料類型 ID、量測類型、單位為識別，更新原值，不累積重複紀錄。工作「已抓取筆數」含重疊，設備資料筆數才是去重後總數。
 
 ### 取消同步工作
@@ -138,3 +138,12 @@ node node_modules/typescript/bin/tsc --noEmit --incremental false
 ```
 
 測試使用記憶體 SQLite 與模擬 LI-COR 回應，不消耗真實 API 額度，也不更動正式資料。正式 Token 有效性、實際欄位格式及設備存取權限仍需以真實設備序號執行一次小範圍匯入確認。
+
+
+## 排程起日與重新補抓問題排查 / Schedule origin troubleshooting
+
+- 「同步工作」的來源欄位區分「每小時排程」與「手動匯入」。手動匯入近期資料完成，不代表較早的歷史區間已完成，不會跳過歷史缺口或自動改寫排程起日。
+- 升級不會自行取消已存在的工作，也不會猜測新的起日。若只要從 2026/10/27 開始：先取消舊工作，選取設備，將自動同步起日改為 2026/10/27 00:00（Asia/Taipei），確認每小時同步開關後儲存；UTC 顯示為 2026-10-26T16:00:00Z。
+- The automatic schedule origin, manual import range, and search/download range are separate. Completing a recent manual import does not erase an earlier history gap. Select the device and explicitly save its automatic schedule origin to change future scheduling.
+- Cancel active work before changing the origin. Saving a changed origin resets the schedule cursor while retaining measurements and completed job records. Stale settings are rejected after cancellation. Terminal failures disable hourly scheduling; failed jobs block automatic replacement until reviewed. HTTP 400/401/403/404/422 stop immediately; temporary errors retain the existing retry budget and rate-limit handling.
+- Deployment does not cancel existing jobs or change stored dates. Cancel unwanted jobs and explicitly save the intended origin after upgrading. Job sources identify hourly scheduling versus manual imports.
