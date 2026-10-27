@@ -13,7 +13,7 @@ test('calibration deploy script has valid Bash syntax and a side-effect-free hel
   const help=spawnSync(bash,['scripts/deploy_cal.sh','--help'],{encoding:'utf8'});assert.equal(help.status,0,help.stderr);assert.match(help.stdout,/codex\/calibration-management/);
 });
 
-for(const scenario of ['success','dirty','build-failure','s3-failure','backup-failure'])test('calibration deployment ordering and failure handling: '+scenario,{skip:!existsSync(bash)},async()=>{
+for(const scenario of ['success','dirty','build-failure','s3-failure','backup-failure','mysql-failure'])test('calibration deployment ordering and failure handling: '+scenario,{skip:!existsSync(bash)},async()=>{
   const root=await mkdtemp(join(process.cwd(),'.tools','deploy-cal-test-'));
   try{
     const bin=join(root,'bin');await mkdir(bin);await mkdir(join(root,'scripts'));await mkdir(join(root,'lib'));await mkdir(join(root,'.git'));
@@ -38,6 +38,7 @@ echo "docker $*" >> "$DEPLOY_TEST_LOG"
 case "$*" in
  *'build app calibration-worker'*) [[ $DEPLOY_TEST_CASE != build-failure ]] ;;
  *'scripts/check-calibration-s3.mjs'*) [[ $DEPLOY_TEST_CASE != s3-failure ]] ;;
+ *'scripts/check-calibration-mysql.mjs'*) [[ $DEPLOY_TEST_CASE != mysql-failure ]] ;;
  *'run --rm --no-deps'*) cat >/dev/null; [[ $DEPLOY_TEST_CASE != backup-failure ]] ;;
  *'exec -T calibration-worker'*) cat >/dev/null ;;
  *'ps -q calibration-worker'*) echo fixture-worker ;;
@@ -59,9 +60,10 @@ esac
       assert.ok(log.indexOf('scripts/check-calibration-s3.mjs')<log.indexOf('stop -t 120 calibration-worker'));
       assert.ok(log.indexOf('run --rm --no-deps')<log.indexOf('up -d --no-build --wait'));
       assert.ok(log.indexOf('up -d --no-build --wait')<log.indexOf('up -d --no-build --force-recreate calibration-worker'));
-      assert.match(log,/exec -T calibration-worker/);assert.match(result.stdout,/部署完成/);
+      assert.ok(log.indexOf('scripts/check-calibration-mysql.mjs')>log.indexOf('stop -t 120 calibration-worker'));
+      assert.ok(log.indexOf('scripts/check-calibration-mysql.mjs')<log.indexOf('up -d --no-build --force-recreate calibration-worker'));assert.match(result.stdout,/部署完成/);
     }else{
-      assert.notEqual(result.status,0);assert.doesNotMatch(log,/up -d/);
+      assert.notEqual(result.status,0);if(scenario==='mysql-failure'){assert.doesNotMatch(log,/up -d --no-build --force-recreate calibration-worker/);assert.match(result.stderr,/worker 已停止/);}else assert.doesNotMatch(log,/up -d/);
       if(scenario==='dirty')assert.doesNotMatch(log,/git fetch|docker/);
       if(scenario==='build-failure')assert.doesNotMatch(log,/stop -t|run --rm/);
       if(scenario==='s3-failure')assert.doesNotMatch(log,/stop -t/);

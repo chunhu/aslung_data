@@ -108,14 +108,10 @@ start_website() {
 }
 
 start_worker() {
+    # Verify with one short-lived connection while the old worker is still stopped.
+    "${COMPOSE[@]}" run --rm --no-deps -T --entrypoint node calibration-worker scripts/check-calibration-mysql.mjs
     "${COMPOSE[@]}" up -d --no-build --force-recreate calibration-worker
-    # Probe MySQL from the worker container without exporting credentials or altering rawdata.
-    "${COMPOSE[@]}" exec -T calibration-worker node --input-type=module - <<'NODE'
-import {processingPool} from './lib/processing-raw.mjs';
-const pool=processingPool();
-try{await pool.query({sql:'SELECT id,uid,time,ch1,ch2,ch3,ch4,ch5,ch6,ch29,ch30,ch31 FROM rawdata LIMIT 0',timeout:30000});console.log('校正 worker 的 MySQL 唯讀查詢檢查通過。');}
-finally{await pool.end();}
-NODE
+    WORKER_STOPPED=0
     local container state attempt
     container=$("${COMPOSE[@]}" ps -q calibration-worker)
     [[ -n "$container" ]] || die '校正 worker 容器未執行。'

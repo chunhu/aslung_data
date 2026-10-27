@@ -1,26 +1,10 @@
 import { AppError } from "./server";
 import mysql from "mysql2/promise";
 
-let pool: mysql.Pool;
-export function getPool() {
-  if (!pool) {
-    pool = mysql.createPool({
-      host: process.env.MYSQL_HOST || '35.160.61.178',
-      user: process.env.MYSQL_USER || 'seldata',
-      password: process.env.MYSQL_PASSWORD || 'datasel',
-      database: process.env.MYSQL_DATABASE || 'rcec_lung',
-      waitForConnections: true,
-      connectionLimit: 15,
-      queueLimit: 0,
-      timezone: '+00:00', // UTC
-      decimalNumbers: true,
-      enableKeepAlive: true,
-      keepAliveInitialDelay: 10000,
-      idleTimeout: 60000,
-      connectTimeout: 10000,
-    });
-  }
-  return pool;
+import {sharedMysqlPool} from './mysql-options.mjs';
+
+export function getPool():mysql.Pool {
+  return sharedMysqlPool((options:mysql.PoolOptions)=>mysql.createPool(options));
 }
 
 export async function fetchPage(id: string, start: string, end: string, cursor: string, limit = 1000) {

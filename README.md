@@ -304,7 +304,7 @@ bash scripts/deploy_cal.sh --no-cache
 
 此腳本固定部署 `codex/calibration-management`，不呼叫固定切回 main 的 `deploy.sh`。使用 fast-forward 更新；本機有未提交修改、其他未追蹤檔案或分支分歧時停止，不自動 stash／reset。可先把腳本複製到舊 checkout，唯一允許的未追蹤檔案為 scripts/deploy_cal.sh。
 
-流程為設定系統服務開機啟動、驗證 Compose、建置網站與 worker、停止舊 worker、以直接唯讀開啟 SQLite 的方式建立升級前備份並檢查完整性、更新網站並等待健康檢查、啟動 worker 並驗證 MySQL 唯讀查詢與容器穩定性。建置與備份期間不停止既有網站。即使 Git 無更新也執行檢查與部署，預設使用 Docker 快取。失敗不會自動還原資料庫或刪除 volumes；若網站更新前已停止 worker，修正問題後重跑腳本。
+流程為設定系統服務開機啟動、驗證 Compose、建置網站與 worker、停止舊 worker、以直接唯讀開啟 SQLite 的方式建立升級前備份並檢查完整性、更新網站並等待健康檢查、先以單一短連線驗證 MySQL 唯讀查詢、關閉驗證連線，再啟動 worker 並確認容器穩定性。建置與備份期間不停止既有網站。即使 Git 無更新也執行檢查與部署，預設使用 Docker 快取。失敗不會自動還原資料庫或刪除 volumes；若網站更新前已停止 worker，修正問題後重跑腳本。
 
 適用已有正式 SQLite 的環境；資料庫與校正結果需位於共用 /app/data，備份位於 /app/backups，並沿用原 Compose 專案／volumes。若找不到既有資料庫或環境路徑未持久化，腳本會停止。備份檔為 /app/backups/before-cal-*.sqlite，保留在 aslung-backups volume，備份本身不觸發新版 schema migration。排程開關沿用資料庫設定，部署腳本不會自動啟用全域／單台排程。
 
@@ -387,3 +387,10 @@ Docker builder 階段預設設定 `NODE_OPTIONS=--max-old-space-size=1024`，並
 頂端工具列提供「隱藏選單／顯示選單」，側邊欄品牌區也有隱藏按鈕。桌機完全隱藏後主內容可使用釋放的寬度；手機使用抽屜，選擇功能後自動關閉。桌機可見狀態與群組偏好按登入帳號保存在本機瀏覽器，與現有選單寬度設定分開；不修改帳號權限。
 
 The sidebar groups functions into news/resources, monitoring/data, device management, calibration/alerts, members/access and data integration. Empty unauthorized groups are hidden. Group collapse preserves the current page; navigating expands its group. The header toggle hides or shows the menu, and mobile selection closes the drawer. Desktop visibility and group preferences are stored per account in the current browser.
+
+
+### MySQL connection capacity / 連線數容量
+
+網站每個 Node 程序共用同一個延遲建立的 MySQL 連線池，預設最多 4 條；校正 worker 預設最多 1 條。可用 `.env` 的 `MYSQL_CONNECTION_LIMIT` 與 `MYSQL_WORKER_CONNECTION_LIMIT` 調整（1–30）。超出保留數的閒置連線會被清理，最多保留一條閒置連線 30 秒；1 條上限時不保留閒置連線。不要將單一程序的上限當作整台資料庫的總上限，多副本與其他應用仍會累加。
+
+部署在啟動 worker 前，以短生命週期單一連線執行 `rawdata LIMIT 0` 唯讀驗證，並確保成功或失敗時關閉已取得的連線，避免 worker 與部署驗證同時佔用額外連線。`ER_CON_COUNT_ERROR` / 1040 表示來源 MySQL 已拒絕新連線，部署會停止，不能僅以網站健康檢查成功判斷資料來源正常。資料庫管理員可檢查 `SHOW GLOBAL STATUS LIKE 'Threads_connected'`、`SHOW VARIABLES LIKE 'max_connections'`、`SHOW FULL PROCESSLIST`，確認連線來源；不要批量終止不明連線或未評估記憶體便直接提高限制。降低 `.env` 上限需更新程式並重建 app / calibration-worker 容器才生效。
