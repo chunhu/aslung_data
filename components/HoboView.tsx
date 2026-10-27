@@ -5,7 +5,7 @@ import {Input} from '@/components/ui/input';
 import {formatInTimeZone,fromZonedTime} from 'date-fns-tz';
 import preset from '@/lib/hobo-rcec-loggers.json';
 import HoboCleanup from '@/components/HoboCleanup';
-import HoboSyncJobs from '@/components/HoboSyncJobs';
+import HoboSyncJobSearch from '@/components/HoboSyncJobSearch';
 import HoboDeviceSelect from '@/components/HoboDeviceSelect';
 import HoboDataSearch from '@/components/HoboDataSearch';
 import HoboDeviceOverview from '@/components/HoboDeviceOverview';
@@ -64,7 +64,7 @@ export default function HoboView({api,timezone}:Props){
     {error&&<p role="alert" className="text-rose-700">{error}</p>}{notice&&<p role="status" className="text-teal-800">{notice}</p>}{busy&&<p role="status">處理中…</p>}
   </section>
   <HoboDataSearch api={api} loggers={status?.loggers||[]} selectedSerial={selectedLogger?.serial||''} timezone={timezone} refreshKey={searchRefresh}/>
-  <HoboSyncJobs api={api} jobs={status?.jobs||[]} totalJobs={status?.jobs_total} loggers={status?.loggers||[]} timezone={timezone} onChange={()=>void refresh()}/>
+  <HoboSyncJobSearch api={api} jobs={status?.jobs||[]} totalJobs={status?.jobs_total} loggers={status?.loggers||[]} timezone={timezone} onChange={()=>void refresh()}/>
   <details className="rounded-lg border border-rose-200 bg-white p-4"><summary className="cursor-pointer font-semibold text-rose-800">清除 HOBO 資料與清除記錄</summary><div className="mt-4"><HoboCleanup api={api} loggers={status?.loggers||[]} onChange={()=>{setSearchRefresh(value=>value+1);void refresh();}}/></div></details>
   </div>;
 }

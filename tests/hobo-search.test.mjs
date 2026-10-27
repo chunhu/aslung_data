@@ -16,6 +16,7 @@ function component(file,states,extra={}){
     '@/components/HoboDeviceSelect':{default:()=>React.createElement('button',{role:'combobox'},'選擇 HOBO 設備')},
     '@/components/HoboDataSearch':{default:()=>React.createElement('section',null,'HOBO 資料搜尋')},
     '@/components/HoboSyncJobs':{default:()=>null},
+    '@/components/HoboSyncJobSearch':{default:()=>null},
     '@/components/HoboDeviceOverview':{default:()=>null},
     '@/components/HoboBatchCancel':{default:()=>null},
     '@/components/ui/dialog':Object.fromEntries(['Dialog','DialogContent','DialogHeader','DialogTitle','DialogDescription'].map(name=>[name,tag('div')])),
@@ -178,4 +179,34 @@ test('batch import submits a custom interval separately from API request pacing'
   const tree=View({api:async(url,options)=>{if(options)calls.push(JSON.parse(options.body));return {saved:1,queued:1,skipped:0,loggers:[],jobs:[]};},timezone:'Asia/Taipei'});
   find(tree,node=>node.props.children==='儲存並從起日匯入至今').props.onClick();await new Promise(resolve=>setImmediate(resolve));
   assert.equal(calls[0].interval_minutes,180);assert.equal(calls[0].enabled,true);assert.equal(calls[0].action,'batch');
+});
+
+
+test('job search submits full-history filters and resets the page to zero',()=>{
+  const query={q:'old',status:'',source:'',offset:60};
+  const {View,updates}=component('HoboSyncJobSearch.tsx',['  1234  ','FAILED','schedule',query,null,false,'',0]);
+  const tree=View({api:()=>assert.fail(),jobs:[],totalJobs:96,timezone:'Asia/Taipei',onChange:()=>{}});
+  find(tree,node=>node.type==='form').props.onSubmit({preventDefault(){}});
+  assert.deepEqual(updates.get(3),{q:'1234',status:'FAILED',source:'schedule',offset:0});
+});
+
+test('job search pagination preserves active filters and clearing resets all filters',()=>{
+  const query={q:'1234',status:'FAILED',source:'schedule',offset:30},data={jobs:Array.from({length:30},(_,i)=>({id:String(i)})),total:96,matched:65,offset:30,limit:30};
+  const {View,updates}=component('HoboSyncJobSearch.tsx',['1234','FAILED','schedule',query,{key:JSON.stringify(query),data},false,'',0]);
+  const tree=View({api:()=>assert.fail(),jobs:[],totalJobs:96,timezone:'Asia/Taipei',onChange:()=>{}}),html=renderToStaticMarkup(tree);
+  assert.ok(html.includes('符合 65 筆'));assert.ok(html.includes('31～60'));
+  find(tree,node=>node.props.children==='下一頁').props.onClick();assert.deepEqual(updates.get(3),{...query,offset:60});
+  find(tree,node=>node.props.children==='上一頁').props.onClick();assert.deepEqual(updates.get(3),{...query,offset:0});
+  find(tree,node=>node.props.children==='清除搜尋').props.onClick();assert.deepEqual(updates.get(3),{q:'',status:'',source:'',offset:0});assert.equal(updates.get(0),'');assert.equal(updates.get(1),'');assert.equal(updates.get(2),'');
+});
+
+test('late job search responses are aborted and cannot replace newer filter results',async()=>{
+  const effects=[],updates=[],states=['1234','FAILED','schedule',{q:'1234',status:'FAILED',source:'schedule',offset:30},null,false,'',0];let index=0,release;const calls=[];
+  const react={...React,useState:()=>{const i=index++;return [states[i],value=>updates.push({i,value})];},useEffect:effect=>effects.push(effect)};
+  const {View}=component('HoboSyncJobSearch.tsx',[],{react});
+  View({api:(url,options)=>{calls.push({url,options});return new Promise(resolve=>{release=resolve;});},jobs:[],timezone:'Asia/Taipei',onChange:()=>{}});
+  const cleanup=effects[0](),params=new URL(calls[0].url,'http://local').searchParams;
+  assert.equal(params.get('action'),'jobs');assert.equal(params.get('q'),'1234');assert.equal(params.get('status'),'FAILED');assert.equal(params.get('source'),'schedule');assert.equal(params.get('offset'),'30');
+  cleanup();release({jobs:[],total:96,matched:0,offset:0,limit:30});await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(calls[0].options.signal.aborted,true);assert.equal(updates.some(update=>update.i===4),false);
 });

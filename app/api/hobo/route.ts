@@ -1,6 +1,6 @@
 import {identity,writeGuard,AppError,fail} from '@/lib/server';
 import {getConnection} from '@/lib/store.mjs';
-import {HoboError,ensureHoboSchema,hoboStatus,saveHoboLogger,saveHoboBatch,queueHoboSync,retryHoboSync,cancelHoboSync,cancelHoboBatch,manageHoboJobs,hoboRange,hoboSerial} from '@/lib/hobo.mjs';
+import {HoboError,ensureHoboSchema,hoboStatus,queryHoboJobs,saveHoboLogger,saveHoboBatch,queueHoboSync,retryHoboSync,cancelHoboSync,cancelHoboBatch,manageHoboJobs,hoboRange,hoboSerial} from '@/lib/hobo.mjs';
 import {queryStoredHobo,storedHoboCsvStream,hoboDeviceOverview} from '@/lib/hobo-storage.mjs';
 export const runtime='nodejs';
 export const dynamic='force-dynamic';
@@ -10,6 +10,7 @@ function failure(e:unknown){return fail(e instanceof HoboError?new AppError(e.st
 export async function GET(req:Request){try{
   await access(req);const url=new URL(req.url),action=url.searchParams.get('action')||'status',d=getConnection();
   if(action==='status')return Response.json(hoboStatus(d),{headers});
+  if(action==='jobs')return Response.json(queryHoboJobs(d,{q:url.searchParams.get('q')||'',status:url.searchParams.get('status')||'',source:url.searchParams.get('source')||'',offset:Number(url.searchParams.get('offset')||0)}),{headers});
   if(action==='overview')return Response.json(await hoboDeviceOverview(d),{headers});
   const serial=hoboSerial(url.searchParams.get('serial'));
   const {start,end}=hoboRange(url.searchParams.get('start'),url.searchParams.get('end'));

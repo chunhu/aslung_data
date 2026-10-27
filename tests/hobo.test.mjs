@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {readFileSync} from 'node:fs';
 import ts from 'typescript';
-import {ensureHoboSchema,saveHoboLogger,saveHoboBatch,queueHoboSync,retryHoboSync,cancelHoboSync,cancelHoboBatch,manageHoboJobs,runHoboSync,fetchHoboWindow,queryHobo,hoboCsvStream,hoboStatus,HoboError,hoboMonthRanges,waitHoboRequest} from '../lib/hobo.mjs';
+import {ensureHoboSchema,saveHoboLogger,saveHoboBatch,queueHoboSync,retryHoboSync,cancelHoboSync,cancelHoboBatch,manageHoboJobs,runHoboSync,fetchHoboWindow,queryHobo,queryHoboJobs,hoboCsvStream,hoboStatus,HoboError,hoboMonthRanges,waitHoboRequest} from '../lib/hobo.mjs';
 const start='2026-10-01T00:00:00.000Z',end='2026-10-03T00:00:00.000Z';
 const observation=(timestamp=start,value=0)=>({logger_sn:'12345678',sensor_sn:'sensor-1',timestamp,data_type:'Temperature',data_type_id:'1',value,unit:'°C',sensor_measurement_type:'Temperature'});
 function store(){const d=new DatabaseSync(':memory:');d.exec('PRAGMA foreign_keys=ON');ensureHoboSchema(d);saveHoboLogger(d,{serial:'12345678',name:'HOBO test',start,enabled:false});return d;}
@@ -269,6 +269,7 @@ test('HOBO API rejects non-admin read/write/download, enforces origin, and expor
   assert.equal((await GET(new Request('http://local/api/hobo?'+params))).status,403);
   assert.equal((await POST(new Request('http://local/api/hobo',{method:'POST',body:JSON.stringify({action:'save'})}))).status,403);
   assert.equal((await GET(new Request('http://local/api/hobo?action=overview'))).status,403);
+  assert.equal((await GET(new Request('http://local/api/hobo?action=jobs'))).status,403);
   const batchCancel=()=>new Request('http://local/api/hobo',{method:'POST',body:JSON.stringify({action:'cancelBatch',serials:['12345678'],confirmation:'CANCEL'})});
   assert.equal((await POST(batchCancel())).status,403);
   role='admin';origin=false;assert.equal((await POST(batchCancel())).status,403);assert.equal((await POST(new Request('http://local/api/hobo',{method:'POST'}))).status,403);
@@ -276,6 +277,8 @@ test('HOBO API rejects non-admin read/write/download, enforces origin, and expor
   const response=await GET(new Request('http://local/api/hobo?'+params));assert.equal(response.status,200);assert.match(response.headers.get('Content-Disposition'),/HOBO_12345678_20261001_20261003/);assert.match(await response.text(),/logger_sn/);
   const insert=d.prepare('INSERT INTO hobo_observations VALUES(?,?,?,?,?,?,?,?)');
   for(const [sensor,type,unit] of [['s-1','Temperature','°C'],['s-2','RH','%']])insert.run('12345678',sensor,start,'CURRENT','1',12,unit,type);
+  const jobSearch=await GET(new Request('http://local/api/hobo?action=jobs&q=1234&status=DONE&offset=0'));assert.equal(jobSearch.status,200);assert.equal(jobSearch.headers.get('Cache-Control'),'no-store');assert.ok(Array.isArray((await jobSearch.json()).jobs));
+  assert.equal((await GET(new Request('http://local/api/hobo?action=jobs&offset=invalid'))).status,400);
   const overview=await GET(new Request('http://local/api/hobo?action=overview'));assert.equal(overview.status,200);assert.equal(overview.headers.get('Cache-Control'),'no-store');
   const summary=(await overview.json()).loggers.find(l=>l.serial==='12345678');assert.equal(summary.observations,2);assert.equal(summary.first,start);assert.equal(summary.latest,start);
   params.set('action','query');params.set('measurement','temperature');params.set('sensor','s-1');params.set('q','°C');
@@ -464,4 +467,25 @@ test('multi-day custom cadence still downloads the complete elapsed interval wit
   await runHoboSync(d,async r=>{ranges.push(r);return [];},later);
   assert.equal(ranges[0].start,end);assert.equal(ranges[0].end,ranges[1].start);assert.equal(ranges[1].end,new Date(later).toISOString());
   assert.equal(hoboStatus(d).loggers[0].synced_until,new Date(later).toISOString());d.close();
+});
+
+
+test('job search includes all history, combines device/status/source filters and paginates ties without repetition',()=>{
+  const d=store(),serial='12345678';saveHoboLogger(d,{serial:'87654321',name:'North Station',start,enabled:false});
+  const inserted=[];
+  for(let i=0;i<66;i++){
+    const id=queueHoboSync(d,{serial:i<62?serial:'87654321',start,end,actor:i%2?'admin@example.test':'schedule'});inserted.push(id);
+    d.prepare("UPDATE hobo_jobs SET status=?,created_at=?,error=? WHERE id=?").run(i%2?'FAILED':'DONE',i<62?'2026-10-26T00:00:00Z':'2026-10-27T00:00:00Z',i===0?'HTTP 400 range rejected':'',id);
+  }
+  const first=queryHoboJobs(d),second=queryHoboJobs(d,{offset:30}),last=queryHoboJobs(d,{offset:60});
+  assert.equal(first.total,66);assert.equal(first.matched,66);assert.equal(first.jobs.length,30);assert.equal(last.jobs.length,6);
+  assert.equal(new Set([...first.jobs,...second.jobs,...last.jobs].map(j=>j.id)).size,66);
+  const old=queryHoboJobs(d,{q:'12345678',status:'DONE',source:'schedule'});assert.equal(old.matched,31);assert.equal(old.jobs.length,30);
+  assert.ok(old.jobs.every(j=>j.serial===serial&&j.status==='DONE'&&j.actor==='schedule'));
+  const name=queryHoboJobs(d,{q:'north station'});assert.equal(name.matched,4);
+  const error=queryHoboJobs(d,{q:'HTTP 400'});assert.equal(error.matched,1);assert.equal(error.jobs[0].id,inserted[0]);
+  assert.equal(queryHoboJobs(d,{q:"' OR 1=1 --"}).matched,0);assert.equal(queryHoboJobs(d,{q:'%'}).matched,0);
+  const beyond=queryHoboJobs(d,{offset:300});assert.equal(beyond.offset,60);
+  assert.deepEqual(queryHoboJobs(d,{q:'no match',offset:30}).jobs,[]);
+  for(const filter of [{status:'BAD'},{source:'BAD'},{offset:-1},{offset:1.5},{q:'x'.repeat(161)}])assert.throws(()=>queryHoboJobs(d,filter),HoboError);d.close();
 });

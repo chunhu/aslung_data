@@ -79,7 +79,7 @@ LI-COR 對指定區間無資料時可能仍回覆 HTTP 200，因此空結果不�
 
 ### 批量取消與刪除工作紀錄
 
-- 同步工作左側可逐筆勾選，表頭可全選目前清單（最近 30 筆），不會操作未列出的其他工作；API 每批上限 100 筆。
+- 同步工作左側可逐筆勾選，表頭可全選目前清單（最近 30 筆），不會操作其他頁面或未符合搜尋條件的工作；API 每批上限 100 筆。
 - 「批量取消」經確認後，取消所選排隊中、同步中及失敗的工作，停用這些設備的自動同步；已完成或已取消工作會略過並回報數量。保留本機與 S3 量測資料。
 - 「批量刪除紀錄」僅適用於失敗、已取消或已完成的工作。選取中若包含排隊／同步中的工作，需先批量取消，再重新勾選刪除。單筆亦可按「刪除紀錄」。
 - 刪除前核對工作數與設備，輸入 `DELETE`；刪除工作及月份進度紀錄，保留設備、量測、S3 物件及每日索引，既有查詢與 CSV 下載仍可使用。刪除已完成紀錄不會停用該設備既有排程。
@@ -163,3 +163,10 @@ In the batch import panel, enter up to 100 device serial numbers and choose “�
 修改已啟用排程的間隔、不變更起日時，保留同步進度，從儲存時間加上新間隔安排下一次；不取消正在執行的工作。啟用排程或修改起日後會依原本首次補抓規則處理。間隔超過一天仍會完整補抓上次進度至當下的資料，按日分段。實際開始時間受 worker、佇列與上游限流影響；全設備共用的 API 請求等待與月份暫停規則維持不變。
 
 Set an individual or batch synchronization interval in minutes (integer 1–10080; default 60). Examples: 15 minutes, 120 minutes (two hours), or 1440 minutes (daily). Existing devices without an explicit setting retain 60 minutes. Changing the interval of an enabled schedule preserves its cursor and schedules the next check from save time plus the new interval. Running jobs are retained. Multi-day intervals still backfill every elapsed day. Worker availability, queue load and shared API rate limits may delay the actual start; the schedule interval does not override request pacing.
+
+
+### 搜尋同步工作 / Search synchronization jobs
+
+「搜尋同步工作」涵蓋全部歷史紀錄，可輸入部分設備序號、設備名稱或錯誤訊息，搭配工作狀態與來源（定期排程／手動匯入）篩選，按「搜尋工作」執行。結果顯示總紀錄數、符合筆數與目前範圍，每頁 30 筆，以「上一頁／下一頁」瀏覽；「清除搜尋」回到最新紀錄。背景重新整理保留已套用條件，切換條件或頁面會清除原勾選，批量取消／刪除只作用於目前頁面選取的工作。刪除末頁紀錄後自動退回有效頁面。搜尋仅读取本機工作中繼資料，不重新下載 LI-COR 或 S3 資料。
+
+Search all synchronization job history by partial device serial, device name, or error text, and combine status and source filters. Results show the overall count, matched count and current range, with 30 jobs per page. Background refresh preserves applied filters. Changing filters or pages resets selected jobs; bulk operations apply only to selected jobs on the visible page. Clearing the search returns to recent jobs. Empty final pages after deletion are clamped to the last valid page. This search reads local job metadata without fetching LI-COR or S3 measurements.
