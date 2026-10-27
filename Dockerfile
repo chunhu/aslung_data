@@ -27,14 +27,9 @@ COPY --from=builder --chown=aslung:aslung /app/.next/standalone ./
 COPY --from=builder --chown=aslung:aslung /app/.next/static ./.next/static
 COPY --from=builder --chown=aslung:aslung /app/public ./public
 COPY --from=builder --chown=aslung:aslung /app/scripts ./scripts
-COPY --from=builder --chown=aslung:aslung /app/lib/store.mjs /app/lib/passwords.mjs /app/lib/registration.mjs /app/lib/countries.mjs /app/lib/member-access.mjs /app/lib/permissions.mjs ./lib/
-COPY --from=builder --chown=aslung:aslung /app/lib/maintainer-links.mjs /app/lib/alert-policy.mjs ./lib/
-COPY --from=builder --chown=aslung:aslung /app/lib/s3-storage.mjs /app/lib/processing-storage.mjs ./lib/
-COPY --from=builder --chown=aslung:aslung /app/lib/export-name.mjs ./lib/
-COPY --from=builder --chown=aslung:aslung /app/lib/hobo.mjs /app/lib/hobo-storage.mjs /app/lib/hobo-cleanup.mjs ./lib/
-COPY --from=builder --chown=aslung:aslung /app/lib/measurement-number.mjs ./lib/
-COPY --from=builder --chown=aslung:aslung /app/lib/processing-cleanup.mjs /app/lib/processing-cleanup-s3.mjs ./lib/
-COPY --from=builder --chown=aslung:aslung /app/lib/processing-jobs.mjs /app/lib/processing-raw.mjs /app/lib/global-processing.mjs /app/lib/measurement-processing.mjs /app/lib/calibration.mjs /app/lib/calibration-dates.mjs /app/lib/calibration-google.mjs /app/lib/fleet-import.mjs ./lib/
+# Worker and admin scripts import raw modules outside Next.js's traced bundle.
+# Copy the full library tree so new relative dependencies cannot be omitted.
+COPY --from=builder --chown=aslung:aslung /app/lib ./lib
 RUN mkdir -p /app/data /app/backups && chown -R aslung:aslung /app/data /app/backups
 USER aslung
 # Verify worker imports in the final image without opening databases or running jobs.
