@@ -130,3 +130,12 @@ test('sync job list shows device-wide local/S3 counts separately from fetched co
   assert.ok(html.includes('總共 42 筆，目前顯示 3 筆'));assert.ok(html.includes('設備資料筆數（本機／S3）'));assert.ok(html.includes('0 / 3,818,313'));assert.ok(html.includes('0 / 0'));
   assert.match(html,/>—<\/td>/);assert.ok(html.includes('已抓取筆數（含重疊）'));assert.ok(html.includes('非本次工作新增筆數'));
 });
+
+
+test('overview distinguishes hourly schedule from active manual work and uses refreshed live status',()=>{
+  const snapshots=[{serial:'1',name:'one',enabled:1,observations:0,archived:0},{serial:'2',name:'two',enabled:1,observations:0,archived:0},{serial:'3',name:'three',enabled:0,observations:0,archived:0}];
+  const {View}=component('HoboDeviceOverview.tsx',[true,{loggers:snapshots,generated_at:''},false,'',0]);
+  const html=renderToStaticMarkup(React.createElement(View,{api:()=>assert.fail(),loggers:[{serial:'1',enabled:0,active_job_status:'RUNNING'},{serial:'2',enabled:1,active_job_status:'QUEUED'},{serial:'3',enabled:0,active_job_status:null}],selectedSerial:'',onSelect:()=>{},refreshKey:0}));
+  for(const text of ['每小時同步','目前同步工作','同步中','排隊中','目前無執行工作'])assert.ok(html.includes(text));
+  assert.match(html,/停用<\/td><td[^>]*>同步中/);assert.match(html,/啟用<\/td><td[^>]*>排隊中/);
+});

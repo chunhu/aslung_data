@@ -313,3 +313,11 @@ test('sync job total counts all records beyond the latest 30 and updates after d
   manageHoboJobs(d,{operation:'delete',ids:[ids[0]],confirmation:'DELETE'});
   status=hoboStatus(d);assert.equal(status.jobs_total,31);assert.equal(status.jobs.length,30);d.close();
 });
+
+
+test('device schedule state and active job status remain distinct after manual sync and cancellation',()=>{
+  const d=store();let logger=hoboStatus(d).loggers[0];assert.equal(logger.enabled,0);assert.equal(logger.active_job_status,null);
+  const id=queueHoboSync(d,{serial:'12345678',start,end});logger=hoboStatus(d).loggers[0];assert.equal(logger.enabled,0);assert.equal(logger.active_job_status,'QUEUED');
+  d.prepare("UPDATE hobo_jobs SET status='RUNNING' WHERE id=?").run(id);assert.equal(hoboStatus(d).loggers[0].active_job_status,'RUNNING');
+  cancelHoboSync(d,id);assert.equal(hoboStatus(d).loggers[0].active_job_status,null);assert.equal(hoboStatus(d).loggers[0].enabled,0);d.close();
+});
