@@ -121,3 +121,12 @@ test('overview loads only when expanded, and ignores a late response after closi
   const {View:Closed}=component('HoboDeviceOverview.tsx',[],{react:{...React,useState:initial=>[initial,()=>{}],useEffect:effect=>collapsed.push(effect)}});
   Closed({api:()=>assert.fail('collapsed overview must not fetch'),loggers:[],selectedSerial:'',onSelect:()=>{},refreshKey:0});collapsed[0]();
 });
+
+
+test('sync job list shows device-wide local/S3 counts separately from fetched count and unknown devices',()=>{
+  const jobs=[{id:'one',serial:'20611825',status:'QUEUED',observations:0},{id:'two',serial:'20611824',status:'QUEUED',observations:5},{id:'three',serial:'20601874',status:'DONE',observations:12}];
+  const {View}=component('HoboSyncJobs.tsx',[]);
+  const html=renderToStaticMarkup(React.createElement(View,{api:()=>assert.fail(),jobs,totalJobs:42,loggers:[{serial:'20611825',observations:0,archived:3818313},{serial:'20611824',observations:0,archived:0}],timezone:'Asia/Taipei',onChange:()=>{}}));
+  assert.ok(html.includes('總共 42 筆，目前顯示 3 筆'));assert.ok(html.includes('設備資料筆數（本機／S3）'));assert.ok(html.includes('0 / 3,818,313'));assert.ok(html.includes('0 / 0'));
+  assert.match(html,/>—<\/td>/);assert.ok(html.includes('已抓取筆數（含重疊）'));assert.ok(html.includes('非本次工作新增筆數'));
+});

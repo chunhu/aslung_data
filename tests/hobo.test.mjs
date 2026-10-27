@@ -304,3 +304,12 @@ test('duplicate payloads and repeat syncs do not insert or rewrite unchanged obs
   assert.equal(d.prepare('SELECT COUNT(*) n FROM hobo_observations').get().n,4,'distinct units and data types are independent observations');
   d.close();
 });
+
+
+test('sync job total counts all records beyond the latest 30 and updates after deletion',()=>{
+  const d=store();assert.equal(hoboStatus(d).jobs_total,0);const ids=[];
+  for(let i=0;i<32;i++){const id=queueHoboSync(d,{serial:'12345678',start,end});cancelHoboSync(d,id);ids.push(id);}
+  let status=hoboStatus(d);assert.equal(status.jobs_total,32);assert.equal(status.jobs.length,30);
+  manageHoboJobs(d,{operation:'delete',ids:[ids[0]],confirmation:'DELETE'});
+  status=hoboStatus(d);assert.equal(status.jobs_total,31);assert.equal(status.jobs.length,30);d.close();
+});
