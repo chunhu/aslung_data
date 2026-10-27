@@ -128,7 +128,7 @@ test('sync job list shows device-wide local/S3 counts separately from fetched co
   const jobs=[{id:'one',serial:'20611825',status:'QUEUED',observations:0,actor:'schedule'},{id:'two',serial:'20611824',status:'QUEUED',observations:5,actor:'admin@example.test'},{id:'three',serial:'20601874',status:'DONE',observations:12}];
   const {View}=component('HoboSyncJobs.tsx',[]);
   const html=renderToStaticMarkup(React.createElement(View,{api:()=>assert.fail(),jobs,totalJobs:42,loggers:[{serial:'20611825',observations:0,archived:3818313},{serial:'20611824',observations:0,archived:0}],timezone:'Asia/Taipei',onChange:()=>{}}));
-  assert.ok(html.includes('每小時排程'));assert.ok(html.includes('手動匯入'));assert.ok(html.includes('總共 42 筆，目前顯示 3 筆'));assert.ok(html.includes('設備資料筆數（本機／S3）'));assert.ok(html.includes('0 / 3,818,313'));assert.ok(html.includes('0 / 0'));
+  assert.ok(html.includes('定期排程'));assert.ok(html.includes('手動匯入'));assert.ok(html.includes('總共 42 筆，目前顯示 3 筆'));assert.ok(html.includes('設備資料筆數（本機／S3）'));assert.ok(html.includes('0 / 3,818,313'));assert.ok(html.includes('0 / 0'));
   assert.match(html,/>—<\/td>/);assert.ok(html.includes('已抓取筆數（含重疊）'));assert.ok(html.includes('非本次工作新增筆數'));
 });
 
@@ -136,19 +136,19 @@ test('sync job list shows device-wide local/S3 counts separately from fetched co
 test('overview distinguishes hourly schedule from active manual work and uses refreshed live status',()=>{
   const snapshots=[{serial:'1',name:'one',enabled:1,observations:0,archived:0},{serial:'2',name:'two',enabled:1,observations:0,archived:0},{serial:'3',name:'three',enabled:0,observations:0,archived:0}];
   const {View}=component('HoboDeviceOverview.tsx',[true,{loggers:snapshots,generated_at:''},false,'',0]);
-  const html=renderToStaticMarkup(React.createElement(View,{api:()=>assert.fail(),loggers:[{serial:'1',enabled:0,active_job_status:'RUNNING'},{serial:'2',enabled:1,active_job_status:'QUEUED'},{serial:'3',enabled:0,active_job_status:null}],selectedSerial:'',onSelect:()=>{},refreshKey:0}));
-  for(const text of ['每小時同步','目前同步工作','同步中','排隊中','目前無執行工作'])assert.ok(html.includes(text));
-  assert.match(html,/停用<\/td><td[^>]*>同步中/);assert.match(html,/啟用<\/td><td[^>]*>排隊中/);
+  const html=renderToStaticMarkup(React.createElement(View,{api:()=>assert.fail(),loggers:[{serial:'1',enabled:0,active_job_status:'RUNNING'},{serial:'2',enabled:1,interval_minutes:120,active_job_status:'QUEUED'},{serial:'3',enabled:0,active_job_status:null}],selectedSerial:'',onSelect:()=>{},refreshKey:0}));
+  for(const text of ['定期同步','目前同步工作','同步中','排隊中','目前無執行工作'])assert.ok(html.includes(text));
+  assert.match(html,/停用<\/td><td[^>]*>同步中/);assert.match(html,/啟用（每 120 分鐘）<\/td><td[^>]*>排隊中/);
 });
 
 
 test('settings submit explicit schedule origin instead of the manual import date, with a stale-write guard',async()=>{
   const old='2024-12-31T16:00:00.000Z',logger={serial:'12345678',name:'test',sync_from:old,enabled:1,observations:0,archived:0};
-  const states=[{configured:true,loggers:[logger],jobs:[]},'','',false,'12345678','test',true,'12345678','2025-01-01',false,'2026-10-19T00:00','2026-10-28T00:00',0,'2026-10-27T00:00',{sync_from:old,enabled:1}],calls=[];
+  const states=[{configured:true,loggers:[logger],jobs:[]},'','',false,'12345678','test',true,'12345678','2025-01-01',false,'2026-10-19T00:00','2026-10-28T00:00',0,'2026-10-27T00:00',{sync_from:old,enabled:1},'90','120'],calls=[];
   const {View}=component('HoboView.tsx',states);
   const tree=View({api:async(url,options)=>{if(options)calls.push(JSON.parse(options.body));return {loggers:[logger],jobs:[]};},timezone:'Asia/Taipei'});
   find(tree,node=>node.props.children==='儲存設備與排程').props.onClick();await new Promise(resolve=>setImmediate(resolve));
-  assert.equal(calls[0].scheduleStart,'2026-10-26T16:00:00.000Z');assert.equal(calls[0].start,calls[0].scheduleStart);assert.deepEqual(calls[0].expectedSchedule,{sync_from:old,enabled:1});
+  assert.equal(calls[0].interval_minutes,90);assert.equal(calls[0].scheduleStart,'2026-10-26T16:00:00.000Z');assert.equal(calls[0].start,calls[0].scheduleStart);assert.deepEqual(calls[0].expectedSchedule,{sync_from:old,enabled:1});
   const html=renderToStaticMarkup(tree);assert.ok(html.includes('自動同步起日'));assert.ok(html.includes('手動匯入開始時間'));
 });
 
@@ -169,4 +169,13 @@ test('batch cancel rejects empty or malformed device lists without opening confi
     const {View,updates}=component('HoboBatchCancel.tsx',[]);const tree=View({api:()=>assert.fail(),serialsText,onSuccess:()=>{}});
     find(tree,node=>node.props.children==='批量取消工作並停用排程').props.onClick();assert.ok(updates.get(2));assert.equal(updates.has(0),false);
   }
+});
+
+
+test('batch import submits a custom interval separately from API request pacing',async()=>{
+  const states=[{configured:true,loggers:[],jobs:[]},'','',false,'','',false,'12345678','2026-10-27',true,'2026-10-19T00:00','2026-10-28T00:00',0,'2026-10-27T00:00',null,'60','180'],calls=[];
+  const {View}=component('HoboView.tsx',states);
+  const tree=View({api:async(url,options)=>{if(options)calls.push(JSON.parse(options.body));return {saved:1,queued:1,skipped:0,loggers:[],jobs:[]};},timezone:'Asia/Taipei'});
+  find(tree,node=>node.props.children==='儲存並從起日匯入至今').props.onClick();await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(calls[0].interval_minutes,180);assert.equal(calls[0].enabled,true);assert.equal(calls[0].action,'batch');
 });

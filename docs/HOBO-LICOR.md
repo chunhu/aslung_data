@@ -30,7 +30,7 @@
    sudo docker compose --profile calibration up -d --force-recreate app calibration-worker
    ```
 
-3. 開啟 HOBO 頁面，以可搜尋的下拉選單選擇既有設備，可輸入序號或名稱縮小清單；頁面僅顯示所選設備的同步狀態、資料筆數與最新量測，預設不展開全部設備資料列。勾選「顯示全部設備摘要」可查看所有已建檔設備的每小時同步啟用／停用狀態、目前工作狀態（排隊中／同步中／目前無執行工作）、本機筆數、S3 筆數、第一筆與最後一筆時間（UTC），包括尚無資料的設備；排程與工作狀態隨頁面約每 15 秒更新；啟用排程不代表當下正在下載，手動匯入亦可能在排程停用時執行。按「更新摘要」取得最新筆數與時間範圍。設備標題的台數依已建檔清單動態計算，新增設備後會增加，並非固定 24 台。本機暫存與 S3 可能重疊，筆數不可直接相加；筆數以感測器量測紀錄計算。新歸檔會保存精確第一筆時間索引；舊歸檔首次查閱時僅讀取各設備最早一天的 S3 檔案並快取索引，不重新呼叫 LI-COR。讀取失敗時顯示該設備的錯誤，可稍後更新摘要重試。新增設備時展開「新增、歷史匯入與排程設定」，填入 LI-COR 網站上的 **Logger Serial Number**（不是感測器序號）、設備名稱，以及開始、結束時間。先儲存設備，再按「匯入指定範圍」。官方文件沒有提供列出所有設備的端點，因此新增時需要手動輸入序號。
+3. 開啟 HOBO 頁面，以可搜尋的下拉選單選擇既有設備，可輸入序號或名稱縮小清單；頁面僅顯示所選設備的同步狀態、資料筆數與最新量測，預設不展開全部設備資料列。勾選「顯示全部設備摘要」可查看所有已建檔設備的定期同步啟用／停用狀態、目前工作狀態（排隊中／同步中／目前無執行工作）、本機筆數、S3 筆數、第一筆與最後一筆時間（UTC），包括尚無資料的設備；排程與工作狀態隨頁面約每 15 秒更新；啟用排程不代表當下正在下載，手動匯入亦可能在排程停用時執行。按「更新摘要」取得最新筆數與時間範圍。設備標題的台數依已建檔清單動態計算，新增設備後會增加，並非固定 24 台。本機暫存與 S3 可能重疊，筆數不可直接相加；筆數以感測器量測紀錄計算。新歸檔會保存精確第一筆時間索引；舊歸檔首次查閱時僅讀取各設備最早一天的 S3 檔案並快取索引，不重新呼叫 LI-COR。讀取失敗時顯示該設備的錯誤，可稍後更新摘要重試。新增設備時展開「新增、歷史匯入與排程設定」，填入 LI-COR 網站上的 **Logger Serial Number**（不是感測器序號）、設備名稱，以及開始、結束時間。先儲存設備，再按「匯入指定範圍」。官方文件沒有提供列出所有設備的端點，因此新增時需要手動輸入序號。
 4. 查看同步工作狀態。完成後在獨立的「HOBO 資料搜尋」區塊選擇設備及起訖時間，按「搜尋資料」，再按「下載全部符合資料（CSV）」。查詢每頁 200 筆，CSV 包含全部符合搜尋條件的已匯入資料，不限目前顯示頁面。
 
 ### 資料搜尋條件
@@ -49,7 +49,7 @@
 
 批次新增區塊預填使用者提供的 24 台序號，來源清單為 `lib/hobo-rcec-loggers.json`。初始起日為 **2025/01/01 00:00 Asia/Taipei**，送至 API 的 UTC 起日為 **2024/12/31 16:00**；結束時間為按下按鈕當下。清單及日期均可在送出前修改。
 
-按「儲存並從起日匯入至今」會一次建立設備與工作，每台以 `RCEC_序號` 命名。已有排隊或執行中工作的設備會保留原設定與進度、不重建工作。沒有執行中工作的設備，勾選每小時同步時會將排程起日同步更新為本次批次起日；未勾選時保留既有排程起日並停用同步。勾選「同時啟用每小時同步」才會延續定期抓取。此按鈕會儲存所選同步設定，請在送出前確認勾選狀態。
+按「儲存並從起日匯入至今」會一次建立設備與工作，每台以 `RCEC_序號` 命名。已有排隊或執行中工作的設備會保留原設定與進度、不重建工作。沒有執行中工作的設備，勾選定期同步時會將排程起日同步更新為本次批次起日；未勾選時保留既有排程起日並停用同步。勾選「同時啟用定期同步」才會延續定期抓取。此按鈕會儲存所選同步設定，請在送出前確認勾選狀態。
 
 24 台會按日輪流抓取，避免第一台的長期歷史阻塞其他設備；長期歷史需要多次 API 請求，排隊與抓取進度會保留。各台獨立請求，不依賴 LI-COR 對大量序號合併查詢的支援。
 
@@ -57,7 +57,7 @@ LI-COR 對指定區間無資料時可能仍回覆 HTTP 200，因此空結果不�
 
 ## 定期同步
 
-- 預設關閉；勾選「每小時同步」並儲存設備才會啟用。
+- 預設關閉；勾選「定期同步」並儲存設備才會啟用。
 - 首次從新增設備時的開始時間抓到目前時間，依臺灣日曆月份分段，月內以一天以內區塊輪流下載；跨一年或更長歷史不會一次送給 LI-COR。之後每小時補抓最近一天，更新可能延遲回傳的資料。
 - 月份進度保存在 `hobo_months`，介面顯示已完成月份、目前月份及每日續傳游標。舊版已排隊的長期工作會從既有游標接續，不會重抓已完成的月份。每個月完成後，該設備預設暫停 60 秒再進入下個月，其他設備仍遵守共用請求間隔。
 - 全部設備共用至少 15 秒的 LI-COR 請求間隔，包含資料量超限後的切分請求。下次可請求時間保存在 SQLite，worker 重啟後仍沿用；限速僅影響 LI-COR API，不會讓整個背景 worker 閒置等待。單一工作內切分請求需要等待時，會暫留在該工作。
@@ -65,7 +65,7 @@ LI-COR 對指定區間無資料時可能仍回覆 HTTP 200，因此空結果不�
 - 新增設備後，自動同步起日與手動匯入、資料搜尋日期分開。選取設備後，設定「自動同步起日」並按「儲存設備與排程」可更新既有起日；變更前需取消排隊／執行中工作。修改起日會重設同步游標與下次排程時間，保留量測及已完成紀錄；舊起日失敗工作改為已取消。設定變更使用伺服器狀態比對，取消後的舊表單不能意外重新啟用排程。欲補抓更早或更久之前修訂的資料，使用指定範圍匯入，不會變更自動同步起日。
 - 背景工作每次處理一台設備的一日區間，與校正 worker 共用程序。worker 停止期間不會同步，重新啟動後會續傳。上游逾時或資料密集時可能延後其他背景工作。
 - 上游回覆 `max_results=true` 時，捨棄截斷內容，切分時間區間重新下載；若單秒資料仍超限，顯示失敗，不把截斷的資料視為完成。
-- 同步工作有鎖定與持續進度，暫時性失敗最多自動嘗試三次；HTTP 400／401／403／404／422 直接停止自動重試。最終失敗時停用該設備每小時同步，保留游標；既有失敗工作也會阻止排程另建同區間工作，需先檢查設定再按「重試」或取消舊工作。已成功完成的區塊保留，失敗區塊不推進進度。
+- 同步工作有鎖定與持續進度，暫時性失敗最多自動嘗試三次；HTTP 400／401／403／404／422 直接停止自動重試。最終失敗時停用該設備定期同步，保留游標；既有失敗工作也會阻止排程另建同區間工作，需先檢查設定再按「重試」或取消舊工作。已成功完成的區塊保留，失敗區塊不推進進度。
 - 重疊資料以設備、感測器、時間、資料類型 ID、量測類型、單位為識別，更新原值，不累積重複紀錄。工作「已抓取筆數」含重疊，設備資料筆數才是去重後總數。
 
 ### 取消同步工作
@@ -73,7 +73,7 @@ LI-COR 對指定區間無資料時可能仍回覆 HTTP 200，因此空結果不�
 在「同步工作」的排隊中、同步中或失敗工作旁按「取消工作」，確認後會：
 
 - 將工作標記為「已取消」，停止後續月份、下載與自動重試，保留已完成進度與已下載的本機／S3 資料。
-- 停用該設備的每小時同步，避免排程立即重新排入同一段歷史；不影響其他設備。
+- 停用該設備的定期同步，避免排程立即重新排入同一段歷史；不影響其他設備。
 - 對執行中的請求，每秒檢查取消狀態並嘗試中止連線；請求間隔等待亦會中止。已送出的請求可能仍由 LI-COR 處理，但取消後尚未發布的回應不會寫入資料庫，也不會繼續切分下載。
 - 「已完成」工作無法取消；需要移除已下載資料時，使用下方清除功能。「已取消」工作不會以重試恢復，欲再次匯入請建立新的指定範圍工作；欲自動同步需重新勾選並儲存排程。
 
@@ -142,8 +142,8 @@ node node_modules/typescript/bin/tsc --noEmit --incremental false
 
 ## 排程起日與重新補抓問題排查 / Schedule origin troubleshooting
 
-- 「同步工作」的來源欄位區分「每小時排程」與「手動匯入」。手動匯入近期資料完成，不代表較早的歷史區間已完成，不會跳過歷史缺口或自動改寫排程起日。
-- 升級不會自行取消已存在的工作，也不會猜測新的起日。若只要從 2026/10/27 開始：先取消舊工作，選取設備，將自動同步起日改為 2026/10/27 00:00（Asia/Taipei），確認每小時同步開關後儲存；UTC 顯示為 2026-10-26T16:00:00Z。
+- 「同步工作」的來源欄位區分「定期排程」與「手動匯入」。手動匯入近期資料完成，不代表較早的歷史區間已完成，不會跳過歷史缺口或自動改寫排程起日。
+- 升級不會自行取消已存在的工作，也不會猜測新的起日。若只要從 2026/10/27 開始：先取消舊工作，選取設備，將自動同步起日改為 2026/10/27 00:00（Asia/Taipei），確認定期同步開關後儲存；UTC 顯示為 2026-10-26T16:00:00Z。
 - The automatic schedule origin, manual import range, and search/download range are separate. Completing a recent manual import does not erase an earlier history gap. Select the device and explicitly save its automatic schedule origin to change future scheduling.
 - Cancel active work before changing the origin. Saving a changed origin resets the schedule cursor while retaining measurements and completed job records. Stale settings are rejected after cancellation. Terminal failures disable hourly scheduling; failed jobs block automatic replacement until reviewed. HTTP 400/401/403/404/422 stop immediately; temporary errors retain the existing retry budget and rate-limit handling.
 - Deployment does not cancel existing jobs or change stored dates. Cancel unwanted jobs and explicitly save the intended origin after upgrading. Job sources identify hourly scheduling versus manual imports.
@@ -151,6 +151,15 @@ node node_modules/typescript/bin/tsc --noEmit --incremental false
 
 ### 依設備序號批量停用 / Cancel and disable by device list
 
-在「批次新增與歷史匯入」填入要停用的設備序號，按「批量取消工作並停用排程」並確認清單。每次最多 100 台，不需填日期，也不需設定 LI-COR Token。此操作取消清單內設備所有排隊中、同步中及失敗工作，不受最近 30 筆清單限制；沒有待處理工作的設備也會停用每小時同步。已完成工作、進度、本機及 S3 資料均保留。重複序號只處理一次，未建檔序號略過並回報，不新增設備。確認清單固定為開啟視窗時的序號；成功後取消勾選批次表單的每小時同步選項並更新設備狀態。
+在「批次新增與歷史匯入」填入要停用的設備序號，按「批量取消工作並停用排程」並確認清單。每次最多 100 台，不需填日期，也不需設定 LI-COR Token。此操作取消清單內設備所有排隊中、同步中及失敗工作，不受最近 30 筆清單限制；沒有待處理工作的設備也會停用定期同步。已完成工作、進度、本機及 S3 資料均保留。重複序號只處理一次，未建檔序號略過並回報，不新增設備。確認清單固定為開啟視窗時的序號；成功後取消勾選批次表單的定期同步選項並更新設備狀態。
 
-In the batch import panel, enter up to 100 device serial numbers and choose “批量取消工作並停用排程” (Cancel jobs and disable schedules). Review and confirm the frozen device list. All queued, running and failed jobs for those devices are cancelled, including jobs outside the most recent 30. Hourly scheduling is disabled even for devices with no pending job. Completed records and local/S3 measurements are retained. Unknown serial numbers are skipped and reported. No import dates or LI-COR token are needed.
+In the batch import panel, enter up to 100 device serial numbers and choose “批量取消工作並停用排程” (Cancel jobs and disable schedules). Review and confirm the frozen device list. All queued, running and failed jobs for those devices are cancelled, including jobs outside the most recent 30. Periodic scheduling is disabled even for devices with no pending job. Completed records and local/S3 measurements are retained. Unknown serial numbers are skipped and reported. No import dates or LI-COR token are needed.
+
+
+### 自訂定期同步間隔 / Custom synchronization interval
+
+單台設備可在「同步間隔（分鐘）」輸入 1 至 10080 的整數，預設 60（每小時），例如 15、120（兩小時）、1440（每天）。批次新增與匯入亦可設定「批次同步間隔（分鐘）」，套用至本次可儲存的設備；已有排隊／執行中工作的設備保留原設定。設備摘要顯示「啟用（每 N 分鐘）」。未設定間隔的既有設備自動沿用 60 分鐘。
+
+修改已啟用排程的間隔、不變更起日時，保留同步進度，從儲存時間加上新間隔安排下一次；不取消正在執行的工作。啟用排程或修改起日後會依原本首次補抓規則處理。間隔超過一天仍會完整補抓上次進度至當下的資料，按日分段。實際開始時間受 worker、佇列與上游限流影響；全設備共用的 API 請求等待與月份暫停規則維持不變。
+
+Set an individual or batch synchronization interval in minutes (integer 1–10080; default 60). Examples: 15 minutes, 120 minutes (two hours), or 1440 minutes (daily). Existing devices without an explicit setting retain 60 minutes. Changing the interval of an enabled schedule preserves its cursor and schedules the next check from save time plus the new interval. Running jobs are retained. Multi-day intervals still backfill every elapsed day. Worker availability, queue load and shared API rate limits may delay the actual start; the schedule interval does not override request pacing.

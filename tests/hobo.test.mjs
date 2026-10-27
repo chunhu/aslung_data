@@ -421,3 +421,47 @@ test('device-list cancellation validates the complete request before mutating an
   for(const body of [{serials:[serial],confirmation:'DELETE'},{serials:[],confirmation:'CANCEL'},{serials:[serial,'bad'],confirmation:'CANCEL'},{serials:Array(101).fill(serial),confirmation:'CANCEL'}])assert.throws(()=>cancelHoboBatch(d,body),HoboError);
   assert.equal(hoboStatus(d).loggers[0].enabled,1);d.close();
 });
+
+
+test('legacy schedules default to 60 minutes and custom intervals trigger only when due',async()=>{
+  for(const interval of [1,15,90,1440]){
+    const d=store(),serial='12345678',now=Date.parse(end);
+    assert.equal(hoboStatus(d).loggers[0].interval_minutes,60);
+    saveHoboLogger(d,{serial,name:'custom',start:end,scheduleStart:end,enabled:true,interval_minutes:interval});
+    await runHoboSync(d,async()=>[],now);assert.equal(hoboStatus(d).loggers[0].next_sync,now+interval*60000);
+    assert.equal(await runHoboSync(d,async()=>assert.fail('too early'),now+interval*60000-1),null);
+    assert.ok(await runHoboSync(d,async()=>[],now+interval*60000));d.close();
+  }
+});
+
+test('changing interval preserves observations and cursor, resets next time, and rejects stale interval writes',()=>{
+  const d=store(),serial='12345678';saveHoboLogger(d,{serial,name:'custom',start,enabled:true});
+  d.prepare('UPDATE hobo_loggers SET synced_until=?').run(end);const before=Date.now();
+  const change={serial,name:'custom',start,enabled:true,interval_minutes:120,expectedSchedule:{sync_from:start,enabled:1,interval_minutes:60}};
+  saveHoboLogger(d,change);const logger=hoboStatus(d).loggers[0];
+  assert.equal(logger.interval_minutes,120);assert.equal(logger.synced_until,end);
+  assert.ok(logger.next_sync>=before+120*60000&&logger.next_sync<=Date.now()+120*60000);
+  assert.throws(()=>saveHoboLogger(d,{...change,interval_minutes:15}),/已變更/);
+  assert.equal(hoboStatus(d).loggers[0].interval_minutes,120);d.close();
+});
+
+test('batch intervals persist per device, omitted values preserve settings and invalid values roll back',()=>{
+  const d=store(),serial='12345678';
+  saveHoboBatch(d,{serials:[serial,'87654321'],start,end,enabled:false,queue:false,interval_minutes:180});
+  assert.deepEqual(hoboStatus(d).loggers.map(l=>l.interval_minutes),[180,180]);
+  saveHoboLogger(d,{serial,name:'rename',start,enabled:false});assert.equal(hoboStatus(d).loggers[0].interval_minutes,180);
+  for(const interval_minutes of [0,-1,1.5,10081,NaN,'60',null]){
+    assert.throws(()=>saveHoboBatch(d,{serials:['11111111'],start,end,enabled:false,queue:false,interval_minutes}),HoboError);
+  }
+  assert.equal(hoboStatus(d).loggers.length,2);d.close();
+});
+
+test('multi-day custom cadence still downloads the complete elapsed interval without gaps',async()=>{
+  const d=store(),serial='12345678',now=Date.parse(end),ranges=[];
+  saveHoboLogger(d,{serial,name:'custom',start:end,scheduleStart:end,enabled:true,interval_minutes:2880});
+  await runHoboSync(d,async()=>[],now);
+  const later=now+2880*60000;await runHoboSync(d,async r=>{ranges.push(r);return [];},later);
+  await runHoboSync(d,async r=>{ranges.push(r);return [];},later);
+  assert.equal(ranges[0].start,end);assert.equal(ranges[0].end,ranges[1].start);assert.equal(ranges[1].end,new Date(later).toISOString());
+  assert.equal(hoboStatus(d).loggers[0].synced_until,new Date(later).toISOString());d.close();
+});
