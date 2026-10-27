@@ -282,3 +282,22 @@ test('HOBO API rejects non-admin read/write/download, enforces origin, and expor
   const deleted=await POST(bulk());assert.equal(deleted.status,200);assert.equal((await deleted.json()).deleted,1);
   d.close();
 });
+
+test('duplicate payloads and repeat syncs do not insert or rewrite unchanged observations; corrections update in place',async()=>{
+  const d=store();
+  d.exec(`CREATE TABLE observation_writes(kind TEXT);CREATE TRIGGER count_hobo_insert AFTER INSERT ON hobo_observations BEGIN INSERT INTO observation_writes VALUES('insert');END;
+    CREATE TRIGGER count_hobo_update AFTER UPDATE ON hobo_observations BEGIN INSERT INTO observation_writes VALUES('update');END;`);
+  const sync=async rows=>{queueHoboSync(d,{serial:'12345678',start,end:start});assert.equal((await runHoboSync(d,async()=>rows)).status,'DONE');};
+  const values=[observation(start,0),{...observation(start,null),sensor_sn:'other-sensor'}];
+  await sync([...values,...values]);
+  assert.equal(d.prepare('SELECT COUNT(*) n FROM hobo_observations').get().n,2);
+  assert.equal(d.prepare('SELECT COUNT(*) n FROM observation_writes').get().n,2);
+  await sync(values);
+  assert.equal(d.prepare('SELECT COUNT(*) n FROM observation_writes').get().n,2,'zero and null repeats cause no SQL update');
+  await sync([{...values[0],value:5}, {...values[1],data_type:'CORRECTED'}]);
+  assert.equal(d.prepare('SELECT COUNT(*) n FROM hobo_observations').get().n,2);
+  assert.equal(d.prepare("SELECT COUNT(*) n FROM observation_writes WHERE kind='update'").get().n,2);
+  await sync([{...values[0],unit:'°F'},{...values[0],data_type_id:'different-type'}]);
+  assert.equal(d.prepare('SELECT COUNT(*) n FROM hobo_observations').get().n,4,'distinct units and data types are independent observations');
+  d.close();
+});

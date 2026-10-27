@@ -757,7 +757,7 @@ export async function POST(r:Request){try{
   const fileId=required(p.id);
   const file:any=await db().prepare("SELECT * FROM files WHERE id=?").bind(fileId).first();
   if(file){
-    if(file.storage_path){try{const fsMod=await import("node:fs");if(fsMod.existsSync(file.storage_path))fsMod.unlinkSync(file.storage_path);}catch{}}
+    if(!file.external_url&&file.storage_path){try{const fsMod=await import("node:fs");if(fsMod.existsSync(file.storage_path))fsMod.unlinkSync(file.storage_path);}catch{}}
     await db().prepare("DELETE FROM file_grants WHERE file_id=?").bind(fileId).run();
     await db().prepare("DELETE FROM files WHERE id=?").bind(fileId).run();
   }

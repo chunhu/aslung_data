@@ -178,3 +178,38 @@ test('cleanup API blocks members and foreign origins before preview or deletion'
   role='admin';allowed=false;assert.equal((await POST(new Request('http://local/api/hobo/cleanup',{method:'POST'}))).status,403);
   assert.equal((await GET(new Request('http://local/api/hobo/cleanup'))).status,200);d.close();
 });
+
+test('repeated identical sync preserves the verified S3 generation and removes only redundant staging',async()=>{
+  const d=database(),client=new FakeS3(),options={configuration,clientFor:()=>client};
+  const values=[row(start,0),row(end,null)];await seed(d,values);await archiveNextHoboDay(d,options);
+  const previous={...d.prepare('SELECT * FROM hobo_archives').get()};
+  await seed(d,[...values,...values]);
+  assert.equal((await queryStoredHobo(d,{serial,start,end},options)).rows.length,2);
+  d.prepare("INSERT INTO hobo_service_state(name,value) VALUES('storage_error','previous failure')").run();
+  const calls=client.calls.length,result=await archiveNextHoboDay(d,options);
+  assert.equal(result.unchanged,true);assert.equal(result.count,2);
+  assert.deepEqual({...d.prepare('SELECT * FROM hobo_archives').get()},previous);
+  assert.equal(client.objects.size,1);assert.ok(client.calls.slice(calls).every(c=>c.name==='GetObjectCommand'));
+  assert.equal(d.prepare('SELECT COUNT(*) n FROM hobo_observations').get().n,0);
+  assert.equal(hoboStatus(d).storage_error,'');
+  const csv=await new Response(await storedHoboCsvStream(d,{serial,start,end},options)).text();
+  assert.equal(csv.trim().split('\r\n').length,3);
+  await seed(d,[{...values[0],data_type:'CORRECTED'}]);await archiveNextHoboDay(d,options);
+  assert.equal(client.objects.size,2,'metadata corrections must still publish a new generation');
+  const rows=(await queryStoredHobo(d,{serial,start,end},options)).rows;
+  assert.equal(rows.length,2);assert.equal(rows[0].data_type,'CORRECTED');d.close();
+});
+
+test('repeat archival verifies remote content before dropping staging and still supports bucket migration',async()=>{
+  const d=database(),client=new FakeS3(),options={configuration,clientFor:()=>client};
+  await seed(d);await archiveNextHoboDay(d,options);await seed(d);
+  client.badDigest=true;
+  await assert.rejects(archiveNextHoboDay(d,options),/大小|檢查碼/);
+  assert.equal(d.prepare('SELECT COUNT(*) n FROM hobo_observations').get().n,1);
+  assert.equal(client.objects.size,1);
+  client.badDigest=false;
+  const migrated={...options,configuration:{...configuration,bucket:'another-hobo-bucket'}};
+  await archiveNextHoboDay(d,migrated);
+  assert.equal(client.objects.size,2);assert.equal(d.prepare('SELECT bucket FROM hobo_archives').get().bucket,'another-hobo-bucket');
+  assert.equal(d.prepare('SELECT COUNT(*) n FROM hobo_observations').get().n,0);d.close();
+});

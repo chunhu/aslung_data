@@ -371,3 +371,19 @@ Docker builder 階段預設設定 `NODE_OPTIONS=--max-old-space-size=1024`，並
 ### HOBO / LI-COR 設備資料
 
 支援 24 台 RCEC 設備批次設定、歷史匯入、每小時同步、查詢與 CSV 下載，以及 S3 按設備日歸檔和本機／S3 同步清除。設定與操作請見 [HOBO / LI-COR 說明](docs/HOBO-LICOR.md)。實際 Token 僅設定在 EC2 `.env` 的 `LICOR_API_TOKEN`；啟用 S3 使用 `HOBO_STORAGE=s3`，清除權限另新增 `scripts/iam-hobo-cleanup.json`。
+
+### 最新消息與文章發布
+
+側邊欄「最新消息」與「文章專區」供登入會員閱讀；admin 可新增、預覽、儲存草稿、發布、置頂、編輯及下架。具備搜尋、狀態篩選與分頁，草稿及下架內容不對一般會員開放。資料保存在 SQLite 並納入現有備份。操作及 API 請見 [中英文發布說明](docs/CONTENT-PUBLISHING.md)。
+
+### 檔案專區的外部下載連結
+
+除直接上傳外，admin 可新增外部 http/https 檔案連結、名稱、說明並沿用會員授權。會員點選後先驗證本站權限，再開啟外部平台；本站不抓取或儲存外部檔案。刪除只移除連結與授權，不刪除外部原檔。請另行設定外部平台的分享權限與有效期限。詳見 [檔案與外部連結說明](docs/FILE-RESOURCES.md)。
+
+### 功能列分類與隱藏
+
+側邊欄依「消息與資源、監測與資料、設備管理、校正與告警、會員與權限、資料串接」分組，可點分類標題收合；沒有授權項目的群組不顯示。切換頁面時自動展開目前頁面的群組。群組收合不會離開目前頁面。
+
+頂端工具列提供「隱藏選單／顯示選單」，側邊欄品牌區也有隱藏按鈕。桌機完全隱藏後主內容可使用釋放的寬度；手機使用抽屜，選擇功能後自動關閉。桌機可見狀態與群組偏好按登入帳號保存在本機瀏覽器，與現有選單寬度設定分開；不修改帳號權限。
+
+The sidebar groups functions into news/resources, monitoring/data, device management, calibration/alerts, members/access and data integration. Empty unauthorized groups are hidden. Group collapse preserves the current page; navigating expands its group. The header toggle hides or shows the menu, and mobile selection closes the drawer. Desktop visibility and group preferences are stored per account in the current browser.

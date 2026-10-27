@@ -99,11 +99,24 @@ LI-COR 對指定區間無資料時可能仍回覆 HTTP 200，因此空結果不�
 - 啟用 S3 並啟動 worker 後，既有本機量測會自動按臺灣時間的設備日搬移；不需要重新下載 LI-COR 歷史資料。每個 worker 回合最多歸檔兩個設備日，再處理一次新資料同步。
 - 路徑格式：`hobo/<Logger Serial>/<YYYY>/<MM>/<DD>/<generation UUID>/<sha256>.jsonl.gz`。每個設備日的目前檔案索引保留在 `hobo_archives`；上傳前也會記錄每日範圍，以便清除中斷後留下的孤立上傳。
 - 上傳以 AES256 加密並附 SHA-256 檢查碼，HEAD 驗證檔案長度、檢查碼、metadata 全部一致後，才以 SQLite transaction 發布索引及移除已搬移的暫存列。失敗時本機資料保持完整；worker 暫停新資料下載，先重試歸檔，頁面會顯示錯誤。
-- 同步更正會與現有 S3 設備日合併、去重後產生新的不可變檔案，發布新索引。歷次檔案暫不自動刪除，會產生額外 S3 用量；下方同步清除涵蓋該日所有歷次檔案與版本。
+- 同步更正會與現有 S3 設備日合併、去重；僅資料新增、更正或儲存位置變更時產生新的不可變檔案並發布索引。完全相同的重複同步會驗證既有 S3 內容後沿用原檔，只移除重複的本機暫存，不再新增 S3 世代檔。歷次檔案暫不自動刪除，會產生額外 S3 用量；下方同步清除涵蓋該日所有歷次檔案與版本。
 - 查詢與 CSV 依日期讀取、驗證、解壓 S3 檔案，並合併本機尚未歸檔的較新值。每次在記憶體處理一個設備日，不把整段歷史或已歸檔資料重新存回 SQLite。
 - 單日壓縮檔上限 64 MiB、解壓上限 128 MiB，超出上限會停止並保留本機資料。
 - 移除 SQLite 量測列會釋放資料庫內可重用的頁面，但不自動縮小既有 SQLite 檔案；此流程不會在正式站執行 VACUUM。
 - SQLite 備份包含索引與設定，**不包含 S3 量測物件**。請依機構需求另規劃 S3 的備份或保留政策。
+
+## 重複資料判定與處理
+
+以 `logger_sn + timestamp + sensor_sn + data_type_id + sensor_measurement_type + unit` 作為唯一鍵。來源時間會正規化為 UTC，保留觀測的毫秒精度。同時間的不同感測器、量測項目、資料類型 ID 或單位，仍是各自獨立的資料；不能只按時間或量測數值刪重複。
+
+- 相同唯一鍵且數值、資料類型文字均相同：SQLite 不新增，也不重寫原紀錄。適用單次回應重複、每日交界及定期重抓重疊期間。
+- 相同唯一鍵但來源修正數值或資料類型文字：更新原紀錄；不是另外新增一筆。零與空值分開處理。
+- S3 與本機同時存在相同唯一鍵：查詢及 CSV 合併成一筆，以較新的本機同步值優先，歸檔後沿用相同規則。完全相同的設備日不重複上傳；內容讀取或檢查碼驗證失敗時保留本機暫存，不能當成重複而刪除。
+- 同步工作「已抓取筆數（含重疊）」是來源回傳累計，不是新增筆數；不能以此判斷資料庫有重複紀錄。本機與 S3 筆數在歸檔完成前也可能涵蓋同一觀測，不能直接相加當作去重後總筆數。
+
+建議保留既有歷次 S3 更正版本以供恢復；這次防護不回頭刪除歷史檔案、備份或 LI-COR 原站資料。若要處理既有多餘版本，應先盤點目前索引與保留需求，再另行規劃清理，不要直接刪除整個日期前綴。
+
+English: Observation identity consists of logger, UTC timestamp, sensor, data type ID, measurement type and unit. Identical observations are no-ops; corrections update the existing record. Queries and CSV merge local and archived observations by the same identity. An unchanged verified daily S3 archive is reused instead of uploading another generation. Different sensors or units must not be collapsed merely because their times or values match. Fetched job counts include overlap and are not counts of new unique observations.
 
 ## 清除 HOBO 測試資料（本機＋S3）
 

@@ -3,6 +3,8 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { NextRequest } from "next/server";
 import { identity, db, fail, writeGuard, AppError } from "@/lib/server";
+import {getConnection} from '@/lib/store.mjs';
+import {createFileLink,externalFileUrl,FileLinkError} from '@/lib/file-links.mjs';
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,6 +24,11 @@ export async function GET(req: NextRequest) {
         if (!grant) throw new AppError(403, "您尚未獲得此檔案的檢視或下載權限。");
       }
 
+      if (file.external_url) {
+        const url=externalFileUrl(file.external_url);
+        if(searchParams.get('download')==='1')await db().prepare('UPDATE files SET download_count=download_count+1 WHERE id=?').bind(fileId).run();
+        return new Response(null,{status:303,headers:{Location:url,'Cache-Control':'private, no-store','Referrer-Policy':'no-referrer'}});
+      }
       if (!fs.existsSync(file.storage_path)) {
         throw new AppError(404, "檔案實體不存在於伺服器。");
       }
@@ -60,7 +67,7 @@ export async function GET(req: NextRequest) {
       return Response.json({ files, grants: [] }, { headers: { "Cache-Control": "no-store" } });
     }
   } catch (e) {
-    return fail(e);
+    return fail(e instanceof FileLinkError?new AppError(e.status,e.message):e);
   }
 }
 
@@ -125,12 +132,14 @@ export async function POST(req: NextRequest) {
     const body = await req.json() as Record<string, unknown>;
     const action = body?.action;
 
+    if(action==='fileLink')return Response.json(createFileLink(getConnection(),me,body),{headers:{'Cache-Control':'no-store'}});
+
     if (action === "fileDelete") {
       const fileId = String(body.id || "");
       if (!fileId) throw new AppError(400, "未指定檔案 ID。");
       const file: any = await db().prepare("SELECT * FROM files WHERE id=?").bind(fileId).first();
       if (file) {
-        if (file.storage_path && fs.existsSync(file.storage_path)) {
+        if (!file.external_url && file.storage_path && fs.existsSync(file.storage_path)) {
           try { fs.unlinkSync(file.storage_path); } catch {}
         }
         await db().prepare("DELETE FROM file_grants WHERE file_id=?").bind(fileId).run();
@@ -165,6 +174,6 @@ export async function POST(req: NextRequest) {
 
     throw new AppError(400, "不支援的操作。");
   } catch (e) {
-    return fail(e);
+    return fail(e instanceof FileLinkError?new AppError(e.status,e.message):e);
   }
 }
