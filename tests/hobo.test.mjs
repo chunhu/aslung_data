@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {readFileSync} from 'node:fs';
 import ts from 'typescript';
-import {ensureHoboSchema,saveHoboLogger,saveHoboBatch,queueHoboSync,retryHoboSync,cancelHoboSync,manageHoboJobs,runHoboSync,fetchHoboWindow,queryHobo,hoboCsvStream,hoboStatus,HoboError,hoboMonthRanges,waitHoboRequest} from '../lib/hobo.mjs';
+import {ensureHoboSchema,saveHoboLogger,saveHoboBatch,queueHoboSync,retryHoboSync,cancelHoboSync,cancelHoboBatch,manageHoboJobs,runHoboSync,fetchHoboWindow,queryHobo,hoboCsvStream,hoboStatus,HoboError,hoboMonthRanges,waitHoboRequest} from '../lib/hobo.mjs';
 const start='2026-10-01T00:00:00.000Z',end='2026-10-03T00:00:00.000Z';
 const observation=(timestamp=start,value=0)=>({logger_sn:'12345678',sensor_sn:'sensor-1',timestamp,data_type:'Temperature',data_type_id:'1',value,unit:'°C',sensor_measurement_type:'Temperature'});
 function store(){const d=new DatabaseSync(':memory:');d.exec('PRAGMA foreign_keys=ON');ensureHoboSchema(d);saveHoboLogger(d,{serial:'12345678',name:'HOBO test',start,enabled:false});return d;}
@@ -269,7 +269,9 @@ test('HOBO API rejects non-admin read/write/download, enforces origin, and expor
   assert.equal((await GET(new Request('http://local/api/hobo?'+params))).status,403);
   assert.equal((await POST(new Request('http://local/api/hobo',{method:'POST',body:JSON.stringify({action:'save'})}))).status,403);
   assert.equal((await GET(new Request('http://local/api/hobo?action=overview'))).status,403);
-  role='admin';origin=false;assert.equal((await POST(new Request('http://local/api/hobo',{method:'POST'}))).status,403);
+  const batchCancel=()=>new Request('http://local/api/hobo',{method:'POST',body:JSON.stringify({action:'cancelBatch',serials:['12345678'],confirmation:'CANCEL'})});
+  assert.equal((await POST(batchCancel())).status,403);
+  role='admin';origin=false;assert.equal((await POST(batchCancel())).status,403);assert.equal((await POST(new Request('http://local/api/hobo',{method:'POST'}))).status,403);
   origin=true;const unsafeSave=await POST(new Request('http://local/api/hobo',{method:'POST',body:JSON.stringify({action:'save',serial:'12345678',name:'stale',start,enabled:true})}));assert.equal(unsafeSave.status,409);
   const response=await GET(new Request('http://local/api/hobo?'+params));assert.equal(response.status,200);assert.match(response.headers.get('Content-Disposition'),/HOBO_12345678_20261001_20261003/);assert.match(await response.text(),/logger_sn/);
   const insert=d.prepare('INSERT INTO hobo_observations VALUES(?,?,?,?,?,?,?,?)');
@@ -284,6 +286,7 @@ test('HOBO API rejects non-admin read/write/download, enforces origin, and expor
   role='member';const bulk=()=>new Request('http://local/api/hobo',{method:'POST',body:JSON.stringify({action:'jobsBulk',operation:'delete',ids:[id],confirmation:'DELETE'})});
   assert.equal((await POST(bulk())).status,403);role='admin';origin=false;assert.equal((await POST(bulk())).status,403);origin=true;
   const deleted=await POST(bulk());assert.equal(deleted.status,200);assert.equal((await deleted.json()).deleted,1);
+  const stopped=await POST(batchCancel());assert.equal(stopped.status,200);assert.equal((await stopped.json()).matched,1);
   d.close();
 });
 
@@ -385,4 +388,36 @@ test('an existing failed job blocks automatic recreation even when upgrading fro
   const d=store(),serial='12345678',id=queueHoboSync(d,{serial,start,end});
   d.prepare("UPDATE hobo_jobs SET status='FAILED' WHERE id=?").run(id);d.prepare('UPDATE hobo_loggers SET enabled=1').run();
   assert.equal(await runHoboSync(d,async()=>assert.fail(),Date.parse(end)),null);assert.equal(hoboStatus(d).jobs_total,1);d.close();
+});
+
+
+test('device-list batch cancellation includes jobs beyond the recent 30 and disables devices with no active job',async()=>{
+  const d=store(),serial='12345678';
+  const completed=queueHoboSync(d,{serial,start,end:start});await runHoboSync(d,async()=>[observation()]);
+  for(let i=0;i<35;i++){const id=queueHoboSync(d,{serial,start,end});d.prepare("UPDATE hobo_jobs SET status='FAILED' WHERE id=?").run(id);}
+  saveHoboLogger(d,{serial,name:'test',start,enabled:true});
+  saveHoboLogger(d,{serial:'87654321',name:'idle',start,enabled:true});
+  saveHoboLogger(d,{serial:'11111111',name:'unselected',start,enabled:true});
+  const result=cancelHoboBatch(d,{serials:[serial,serial,'87654321','99999999'],confirmation:'CANCEL'});
+  assert.deepEqual(result,{ok:true,matched:2,disabled:2,cancelled:35,missing:['99999999']});
+  assert.equal(d.prepare("SELECT status FROM hobo_jobs WHERE id=?").get(completed).status,'DONE');
+  const loggers=hoboStatus(d).loggers;assert.equal(loggers.find(l=>l.serial===serial).observations,1);
+  assert.equal(loggers.find(l=>l.serial==='87654321').enabled,0);assert.equal(loggers.find(l=>l.serial==='11111111').enabled,1);
+  assert.equal(cancelHoboBatch(d,{serials:[serial,'87654321'],confirmation:'CANCEL'}).cancelled,0);d.close();
+});
+
+test('device-list cancellation invalidates in-flight work and deleting its records cannot restart scheduling',async()=>{
+  const d=store(),serial='12345678';saveHoboLogger(d,{serial,name:'test',start,enabled:true});let release;
+  const running=runHoboSync(d,()=>new Promise(resolve=>{release=resolve;}),Date.parse(end));
+  const result=cancelHoboBatch(d,{serials:[serial],confirmation:'CANCEL'});assert.equal(result.cancelled,1);
+  const ids=hoboStatus(d).jobs.map(j=>j.id);manageHoboJobs(d,{ids,operation:'delete',confirmation:'DELETE'});
+  release([observation()]);assert.equal((await running).status,'CANCELLED');
+  assert.equal(await runHoboSync(d,async()=>assert.fail('must stay stopped'),Date.parse(end)+7200000),null);
+  assert.equal(hoboStatus(d).loggers[0].observations,0);assert.equal(hoboStatus(d).jobs_total,0);d.close();
+});
+
+test('device-list cancellation validates the complete request before mutating any schedule',()=>{
+  const d=store(),serial='12345678';saveHoboLogger(d,{serial,name:'test',start,enabled:true});
+  for(const body of [{serials:[serial],confirmation:'DELETE'},{serials:[],confirmation:'CANCEL'},{serials:[serial,'bad'],confirmation:'CANCEL'},{serials:Array(101).fill(serial),confirmation:'CANCEL'}])assert.throws(()=>cancelHoboBatch(d,body),HoboError);
+  assert.equal(hoboStatus(d).loggers[0].enabled,1);d.close();
 });

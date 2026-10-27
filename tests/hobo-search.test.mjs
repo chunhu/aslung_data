@@ -17,6 +17,7 @@ function component(file,states,extra={}){
     '@/components/HoboDataSearch':{default:()=>React.createElement('section',null,'HOBO 資料搜尋')},
     '@/components/HoboSyncJobs':{default:()=>null},
     '@/components/HoboDeviceOverview':{default:()=>null},
+    '@/components/HoboBatchCancel':{default:()=>null},
     '@/components/ui/dialog':Object.fromEntries(['Dialog','DialogContent','DialogHeader','DialogTitle','DialogDescription'].map(name=>[name,tag('div')])),
     '@/components/HoboCleanup':{default:()=>null},'@/components/HoboCancelSync':{default:()=>null},
     '@/lib/hobo-rcec-loggers.json':{default:JSON.parse(readFileSync(new URL('../lib/hobo-rcec-loggers.json',import.meta.url),'utf8'))},...extra};
@@ -149,4 +150,23 @@ test('settings submit explicit schedule origin instead of the manual import date
   find(tree,node=>node.props.children==='儲存設備與排程').props.onClick();await new Promise(resolve=>setImmediate(resolve));
   assert.equal(calls[0].scheduleStart,'2026-10-26T16:00:00.000Z');assert.equal(calls[0].start,calls[0].scheduleStart);assert.deepEqual(calls[0].expectedSchedule,{sync_from:old,enabled:1});
   const html=renderToStaticMarkup(tree);assert.ok(html.includes('自動同步起日'));assert.ok(html.includes('手動匯入開始時間'));
+});
+
+
+test('batch cancel confirmation freezes device identities and sends no dates or token requirements',async()=>{
+  const {View,updates}=component('HoboBatchCancel.tsx',[]);
+  let tree=View({api:()=>assert.fail(),serialsText:'12345678\n87654321,12345678',onSuccess:()=>{}});
+  find(tree,node=>node.props.children==='批量取消工作並停用排程').props.onClick();assert.deepEqual(updates.get(0),['12345678','87654321']);
+  const calls=[],results=[];
+  const {View:Confirmed}=component('HoboBatchCancel.tsx',[['12345678','87654321'],false,'']);
+  tree=Confirmed({api:async(url,options)=>{calls.push(JSON.parse(options.body));return {matched:2,disabled:1,cancelled:3,missing:[]};},serialsText:'99999999',onSuccess:r=>results.push(r)});
+  find(tree,node=>node.props.children==='確認批量取消並停用').props.onClick();await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(calls,[{action:'cancelBatch',serials:['12345678','87654321'],confirmation:'CANCEL'}]);assert.equal(results.length,1);
+});
+
+test('batch cancel rejects empty or malformed device lists without opening confirmation',()=>{
+  for(const serialsText of ['', '12345678 bad']){
+    const {View,updates}=component('HoboBatchCancel.tsx',[]);const tree=View({api:()=>assert.fail(),serialsText,onSuccess:()=>{}});
+    find(tree,node=>node.props.children==='批量取消工作並停用排程').props.onClick();assert.ok(updates.get(2));assert.equal(updates.has(0),false);
+  }
 });

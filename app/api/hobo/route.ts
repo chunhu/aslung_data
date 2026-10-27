@@ -1,6 +1,6 @@
 import {identity,writeGuard,AppError,fail} from '@/lib/server';
 import {getConnection} from '@/lib/store.mjs';
-import {HoboError,ensureHoboSchema,hoboStatus,saveHoboLogger,saveHoboBatch,queueHoboSync,retryHoboSync,cancelHoboSync,manageHoboJobs,hoboRange,hoboSerial} from '@/lib/hobo.mjs';
+import {HoboError,ensureHoboSchema,hoboStatus,saveHoboLogger,saveHoboBatch,queueHoboSync,retryHoboSync,cancelHoboSync,cancelHoboBatch,manageHoboJobs,hoboRange,hoboSerial} from '@/lib/hobo.mjs';
 import {queryStoredHobo,storedHoboCsvStream,hoboDeviceOverview} from '@/lib/hobo-storage.mjs';
 export const runtime='nodejs';
 export const dynamic='force-dynamic';
@@ -37,6 +37,7 @@ export async function POST(req:Request){try{
     return Response.json({id:queueHoboSync(d,{...body,actor:me.email})},{status:202,headers});
   }else if(body?.action==='retry')retryHoboSync(d,body.id);
   else if(body?.action==='cancel')return Response.json(cancelHoboSync(d,body.id),{headers});
+  else if(body?.action==='cancelBatch')return Response.json(cancelHoboBatch(d,body),{headers});
   else if(body?.action==='jobsBulk')return Response.json(manageHoboJobs(d,body),{headers});
   else throw new AppError(400,'不支援的操作。');
   return Response.json({ok:true},{headers});

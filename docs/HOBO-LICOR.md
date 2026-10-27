@@ -147,3 +147,10 @@ node node_modules/typescript/bin/tsc --noEmit --incremental false
 - The automatic schedule origin, manual import range, and search/download range are separate. Completing a recent manual import does not erase an earlier history gap. Select the device and explicitly save its automatic schedule origin to change future scheduling.
 - Cancel active work before changing the origin. Saving a changed origin resets the schedule cursor while retaining measurements and completed job records. Stale settings are rejected after cancellation. Terminal failures disable hourly scheduling; failed jobs block automatic replacement until reviewed. HTTP 400/401/403/404/422 stop immediately; temporary errors retain the existing retry budget and rate-limit handling.
 - Deployment does not cancel existing jobs or change stored dates. Cancel unwanted jobs and explicitly save the intended origin after upgrading. Job sources identify hourly scheduling versus manual imports.
+
+
+### 依設備序號批量停用 / Cancel and disable by device list
+
+在「批次新增與歷史匯入」填入要停用的設備序號，按「批量取消工作並停用排程」並確認清單。每次最多 100 台，不需填日期，也不需設定 LI-COR Token。此操作取消清單內設備所有排隊中、同步中及失敗工作，不受最近 30 筆清單限制；沒有待處理工作的設備也會停用每小時同步。已完成工作、進度、本機及 S3 資料均保留。重複序號只處理一次，未建檔序號略過並回報，不新增設備。確認清單固定為開啟視窗時的序號；成功後取消勾選批次表單的每小時同步選項並更新設備狀態。
+
+In the batch import panel, enter up to 100 device serial numbers and choose “批量取消工作並停用排程” (Cancel jobs and disable schedules). Review and confirm the frozen device list. All queued, running and failed jobs for those devices are cancelled, including jobs outside the most recent 30. Hourly scheduling is disabled even for devices with no pending job. Completed records and local/S3 measurements are retained. Unknown serial numbers are skipped and reported. No import dates or LI-COR token are needed.
