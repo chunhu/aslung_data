@@ -100,7 +100,7 @@ test('all-device overview is optional and renders every device with counts and f
   const tree=View({api:()=>assert.fail(),loggers,selectedSerial:'20720755',onSelect:id=>chosen.push(id),refreshKey:0});html=renderToStaticMarkup(tree);
   for(const text of ['20720755','20611824','2025-01-01T00:00:00Z','2026-10-01T00:00:00Z','第一筆時間','最後一筆時間','請勿直接相加'])assert.ok(html.includes(text),text);
   assert.equal((html.match(/<tr/g)||[]).length,3);assert.match(html,/>0<\/td>/);
-  find(tree,node=>node.props.children==='選取').props.onClick();assert.deepEqual(chosen,['20720755']);
+  find(tree,node=>node.props.children==='查詢此設備').props.onClick();assert.deepEqual(chosen,['20720755']);
 });
 
 test('registered device heading follows actual device count rather than the initial preset',()=>{
