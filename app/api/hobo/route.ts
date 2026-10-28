@@ -15,7 +15,10 @@ export async function GET(req:Request){try{
   const serial=hoboSerial(url.searchParams.get('serial'));
   const {start,end}=hoboRange(url.searchParams.get('start'),url.searchParams.get('end'));
   const filters={measurement:url.searchParams.get('measurement')||'',sensor:url.searchParams.get('sensor')||'',q:url.searchParams.get('q')||''};
-  if(action==='query')return Response.json(await queryStoredHobo(d,{serial,start,end,...filters,after:Number(url.searchParams.get('after')||0)}),{headers});
+  if(action==='query'){
+    const result=await queryStoredHobo(d,{serial,start,end,...filters,after:Number(url.searchParams.get('after')||0),cursor:url.searchParams.get('cursor')});
+    await access(req);return Response.json(result,{headers});
+  }
   if(action==='csv'){
     const date=(value:string)=>new Date(Date.parse(value)+8*3600000).toISOString().slice(0,10).replaceAll('-','');
     return new Response(await storedHoboCsvStream(d,{serial,start,end,...filters}),{headers:{...headers,'Content-Type':'text/csv; charset=utf-8','Content-Disposition':`attachment; filename="HOBO_${serial}_${date(start)}_${date(end)}.csv"`}});

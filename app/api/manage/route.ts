@@ -2,7 +2,7 @@ import {getConnection} from "@/lib/store.mjs";
 import {validateProfile,saveProfile,reviewRegistration,RegistrationError} from "@/lib/registration.mjs";
 import {registrationMailer} from "@/lib/registration-mail";
 import crypto from "node:crypto";
-import {ADMIN_REALTIME_INTERVALS, normalizeRealtimeInterval} from "@/lib/realtime-settings.mjs";
+import {ADMIN_REALTIME_INTERVALS, normalizeRealtimeInterval, normalizeRealtimeCacheSeconds, validRealtimeCacheSeconds} from "@/lib/realtime-settings.mjs";
 import {randomUUID} from "node:crypto";
 import {hashPassword,validPassword} from "@/lib/passwords.mjs";
 import {downloadSegments,admin,identity,db,config,fail,writeGuard,required,instant,AppError,syncDeviceStatusesAndLocations,getSiteStats} from "@/lib/server";
@@ -85,33 +85,52 @@ function parseCsvRows(text: string): string[][] {
   return rows;
 }
 
-export async function GET(){try{
+export async function GET(request:Request){try{
  const m=await identity();const isAdmin=m.role==="admin";
- await syncDeviceStatusesAndLocations();
+ // Keep legacy clients compatible; the workspace requests only its current page.
+ const scope=request?new URL(request.url).searchParams.get('scope')||'full':'full';
+ const scopes=['full','bootstrap','news','articles','realtime','data','devices','maintenance','calibration','hobo','members','permissions','locations','labs','maintainers','alerts','files','connection'];
+ if(!scopes.includes(scope))throw new AppError(400,'無效的工作空間頁面。');
+ const needs=(...pages:string[])=>scope==='full'||pages.includes(scope);
+ const needDevices=needs('realtime','data','devices','permissions','locations','labs','maintainers','alerts','members');
+ const needAlerts=needs('alerts');
+ const needRequests=needs('permissions','data');
+ const needSegments=needs('data')||(!isAdmin&&needDevices);
+ const needLocations=needs('realtime','devices','locations','labs','maintainers','alerts','data');
+ const needMaintainers=needs('realtime','devices','locations','maintainers','alerts');
+ const needMembers=needs('members','permissions','devices','files','locations');
+ const needGrants=needs('permissions','devices');
+ const needLabs=needs('data','devices','locations','labs','permissions','members');
+ const needFiles=needs('files');
+ const navMaintainer=!!(await db().prepare(`SELECT 1 FROM maintainers WHERE LOWER(email)=LOWER(?)
+   OR (?=1 AND TRIM(name)<>'' AND TRIM(name) IN (?,?)) UNION ALL
+   SELECT 1 FROM device_locations WHERE ?=1 AND TRIM(maintainer)<>'' AND TRIM(maintainer) IN (?,?) LIMIT 1`)
+   .bind(m.email,m.allowMaintainerNameMatch?1:0,String(m.name||'').trim(),String(m.nickname||'').trim(),m.allowMaintainerNameMatch?1:0,String(m.name||'').trim(),String(m.nickname||'').trim()).first());
  let devices: any[] = [];
  let alertChecks: any[] = [];
  let alertLogs: any[] = [];
  let grantRequests: any[] = [];
 
  if (isAdmin) {
-   devices = (await db().prepare("SELECT * FROM devices ORDER BY id").all()).results;
-   alertChecks = (await db().prepare("SELECT * FROM alert_checks ORDER BY created_at DESC LIMIT 100").all()).results;
-   alertLogs = (await db().prepare("SELECT * FROM alert_logs ORDER BY created_at DESC LIMIT 500").all()).results;
-   grantRequests = (await db().prepare(`
+   devices = needDevices?(await db().prepare("SELECT * FROM devices ORDER BY id").all()).results:[];
+   alertChecks = needAlerts?(await db().prepare("SELECT * FROM alert_checks ORDER BY created_at DESC LIMIT 100").all()).results:[];
+   alertLogs = needAlerts?(await db().prepare("SELECT * FROM alert_logs ORDER BY created_at DESC LIMIT 500").all()).results:[];
+   grantRequests = needRequests?(await db().prepare(`
     SELECT gr.*, m.name as member_name, m.nickname as member_nickname, l.location_name, l.city_name, l.town_name
     FROM grant_requests gr
     LEFT JOIN members m ON m.email = gr.email
     LEFT JOIN labs l ON l.id = gr.lab_id
     ORDER BY CASE WHEN gr.status='PENDING' THEN 0 ELSE 1 END, gr.created_at DESC LIMIT 200
-  `).all()).results;
+  `).all()).results:[];
  } else {
-   grantRequests = (await db().prepare(`
+   grantRequests = needRequests?(await db().prepare(`
     SELECT gr.*, l.location_name, l.city_name, l.town_name
     FROM grant_requests gr
     LEFT JOIN labs l ON l.id = gr.lab_id
     WHERE gr.email=?
     ORDER BY gr.created_at DESC LIMIT 50
-  `).bind(m.email).all()).results;
+  `).bind(m.email).all()).results:[];
+   if(needDevices){
    // 1. Authorized devices by grants
    const grantedDevs = (await db().prepare("SELECT d.*, g.start, g.end FROM devices d JOIN grants g ON g.device_id=d.id WHERE g.email=? AND (g.grant_type='device' OR g.grant_type IS NULL) ORDER BY d.id").bind(m.email).all()).results as any[];
 
@@ -223,7 +242,7 @@ export async function GET(){try{
 
    // 3. Alert logs for this member's devices or maintainer name
    const allDeviceIds = devices.map(d => d.id);
-   if (allDeviceIds.length > 0 || maintainerNames.length > 0) {
+   if (needAlerts&&(allDeviceIds.length > 0 || maintainerNames.length > 0)) {
      const devPlaceholders = allDeviceIds.length > 0 ? allDeviceIds.map(() => "?").join(",") : "''";
      const namePlaceholders = maintainerNames.length > 0 ? maintainerNames.map(() => "?").join(",") : "''";
      const bindParams = [...allDeviceIds, ...maintainerNames];
@@ -244,37 +263,41 @@ export async function GET(){try{
        `).bind(...checkIds).all()).results;
      }
    }
+   }
  }
- const members=isAdmin?(await db().prepare("SELECT m.email,m.name,m.nickname,m.role,m.active,m.alert_email_enabled,m.login_count,m.last_login_at,p.country,p.institution,p.project_name,p.project_summary,p.requested_access,p.registration_status,p.registered_at,p.email_verified_at,p.reviewed_at,p.reviewed_by,p.review_note FROM members m LEFT JOIN member_profiles p ON p.email=m.email ORDER BY CASE WHEN p.registration_status='pending_review' THEN 0 ELSE 1 END,m.role,m.email").all()).results:[];
+ const members=isAdmin&&needMembers?(await db().prepare("SELECT m.email,m.name,m.nickname,m.role,m.active,m.alert_email_enabled,m.login_count,m.last_login_at,p.country,p.institution,p.project_name,p.project_summary,p.requested_access,p.registration_status,p.registered_at,p.email_verified_at,p.reviewed_at,p.reviewed_by,p.review_note FROM members m LEFT JOIN member_profiles p ON p.email=m.email ORDER BY CASE WHEN p.registration_status='pending_review' THEN 0 ELSE 1 END,m.role,m.email").all()).results:[];
  const totalLogins=((await db().prepare("SELECT COALESCE(SUM(login_count), 0) as total FROM members").first()) as any)?.total || 0;
- const grants=isAdmin?(await db().prepare(`
+ const grants=isAdmin&&needGrants?(await db().prepare(`
   SELECT g.*, l.location_name, l.city_name, l.town_name,
     (SELECT COUNT(DISTINCT d.id) FROM devices d LEFT JOIN device_locations dl ON dl.aslung_id = d.id WHERE (g.grant_type='lab' AND (d.location = g.lab_id OR dl.lab_id = g.lab_id))) as lab_device_count
   FROM grants g
   LEFT JOIN labs l ON l.id = g.lab_id
   ORDER BY g.grant_type DESC, g.lab_id, g.device_id, g.email, g.start DESC
 `).all()).results:[];
- const locations=(await db().prepare("SELECT * FROM device_locations ORDER BY start_time DESC").all()).results;
- const tokens=(await db().prepare("SELECT id, created_at FROM api_tokens WHERE email=? ORDER BY created_at DESC").bind(m.email).all()).results;
- const files=(await (isAdmin?db().prepare("SELECT * FROM files ORDER BY created_at DESC"):db().prepare("SELECT f.* FROM files f JOIN file_grants fg ON fg.file_id=f.id WHERE fg.email=? ORDER BY f.created_at DESC").bind(m.email)).all()).results;
- const fileGrants=isAdmin?(await db().prepare("SELECT * FROM file_grants").all()).results:[];
- const labs=(await db().prepare("SELECT * FROM labs ORDER BY id").all()).results;
- const maintainers=(await db().prepare("SELECT * FROM maintainers ORDER BY name").all()).results;
+ const locations=needLocations?(await db().prepare("SELECT * FROM device_locations ORDER BY start_time DESC").all()).results:[];
+ const tokens=needs('connection')?(await db().prepare("SELECT id, created_at FROM api_tokens WHERE email=? ORDER BY created_at DESC").bind(m.email).all()).results:[];
+ const files=needFiles?(await (isAdmin?db().prepare("SELECT * FROM files ORDER BY created_at DESC"):db().prepare("SELECT f.* FROM files f JOIN file_grants fg ON fg.file_id=f.id WHERE fg.email=? ORDER BY f.created_at DESC").bind(m.email)).all()).results:[];
+ const fileGrants=isAdmin&&needFiles?(await db().prepare("SELECT * FROM file_grants").all()).results:[];
+ const labs=needLabs?(await db().prepare("SELECT * FROM labs ORDER BY id").all()).results:[];
+ const maintainers=needMaintainers?(await db().prepare("SELECT * FROM maintainers ORDER BY name").all()).results:[];
  const alertSettingsRaw=(await db().prepare("SELECT * FROM alert_settings WHERE id=1").first()) as any;
  const alertSettings = {
    id: 1, enabled: 1, schedule_type: "interval", schedule_time: "09:00", schedule_days: "1,2,3,4,5", timezone: "Asia/Taipei",
    check_interval_mins: 60, offline_threshold_mins: 60, use_test_email: 0, smtp_host: "", smtp_port: 587, smtp_user: "", smtp_pass: "", smtp_from: "", realtime_interval_secs: 60,
    ...(alertSettingsRaw || {})
  };
+ alertSettings.realtime_cache_secs = normalizeRealtimeCacheSeconds(alertSettings.realtime_cache_secs);
  alertSettings.realtime_interval_secs = normalizeRealtimeInterval(alertSettings.realtime_interval_secs, true);
 
  const siteStats=getSiteStats();
- const permittedSegments=await downloadSegments(m);
+ const permittedSegments=needSegments?await downloadSegments(m):[];
  const segmentIds=new Set(permittedSegments.map((segment:any)=>segment.segment_id));
  const visibleLocations=isAdmin?locations:locations.filter((location:any)=>segmentIds.has(String(location.id)));
  const visibleNames=new Set(visibleLocations.map((location:any)=>String(location.maintainer||"").trim()).filter(Boolean));
  const visibleMaintainers=isAdmin?maintainers:maintainers.filter((person:any)=>String(person.email||"").toLowerCase()===m.email.toLowerCase()||visibleNames.has(String(person.name||"").trim())).map((person:any)=>({name:person.name,english_name:person.english_name||"",email:person.email}));
  return Response.json({
+   scope, isMaintainer:navMaintainer,
+   summary:isAdmin?{devices:(await db().prepare('SELECT COUNT(*) n FROM devices').first())?.n||0,members:(await db().prepare("SELECT COUNT(*) n FROM members WHERE active=1 AND role='member'").first())?.n||0,grants:(await db().prepare('SELECT COUNT(*) n FROM grants').first())?.n||0}:null,
    me:{alert_email_enabled:((await db().prepare("SELECT alert_email_enabled FROM members WHERE email=?").bind(m.email).first()) as any)?.alert_email_enabled ?? 1,email:m.email,name:m.name,role:m.role,allowMaintainerNameMatch:m.allowMaintainerNameMatch,login_count:m.login_count||0,last_login_at:m.last_login_at||null,...(await db().prepare("SELECT * FROM member_profiles WHERE email=?").bind(m.email).first()||{})},
    devices,downloadSegments:permittedSegments,members,grants,locations:visibleLocations,tokens,files,fileGrants,
    labs,maintainers:visibleMaintainers,alertSettings:isAdmin?alertSettings:{realtime_interval_secs:alertSettings.realtime_interval_secs},alertChecks,alertLogs,grantRequests,totalLogins,siteStats,
@@ -741,6 +764,12 @@ export async function POST(r:Request){try{
       WHERE id=1
     `).bind(enabled,scheduleType,scheduleTime,scheduleDays,checkInterval,offlineThreshold,useTestEmail,smtpHost,smtpPort,smtpUser,smtpFrom).run();
   }
+} else if(p.action==="realtimeCacheUpdate"){
+  requireAdmin();
+  if(!validRealtimeCacheSeconds(p.seconds))throw new AppError(400,"共用量測快取須為 0 至 3600 的整數秒數；0 表示停用快取。");
+  await db().prepare(`INSERT INTO alert_settings (id,realtime_cache_secs) VALUES (1,?)
+    ON CONFLICT(id) DO UPDATE SET realtime_cache_secs=excluded.realtime_cache_secs`).bind(p.seconds).run();
+  return Response.json({ok:true,realtime_cache_secs:p.seconds},{headers:{'Cache-Control':'no-store'}});
 } else if(p.action==="realtimeIntervalUpdate"){
   requireAdmin();
   const secs = p.interval;

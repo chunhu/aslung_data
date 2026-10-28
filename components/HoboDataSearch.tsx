@@ -10,26 +10,27 @@ const measurements=[['Temperature','溫度'],['RH','相對濕度'],['Dew Point',
 export default function HoboDataSearch({api,loggers,selectedSerial,timezone,refreshKey}:Props){
   const [serial,setSerial]=useState(selectedSerial),[start,setStart]=useState(()=>formatInTimeZone(new Date(Date.now()-7*86400000),timezone,"yyyy-MM-dd'T'HH:mm")),[end,setEnd]=useState(()=>formatInTimeZone(new Date(),timezone,"yyyy-MM-dd'T'HH:mm"));
   const [measurement,setMeasurement]=useState(''),[sensor,setSensor]=useState(''),[q,setQ]=useState('');
-  const [rows,setRows]=useState<any[]>([]),[next,setNext]=useState<number|null>(null),[queried,setQueried]=useState(false),[download,setDownload]=useState(''),[busy,setBusy]=useState(false),[error,setError]=useState('');
+  const [rows,setRows]=useState<any[]>([]),[next,setNext]=useState<string|null>(null),[queried,setQueried]=useState(false),[download,setDownload]=useState(''),[busy,setBusy]=useState(false),[error,setError]=useState('');
   const generation=useRef(0),pending=useRef<AbortController|null>(null);
   useEffect(()=>{setSerial(selectedSerial);},[selectedSerial]);
   useEffect(()=>{
     generation.current++;pending.current?.abort();setRows([]);setNext(null);setQueried(false);setDownload('');setError('');setBusy(false);
     return()=>{generation.current++;pending.current?.abort();};
   },[serial,start,end,measurement,sensor,q,timezone,refreshKey]);
-  async function search(after=0){
+  async function search(cursor?:string){
     pending.current?.abort();const controller=new AbortController();pending.current=controller;
     const current=++generation.current;setBusy(true);setError('');
-    if(!after){setRows([]);setQueried(false);setDownload('');}
+    if(!cursor){setRows([]);setQueried(false);setDownload('');}
     try{
       if(!serial||!start||!end)throw new Error('請選擇設備及起訖時間。');
       const a=fromZonedTime(start,timezone),b=fromZonedTime(end,timezone);
       if(!Number.isFinite(+a)||!Number.isFinite(+b)||a>b)throw new Error('請確認開始及結束時間。');
-      const params=new URLSearchParams({serial,start:a.toISOString(),end:b.toISOString(),measurement,sensor:sensor.trim(),q:q.trim(),action:'query',after:String(after)});
+      const params=new URLSearchParams({serial,start:a.toISOString(),end:b.toISOString(),measurement,sensor:sensor.trim(),q:q.trim(),action:'query'});
+      if(cursor)params.set('cursor',cursor);
       const result=await api('/api/hobo?'+params,{signal:controller.signal});if(current!==generation.current)return;
-      setRows(previous=>after?[...previous,...result.rows]:result.rows);setNext(result.next);setQueried(true);
-      params.set('action','csv');params.delete('after');setDownload('/api/hobo?'+params);
-    }catch(e){if(current===generation.current&&!controller.signal.aborted)setError((e as Error).message);}
+      setRows(previous=>cursor?[...previous,...result.rows]:result.rows);setNext(result.next_cursor??null);setQueried(true);
+      params.set('action','csv');params.delete('cursor');setDownload('/api/hobo?'+params);
+    }catch(e){if(current===generation.current&&!controller.signal.aborted){setError((e as Error).message);if(cursor){setRows([]);setNext(null);setQueried(false);setDownload('');}}}
     finally{if(current===generation.current)setBusy(false);}
   }
   return <section className="panel p-6 space-y-4"><div><h3 className="font-semibold text-lg">HOBO 資料搜尋</h3><p className="text-xs text-slate-500 mt-1">搜尋已匯入的本機及 S3 資料。日期依 {timezone} 輸入；清單與 CSV 時間為 UTC。各條件共同篩選，下載套用相同條件。</p></div>

@@ -1,4 +1,6 @@
+import * as realtimeSettings from '../lib/realtime-settings.mjs';
 import {test} from 'node:test';
+import {latestRealtimeReadings} from '../lib/realtime-readings.mjs';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import ts from 'typescript';
@@ -105,8 +107,10 @@ test('discovery endpoint rejects members and invalid periods before touching MyS
 test('discovered devices participate in regular refresh only for administrators',async()=>{
   let role='admin';const queried=[];
   const deps={
-    '@/lib/server':{identity:async()=>({role}),fail:e=>Response.json({error:e.message},{status:500}),db:()=>({prepare:()=>({all:async()=>({results:[{id:'AL-1'}]})})})},
-    '@/lib/data':{getPool:()=>({query:async(sql,[id])=>{assert.match(sql,/ch7 AS battery/);queried.push(id);return [[{aslung_id:id,time:new Date('2026-10-15T12:00:00Z'),battery:id==='AL-1'?0:'3.87'}]];}})}
+    '@/lib/server':{identity:async()=>({role}),fail:e=>Response.json({error:e.message},{status:500}),db:()=>({prepare:()=>({first:async()=>({realtime_cache_secs:120}),all:async()=>({results:[{id:'AL-1'}]})})})},
+    '@/lib/realtime-readings.mjs':{latestRealtimeReadings},
+    '@/lib/realtime-settings.mjs':realtimeSettings,
+    '@/lib/data':{getPool:()=>({query:async({sql,values})=>{assert.match(sql,/ch7 AS battery/);const ids=values.filter((_,i)=>i%2===0);queried.push(...ids);return [ids.map(id=>({aslung_id:id,time:new Date('2026-10-15T12:00:00Z'),battery:id==='AL-1'?0:'3.87'}))];}})}
   };
   const source=readFileSync(new URL('../app/api/realtime/route.ts',import.meta.url),'utf8');
   const code=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;

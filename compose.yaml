@@ -6,6 +6,10 @@ services:
         NODE_BUILD_HEAP_MB: ${NODE_BUILD_HEAP_MB:-1024}
     restart: unless-stopped
     env_file: .env
+    init: true
+    cpu_shares: 1024
+    # Optional app cap; 0 keeps the existing unlimited setting.
+    mem_limit: ${APP_MEMORY_LIMIT:-0}
     ports:
       - "127.0.0.1:3000:3000"
     volumes:
@@ -30,7 +34,14 @@ services:
     profiles: ["calibration"]
     restart: unless-stopped
     env_file: .env
-    command: ["node", "scripts/calibration-worker.mjs"]
+    init: true
+    # Favor interactive web requests when host CPU is busy.
+    cpu_shares: 256
+    cpus: ${WORKER_CPUS:-0.5}
+    mem_limit: ${WORKER_MEMORY_LIMIT:-768m}
+    pids_limit: ${WORKER_PIDS_LIMIT:-128}
+    stop_grace_period: 120s
+    command: ["node", "--max-old-space-size=${WORKER_HEAP_MB:-512}", "scripts/calibration-worker.mjs"]
     volumes:
       - aslung-data:/app/data
     logging:

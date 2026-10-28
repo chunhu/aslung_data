@@ -26,5 +26,5 @@ export default function useWorkspaceSection(){
     try{window.localStorage.setItem('aslung_section',section);}catch{/* URL state remains available. */}
     if(window.location.hash!==`#${section}`)window.history.replaceState(null,'',`#${section}`);
   },[section,restored]);
-  return [section,setSection] as const;
+  return [section,setSection,restored] as const;
 }

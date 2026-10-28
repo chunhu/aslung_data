@@ -389,7 +389,39 @@ Docker builder 階段預設設定 `NODE_OPTIONS=--max-old-space-size=1024`，並
 The sidebar groups functions into news/resources, monitoring/data, device management, calibration/alerts, members/access and data integration. Empty unauthorized groups are hidden. Group collapse preserves the current page; navigating expands its group. The header toggle hides or shows the menu, and mobile selection closes the drawer. Desktop visibility and group preferences are stored per account in the current browser.
 
 
+### Host resource controls / 主機資源配置
+
+`compose.yaml` 將網站的 CPU 相對權重設為 1024、背景 worker 設為 256；worker 預設上限為 0.5 CPU、768 MiB 記憶體、128 個程序／執行緒，Node.js old-space heap 上限為 512 MiB，保留空間給 gzip、Buffer 與原生模組。CPU 權重與記憶體上限的意義依 [Docker Compose 官方說明](https://docs.docker.com/reference/compose-file/services/)；上限不代表預留資源，也不保證整台主機不會耗盡記憶體。網站記憶體上限 `APP_MEMORY_LIMIT=0` 預設維持不限制，取得主機數據後再設定，避免直接套用未知容量。可在 EC2 `.env` 調整：
+
+| 變數 | 預設 | 用途 |
+| --- | --- | --- |
+| `WORKER_CPUS` | `0.5` | worker CPU 上限（0 表示不限制） |
+| `WORKER_MEMORY_LIMIT` | `768m` | worker 容器總記憶體上限 |
+| `WORKER_HEAP_MB` | `512` | V8 old-space 上限，須低於容器上限並保留原生記憶體空間 |
+| `WORKER_PIDS_LIMIT` | `128` | worker 程序與執行緒數上限 |
+| `APP_MEMORY_LIMIT` | `0` | 網站可選的總記憶體上限，例如 `1g` |
+| `WORKER_BUSY_DELAY_MS` | `2000` | 持續有工作時，每輪完成後暫停 100–60000 ms |
+| `WORKER_IDLE_DELAY_MS` | `5000` | 無校正工作時，每輪完成後暫停 1000–300000 ms |
+| `WORKER_HOBO_ARCHIVE_DAYS` | `1` | 每輪最多歸檔 1–10 個設備日 |
+| `WORKER_CALIBRATION_SOURCES` | `1` | 每輪同步最早到期的 1–10 個校正來源 |
+| `WORKER_RAW_BATCH_SIZE` | `1000` | 每批讀取 100–2000 筆原始資料，保留 keyset 與前後樣本 |
+| `WORKER_BATCH_PAUSE_MS` | `50` | 量測讀取／全域設備摘要批次間暫停 0–1000 ms |
+
+worker 維持一次一件校正工作；每輪歸檔及係數同步設有數量上限，不會因大量歷史歸檔而在同輪無限執行。減少批次可降低瞬間負載，但也會增加整體完成時間。收到停止訊號後完成當前階段，不再領取下一件工作；輪次間的等待會立即中斷。Compose 給予 120 秒停止寬限，超時仍可能由 Docker 終止，既有 lease／原子發佈與重試機制保留。SQLite 繼續使用 WAL 與原有 busy timeout，不另外啟動第二個 worker。
+
+先在 EC2 專案目錄執行 `node scripts/host-resources.mjs --docker` 取得唯讀 JSON 報告：主機可用記憶體、swap、磁碟、Linux CPU／記憶體／I/O 壓力，以及 app／worker 用量、實際資源限制、OOM 狀態與重啟次數。Docker 讀取需要既有 Docker 權限；無 Docker 時可省略 `--docker`。未支援的 Linux 指標回傳 null，不會被誤判為 0。swap 讀寫是開機以來累積值；比較兩次報告才能判斷是否仍在換頁。EC2 CPU credit、流量與 EBS 額度仍需從 CloudWatch 查看，本工具不存取 AWS 憑證。
+
+設定生效需更新程式與重建／重新建立容器。完成推送後，可在 EC2 使用既有 `bash scripts/deploy_cal.sh` 流程備份並部署 app 與 worker；僅修改 `.env` 而沒有重新建立容器不會套用新限制。部署後再執行唯讀報告，確認實際上限、OOM 與重啟狀態。此處提供部署設定與檢查工具，並未自動修改 EC2 instance 規格、swap、EBS 或正式容器。
+
 ### MySQL connection capacity / 連線數容量
+
+工作空間依目前頁面呼叫 `/api/manage?scope=...`，公告及文章頁只取得身分、導覽資格及摘要；會員、授權、告警、檔案與 API 權杖於相關頁面才載入。複合管理對話框可按需載入完整資料；未帶 scope 的舊客戶端維持完整回應。scope 只選擇資料集合，不增加角色或設備權限。讀取工作空間不再批次改寫設備狀態，狀態同步仍由既有設備／部署寫入操作負責。瀏覽器等待頁面偏好還原後才開始載入，快速切頁會取消舊請求並忽略遲到回應。
+
+即時狀態每批最多 50 台，以各設備 `ORDER BY time DESC, id DESC LIMIT 1` 組合成 `UNION ALL`，減少往返，不使用掃描全部歷史的全表分組。每個 Node 程序最多同時執行兩個即時查詢批次；相同設備的進行中查詢與有效期限內的原始量測可共用（預設 120 秒，管理員可在「即時狀態」頁設定 0–3600 秒，0 表示停用已完成量測快取），快取最多 5,000 台。秒數儲存於 SQLite，後續請求立即依新秒數與量測讀取時間判斷有效期，不需重新啟動；與畫面自動更新頻率分開設定。手動更新使用 `refresh=1` 略過已完成快取，進行中請求仍共用；錯誤不快取。每次請求與讀取完成後都重新核對身分及可讀設備，不快取會員權限，也不透過 HTTP 共用快取。實際 MySQL 仍需適當的 `uid,time` 索引及查詢計畫；程式不會自動修改正式 rawdata 索引。worker 資源限制與批次設定見上方「主機資源配置」。
+
+HOBO 搜尋每頁 200 筆，透過 `next_cursor` / `cursor` 接續下一筆符合資料，跳過已讀完的臺灣日期封存檔及本機日期區間。游標綁定設備、起訖時間、正規化篩選及資料 revision；同步、歸檔或清除造成版本改變時，回傳 409 並要求重新搜尋，清除中的範圍回傳 410。每次分頁都重新驗證管理員權限，回應不使用 HTTP 快取。舊版 `after` 數字分頁仍相容，但保留原有掃描成本。CSV 仍下載全部符合條件的資料。S3 每日 gzip 檔案仍須整檔讀取與解壓；同一日期跨頁時會重讀該日，不新增無上限的記憶體快取。
+
+效能與權限驗證：`node --test tests/workspace-performance.test.mjs tests/realtime-discovery.test.mjs`；正式建置後可執行 `node tests/workspace-performance-http.mjs`，使用獨立暫存 SQLite 與 standalone 程序，不連線正式 MySQL。
 
 網站每個 Node 程序共用同一個延遲建立的 MySQL 連線池，預設最多 4 條；校正 worker 預設最多 1 條。可用 `.env` 的 `MYSQL_CONNECTION_LIMIT` 與 `MYSQL_WORKER_CONNECTION_LIMIT` 調整（1–30）。超出保留數的閒置連線會被清理，最多保留一條閒置連線 30 秒；1 條上限時不保留閒置連線。不要將單一程序的上限當作整台資料庫的總上限，多副本與其他應用仍會累加。
 

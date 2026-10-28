@@ -15,12 +15,12 @@ function navigation(t,{hash='',saved=null,blockedStorage=false,strict=false}={})
   function runEffects(replay=false){const jobs=pending;pending=[];for(const effect of jobs){effect.cleanup?.();effect.cleanup=effect.callback();}if(replay)for(const effect of jobs){effect.cleanup?.();effect.cleanup=effect.callback();}}
   function flush(){runEffects(initial&&strict);initial=false;for(let count=0;dirty;count++){assert.ok(count<10,'navigation effects should settle');dirty=false;render();runEffects();}}
   render();t.after(()=>{for(const effect of effects)effect.cleanup?.();globalThis.window=oldWindow;});
-  return {flush,writes,replacements,storage,listeners,sections:module.exports.WORKSPACE_SECTIONS,get section(){return current[0];},select:section=>current[1](section),hash:hash=>{globalThis.window.location.hash=hash;for(const handler of listeners)handler();}};
+  return {flush,writes,replacements,storage,listeners,sections:module.exports.WORKSPACE_SECTIONS,get section(){return current[0];},get ready(){return current[2];},select:section=>current[1](section),hash:hash=>{globalThis.window.location.hash=hash;for(const handler of listeners)handler();}};
 }
 
 test('refreshing #hobo restores HOBO before persisting, including Strict Mode effect replay',t=>{
-  const nav=navigation(t,{hash:'#hobo',saved:'data',strict:true});assert.equal(nav.section,'data');assert.deepEqual(nav.writes,[]);
-  nav.flush();assert.equal(nav.section,'hobo');assert.deepEqual(nav.writes,['hobo']);assert.deepEqual(nav.replacements,[]);assert.equal(nav.listeners.size,1);
+  const nav=navigation(t,{hash:'#hobo',saved:'data',strict:true});assert.equal(nav.section,'data');assert.equal(nav.ready,false);assert.deepEqual(nav.writes,[]);
+  nav.flush();assert.equal(nav.section,'hobo');assert.equal(nav.ready,true);assert.deepEqual(nav.writes,['hobo']);assert.deepEqual(nav.replacements,[]);assert.equal(nav.listeners.size,1);
 });
 test('returning without a hash restores saved HOBO and writes its URL',t=>{
   const nav=navigation(t,{saved:'hobo'});nav.flush();assert.equal(nav.section,'hobo');assert.deepEqual(nav.replacements,['#hobo']);assert.deepEqual(nav.writes,['hobo']);

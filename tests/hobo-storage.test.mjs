@@ -90,7 +90,7 @@ test('Taiwan day boundary is preserved and pagination spans archives and staged 
   for(let i=0;i<230;i++){const r=row(new Date(Date.parse('2026-10-01T15:59:00Z')+i*1000).toISOString(),i);insert.run(...['logger_sn','sensor_sn','timestamp','data_type','data_type_id','value','unit','sensor_measurement_type'].map(key=>r[key]));}
   await archiveNextHoboDay(d,options);assert.equal(d.prepare('SELECT day FROM hobo_archives').get().day,'2026-10-01');
   const range={serial,start:'2026-10-01T15:59:00Z',end:'2026-10-01T16:03:00Z'};
-  const page1=await queryStoredHobo(d,range,options),page2=await queryStoredHobo(d,{...range,after:page1.next},options);
+  const page1=await queryStoredHobo(d,range,options),page2=await queryStoredHobo(d,{...range,cursor:page1.next_cursor},options);
   assert.equal(page1.rows.length,200);assert.equal(page2.rows.length,30);assert.equal(page2.next,null);
   assert.equal(new Set([...page1.rows,...page2.rows].map(r=>r.timestamp)).size,230);d.close();
 });
@@ -100,7 +100,7 @@ test('measurement, sensor and keyword filters apply to merged S3/local rows befo
   const rows=Array.from({length:450},(_,i)=>({...row(start,i),sensor_sn:`station-${i}`,sensor_measurement_type:i<250?'Temperature':'RH',unit:i<250?'°C':'%'}));
   await seed(d,rows);await archiveNextHoboDay(d,options);await seed(d,[{...rows[0],value:99}]);
   const range={serial,start,end,measurement:'temperature',sensor:'STATION-',q:'°c'};
-  const first=await queryStoredHobo(d,range,options),second=await queryStoredHobo(d,{...range,after:first.next},options);
+  const first=await queryStoredHobo(d,range,options),second=await queryStoredHobo(d,{...range,cursor:first.next_cursor},options);
   assert.equal(first.rows.length,200);assert.equal(second.rows.length,50);assert.equal(second.next,null);
   const all=[...first.rows,...second.rows];assert.ok(all.every(r=>r.sensor_measurement_type==='Temperature'));assert.equal(all.find(r=>r.sensor_sn==='station-0').value,99);
   const csv=await new Response(await storedHoboCsvStream(d,range,options)).text();assert.equal(csv.trim().split('\r\n').length,251);assert.ok(!csv.includes('"RH"'));
@@ -251,4 +251,46 @@ test('overview reports partial errors and refuses stale bounds if data changes d
   logger=(await hoboDeviceOverview(d,options)).loggers.find(l=>l.serial===serial);
   assert.match(logger.first_error,/已更新/);assert.equal(logger.first,null);
   assert.equal(d.prepare('SELECT COUNT(*) n FROM hobo_archive_bounds').get().n,0);d.close();
+});
+
+function storedRows(d,rows){
+  const insert=d.prepare('INSERT INTO hobo_observations VALUES(?,?,?,?,?,?,?,?)');
+  for(const item of rows)insert.run(...['logger_sn','sensor_sn','timestamp','data_type','data_type_id','value','unit','sensor_measurement_type'].map(key=>item[key]));
+}
+test('cursor pagination skips completed archive days, survives JSON transport and matches legacy results',async()=>{
+  const d=database(),client=new FakeS3(),options={configuration,clientFor:()=>client};
+  const rows=Array.from({length:600},(_,i)=>row(new Date(Date.parse(start)+Math.floor(i/200)*86400000+(i%200)*1000).toISOString(),i));
+  storedRows(d,rows);for(let n=0;n<3;n++)await archiveNextHoboDay(d,options);
+  const range={serial,start,end:'2026-10-04T00:00:00.000Z'};
+  const first=await queryStoredHobo(d,range,options);assert.equal(first.next,200);assert.ok(first.next_cursor);
+  client.calls=[];
+  const second=await queryStoredHobo(d,{...range,cursor:JSON.parse(JSON.stringify(first.next_cursor))},options);
+  const fetched=client.calls.filter(call=>call.name==='GetObjectCommand').map(call=>call.input.Key);
+  assert.equal(fetched.length,2);assert.ok(fetched.every(key=>!key.includes('/2026/10/01/')));
+  assert.deepEqual(second.rows.map(item=>item.value),Array.from({length:200},(_,i)=>200+i));
+  const third=await queryStoredHobo(d,{...range,cursor:second.next_cursor},options);
+  assert.equal(third.next_cursor,null);assert.equal(third.next,null);
+  assert.deepEqual([...first.rows,...second.rows,...third.rows].map(item=>item.value),rows.map(item=>item.value));
+  const legacy=await queryStoredHobo(d,{...range,after:200},options);assert.deepEqual(legacy.rows,second.rows);d.close();
+});
+test('cursor binding rejects changed filters, dates, serials, invalid positions and changed data revisions',async()=>{
+  const d=database();storedRows(d,Array.from({length:230},(_,i)=>({...row(start,i),sensor_sn:'sensor-'+i})));
+  const range={serial,start,end,measurement:' TEMPERATURE '};
+  const first=await queryStoredHobo(d,range);assert.ok(first.next_cursor);
+  const last=await queryStoredHobo(d,{...range,measurement:'temperature',cursor:first.next_cursor});assert.equal(last.rows.length,30);
+  assert.equal(new Set([...first.rows,...last.rows].map(item=>item.sensor_sn)).size,230);
+  for(const change of [{measurement:'RH'},{sensor:'other'},{q:'1'},{end:'2026-10-02T00:00:00Z'},{serial:'12345678'}])await assert.rejects(queryStoredHobo(d,{...range,...change,cursor:first.next_cursor}),error=>error.status===400);
+  for(const cursor of ['', '!!!', Buffer.from('null').toString('base64url'),'x'.repeat(16385)])await assert.rejects(queryStoredHobo(d,{...range,cursor}),error=>error.status===400);
+  await assert.rejects(queryStoredHobo(d,{...range,cursor:first.next_cursor,after:200}),error=>error.status===400);
+  const cursor=JSON.parse(Buffer.from(first.next_cursor,'base64url').toString());cursor.key='missing';
+  await assert.rejects(queryStoredHobo(d,{...range,cursor:Buffer.from(JSON.stringify(cursor)).toString('base64url')}),error=>error.status===409);
+  hoboRevision(d,serial);await assert.rejects(queryStoredHobo(d,{...range,cursor:first.next_cursor}),error=>error.status===409);d.close();
+});
+test('a continuation blocks cleanup of an earlier day that it would otherwise skip',async()=>{
+  const d=database(),client=new FakeS3(),options={configuration,clientFor:()=>client};
+  storedRows(d,Array.from({length:230},(_,i)=>row(new Date(Date.parse(start)+(i<200?i*1000:86400000+i*1000)).toISOString(),i)));
+  const range={serial,start,end:'2026-10-03T00:00:00.000Z'},first=await queryStoredHobo(d,range,options);
+  const plan=previewHoboCleanup(d,{serial,from:'2026-10-01',to:'2026-10-01'},'admin');
+  await confirmHoboCleanup(d,{id:plan.id,actor:'admin',confirmation:'DELETE'},async()=>'/fake');
+  await assert.rejects(queryStoredHobo(d,{...range,cursor:first.next_cursor},options),error=>error.status===410);d.close();
 });

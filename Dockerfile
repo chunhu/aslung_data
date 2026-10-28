@@ -33,6 +33,6 @@ COPY --from=builder --chown=aslung:aslung /app/lib ./lib
 RUN mkdir -p /app/data /app/backups && chown -R aslung:aslung /app/data /app/backups
 USER aslung
 # Verify worker imports in the final image without opening databases or running jobs.
-RUN node --input-type=module -e "await Promise.all(['store','processing-jobs','processing-raw','global-processing','calibration-google','processing-cleanup','hobo','hobo-storage','hobo-cleanup'].map(name => import('./lib/' + name + '.mjs'))); console.log('Calibration worker runtime dependencies OK')"
+RUN node --input-type=module -e "await Promise.all(['store','processing-jobs','processing-raw','global-processing','calibration-google','processing-cleanup','hobo','hobo-storage','hobo-cleanup','worker-resources'].map(name => import('./lib/' + name + '.mjs'))); console.log('Calibration worker runtime dependencies OK')"
 EXPOSE 3000
 CMD ["node","server.js"]

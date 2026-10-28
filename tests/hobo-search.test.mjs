@@ -210,3 +210,19 @@ test('late job search responses are aborted and cannot replace newer filter resu
   cleanup();release({jobs:[],total:96,matched:0,offset:0,limit:30});await new Promise(resolve=>setImmediate(resolve));
   assert.equal(calls[0].options.signal.aborted,true);assert.equal(updates.some(update=>update.i===4),false);
 });
+
+test('load more sends the continuation cursor, appends rows and excludes pagination from CSV',async()=>{
+  const calls=[],states=['20720755','2026-10-01T00:00','2026-10-02T00:00','','','',[{value:1}],'opaque-position',true,'',false,''];
+  const {View,updates}=component('HoboDataSearch.tsx',states);
+  const tree=View({api:async url=>{calls.push(url);return {rows:[{value:2}],next:null,next_cursor:null};},loggers:[{serial:'20720755'}],selectedSerial:'20720755',timezone:'Asia/Taipei',refreshKey:0});
+  find(tree,node=>node.props.children==='載入更多符合資料').props.onClick();await new Promise(resolve=>setImmediate(resolve));
+  const query=new URL(calls[0],'http://test').searchParams;assert.equal(query.get('cursor'),'opaque-position');assert.equal(query.has('after'),false);
+  assert.deepEqual(updates.get(6)([{value:1}]),[{value:1},{value:2}]);assert.equal(updates.get(7),null);
+  const csv=new URL(updates.get(9),'http://test').searchParams;assert.equal(csv.has('cursor'),false);assert.equal(csv.get('action'),'csv');
+});
+test('a failed continuation clears prior results and download to require a fresh query',async()=>{
+  const {View,updates}=component('HoboDataSearch.tsx',['20720755','2026-10-01T00:00','2026-10-02T00:00','','','',[{value:1}],'expired',true,'/old.csv',false,'']);
+  const tree=View({api:async()=>{throw new Error('HOBO 資料已更新或清除，請重新查詢。');},loggers:[{serial:'20720755'}],selectedSerial:'20720755',timezone:'Asia/Taipei',refreshKey:0});
+  find(tree,node=>node.props.children==='載入更多符合資料').props.onClick();await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(updates.get(6),[]);assert.equal(updates.get(7),null);assert.equal(updates.get(8),false);assert.equal(updates.get(9),'');assert.match(updates.get(11),/重新查詢/);
+});

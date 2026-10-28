@@ -23,6 +23,7 @@ export interface AlertSettings {
   last_check_at: string | null;
   last_alert_at: string | null;
   realtime_interval_secs?: number;
+  realtime_cache_secs?: number;
   schedule_type?: "interval" | "daily" | "weekly";
   schedule_time?: string;
   schedule_days?: string;
