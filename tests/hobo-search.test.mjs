@@ -187,7 +187,7 @@ test('job search submits full-history filters and resets the page to zero',()=>{
   const {View,updates}=component('HoboSyncJobSearch.tsx',['  1234  ','FAILED','schedule',query,null,false,'',0]);
   const tree=View({api:()=>assert.fail(),jobs:[],totalJobs:96,timezone:'Asia/Taipei',onChange:()=>{}});
   find(tree,node=>node.type==='form').props.onSubmit({preventDefault(){}});
-  assert.deepEqual(updates.get(3),{q:'1234',status:'FAILED',source:'schedule',offset:0});
+  assert.deepEqual(updates.get(3),{q:'1234',status:'FAILED',source:'schedule',offset:0,view:'history'});
 });
 
 test('job search pagination preserves active filters and clearing resets all filters',()=>{
@@ -197,7 +197,7 @@ test('job search pagination preserves active filters and clearing resets all fil
   assert.ok(html.includes('符合 65 筆'));assert.ok(html.includes('31～60'));
   find(tree,node=>node.props.children==='下一頁').props.onClick();assert.deepEqual(updates.get(3),{...query,offset:60});
   find(tree,node=>node.props.children==='上一頁').props.onClick();assert.deepEqual(updates.get(3),{...query,offset:0});
-  find(tree,node=>node.props.children==='清除搜尋').props.onClick();assert.deepEqual(updates.get(3),{q:'',status:'',source:'',offset:0});assert.equal(updates.get(0),'');assert.equal(updates.get(1),'');assert.equal(updates.get(2),'');
+  find(tree,node=>node.props.children==='清除搜尋').props.onClick();assert.deepEqual(updates.get(3),{q:'',status:'',source:'',offset:0,view:'latest'});assert.equal(updates.get(0),'');assert.equal(updates.get(1),'');assert.equal(updates.get(2),'');
 });
 
 test('late job search responses are aborted and cannot replace newer filter results',async()=>{
@@ -225,4 +225,26 @@ test('a failed continuation clears prior results and download to require a fresh
   const tree=View({api:async()=>{throw new Error('HOBO 資料已更新或清除，請重新查詢。');},loggers:[{serial:'20720755'}],selectedSerial:'20720755',timezone:'Asia/Taipei',refreshKey:0});
   find(tree,node=>node.props.children==='載入更多符合資料').props.onClick();await new Promise(resolve=>setImmediate(resolve));
   assert.deepEqual(updates.get(6),[]);assert.equal(updates.get(7),null);assert.equal(updates.get(8),false);assert.equal(updates.get(9),'');assert.match(updates.get(11),/重新查詢/);
+});
+
+
+test('latest device view renders all rows, highlights stale success and keeps devices without jobs unselectable',()=>{
+  const now=Date.parse('2026-10-29T12:00:00Z');
+  const jobs=[{id:'stale',serial:'1',status:'QUEUED',last_success_at:'2026-10-29T05:59:59Z',created_at:'2026-10-29T11:59:00Z'},
+    {id:'boundary',serial:'2',status:'DONE',last_success_at:'2026-10-29T06:00:00Z'},
+    {id:null,serial:'3',status:'NONE',last_success_at:null}];
+  const {View}=component('HoboSyncJobs.tsx',[new Set(),null,'',false,'','',now]);
+  const tree=View({api:()=>assert.fail(),jobs,perDevice:true,totalJobs:1128,timezone:'Asia/Taipei',onChange:()=>{}}),html=renderToStaticMarkup(tree);
+  assert.ok(html.includes('顯示 3 台設備'));assert.equal((html.match(/bg-rose-50/g)||[]).length,1);assert.equal((html.match(/bg-amber-50/g)||[]).length,1);
+  assert.ok(html.includes('已超過 6 小時'));assert.ok(html.includes('尚無同步紀錄'));assert.ok(html.includes('2026/10/29 13:59:59'));
+  const unselectable=find(tree,node=>node.props['aria-label']==='選擇同步工作 3 null');assert.equal(unselectable.props.disabled,true);
+});
+
+test('latest-device search has no pagination or 30-device limit and is the default mode',()=>{
+  const query={q:'',status:'',source:'',offset:0,view:'latest'},data={jobs:Array.from({length:45},(_,i)=>({serial:String(i),id:null,status:'NONE'})),total:1128,matched:45,offset:0,limit:null};
+  const {View}=component('HoboSyncJobSearch.tsx',['','','',query,{key:JSON.stringify(query),data},false,'',0]);
+  const tree=View({api:()=>assert.fail(),jobs:[],timezone:'Asia/Taipei',onChange:()=>{}}),html=renderToStaticMarkup(tree);
+  assert.ok(html.includes('符合 45 台設備'));assert.ok(!find(tree,node=>node.props.children==='下一頁'));
+  let actualProps;const {View:Default}=component('HoboView.tsx',[],{'@/components/HoboSyncJobSearch':{default:props=>{actualProps=props;return null;}}});
+  renderToStaticMarkup(React.createElement(Default,{api:()=>assert.fail(),timezone:'Asia/Taipei'}));assert.ok(actualProps);
 });

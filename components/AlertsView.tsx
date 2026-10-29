@@ -202,7 +202,7 @@ export default function AlertsView({
                 })()}
               </span>
             </div>
-            <h2 className="text-lg font-bold text-slate-800 mt-2">{admin ? "設備斷線告警監控中心" : "授權與列管設備斷線監控"}</h2>
+            <h2 className="text-lg font-bold text-slate-800 mt-2">{admin ? "設備斷線監控中心" : "授權與列管設備斷線監控"}</h2>
             <p className="text-xs text-slate-500 mt-0.5">
               {admin
                 ? `當目前使用中的設備超過 ${thresholdMins} 分鐘未回報數據時，系統將自動彙整斷線設備清單並寄送通知信給指定負責人（已移出或報廢/維修之設備不納入告警）。`

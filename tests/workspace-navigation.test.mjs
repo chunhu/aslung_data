@@ -61,5 +61,5 @@ test('visibility buttons expose hide/show actions for desktop and mobile and mob
 });
 test('invalid or unavailable browser storage does not break the navigation',t=>{
  const f=fixture(t,{blocked:true});f.render(()=>f.views.default({items,section:'calibration',account:'admin',onSelect:()=>{}}));assert.doesNotThrow(()=>f.flush());assert.equal(group(f.tree,'calibration').props['aria-expanded'],true);
- const html=renderToStaticMarkup(f.tree);assert.ok(html.includes('校正與告警'));assert.ok(html.includes('aria-expanded="true"'));
+ const html=renderToStaticMarkup(f.tree);assert.ok(html.includes('校正與異常通知'));assert.ok(html.includes('aria-expanded="true"'));
 });

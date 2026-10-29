@@ -277,6 +277,7 @@ test('HOBO API rejects non-admin read/write/download, enforces origin, and expor
   const response=await GET(new Request('http://local/api/hobo?'+params));assert.equal(response.status,200);assert.match(response.headers.get('Content-Disposition'),/HOBO_12345678_20261001_20261003/);assert.match(await response.text(),/logger_sn/);
   const insert=d.prepare('INSERT INTO hobo_observations VALUES(?,?,?,?,?,?,?,?)');
   for(const [sensor,type,unit] of [['s-1','Temperature','°C'],['s-2','RH','%']])insert.run('12345678',sensor,start,'CURRENT','1',12,unit,type);
+  const latestJobs=await GET(new Request('http://local/api/hobo?action=jobs&view=latest'));assert.equal(latestJobs.status,200);const latestPayload=await latestJobs.json();assert.equal(latestPayload.jobs.length,1);assert.equal(latestPayload.limit,null);
   const jobSearch=await GET(new Request('http://local/api/hobo?action=jobs&q=1234&status=DONE&offset=0'));assert.equal(jobSearch.status,200);assert.equal(jobSearch.headers.get('Cache-Control'),'no-store');assert.ok(Array.isArray((await jobSearch.json()).jobs));
   assert.equal((await GET(new Request('http://local/api/hobo?action=jobs&offset=invalid'))).status,400);
   const overview=await GET(new Request('http://local/api/hobo?action=overview'));assert.equal(overview.status,200);assert.equal(overview.headers.get('Cache-Control'),'no-store');
@@ -488,4 +489,39 @@ test('job search includes all history, combines device/status/source filters and
   const beyond=queryHoboJobs(d,{offset:300});assert.equal(beyond.offset,60);
   assert.deepEqual(queryHoboJobs(d,{q:'no match',offset:30}).jobs,[]);
   for(const filter of [{status:'BAD'},{source:'BAD'},{offset:-1},{offset:1.5},{q:'x'.repeat(161)}])assert.throws(()=>queryHoboJobs(d,filter),HoboError);d.close();
+});
+
+
+test('latest device jobs include every registered logger beyond 30, sort by serial and filter only its newest work',()=>{
+  const d=store(),serial='12345678';
+  for(let i=0;i<40;i++)saveHoboLogger(d,{serial:String(20000000+i),name:'logger '+i,start,enabled:false});
+  const old=queueHoboSync(d,{serial,start,end});d.prepare("UPDATE hobo_jobs SET status='FAILED',created_at='2026-10-27T00:00:00Z' WHERE id=?").run(old);
+  const latest=queueHoboSync(d,{serial,start,end,actor:'admin'});d.prepare("UPDATE hobo_jobs SET status='DONE',created_at='2026-10-28T00:00:00Z' WHERE id=?").run(latest);
+  const result=queryHoboJobs(d,{view:'latest'});assert.equal(result.jobs.length,41);assert.equal(result.matched,41);assert.equal(result.limit,null);
+  assert.deepEqual(result.jobs.map(j=>j.serial),[...result.jobs.map(j=>j.serial)].sort());
+  assert.equal(result.jobs.find(j=>j.serial===serial).id,latest);assert.equal(result.jobs.filter(j=>!j.id).length,40);
+  assert.equal(queryHoboJobs(d,{view:'latest',status:'FAILED'}).matched,0);
+  assert.equal(queryHoboJobs(d,{view:'latest',status:'NONE'}).matched,40);
+  assert.equal(queryHoboJobs(d,{view:'latest',q:'logger 39'}).matched,1);
+  assert.equal(queryHoboJobs(d,{view:'latest',source:'manual'}).matched,1);
+  assert.throws(()=>queryHoboJobs(d,{view:'invalid'}),HoboError);d.close();
+});
+
+test('actual successful fetch time survives new failed jobs and history deletion; cancelled responses never mark success',async()=>{
+  const d=store(),serial='12345678',before=Date.now();
+  const success=queueHoboSync(d,{serial,start,end:start});await runHoboSync(d,async()=>[]);
+  let row=queryHoboJobs(d,{view:'latest'}).jobs[0];assert.equal(row.last_success_estimated,0);assert.ok(Date.parse(row.last_success_at)>=before);const actual=row.last_success_at;
+  const failed=queueHoboSync(d,{serial,start,end});d.prepare("UPDATE hobo_jobs SET status='FAILED' WHERE id=?").run(failed);
+  row=queryHoboJobs(d,{view:'latest'}).jobs[0];assert.equal(row.id,failed);assert.equal(row.last_success_at,actual);
+  manageHoboJobs(d,{ids:[success,failed],operation:'delete',confirmation:'DELETE'});
+  row=queryHoboJobs(d,{view:'latest'}).jobs[0];assert.equal(row.id,null);assert.equal(row.last_success_at,actual);
+  let release;const id=queueHoboSync(d,{serial,start,end});const running=runHoboSync(d,()=>new Promise(resolve=>{release=resolve;}));cancelHoboSync(d,id);release([]);await running;
+  assert.equal(queryHoboJobs(d,{view:'latest'}).jobs[0].last_success_at,actual);d.close();
+});
+
+test('legacy success times are explicitly estimated from successful jobs, never dataset bounds or newer failures',()=>{
+  const d=store(),serial='12345678',id=queueHoboSync(d,{serial,start,end});
+  d.prepare("UPDATE hobo_jobs SET status='DONE',created_at='2026-10-27T01:00:00Z' WHERE id=?").run(id);
+  const newer=queueHoboSync(d,{serial,start,end});d.prepare("UPDATE hobo_jobs SET created_at='2026-10-29T01:00:00Z' WHERE id=?").run(newer);
+  const row=queryHoboJobs(d,{view:'latest'}).jobs[0];assert.equal(row.last_success_at,'2026-10-27T01:00:00Z');assert.equal(row.last_success_estimated,1);d.close();
 });

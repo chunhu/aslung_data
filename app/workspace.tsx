@@ -893,8 +893,8 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
   locations: isEn ? "Device Tracking" : "設備追蹤",
   labs: isEn ? "Sites & Labs" : "地點庫 (Lab ID)",
   maintainers: isEn ? "Maintainers" : "維護人員名單",
-  alerts: isEn ? "Alert Monitoring" : "斷線告警監控",
-  hobo: "HOBO / LI-COR",
+  alerts: isEn ? "Device disconnection notifications" : "設備斷線通知",
+  hobo: "LI-COR / HOBO",
   calibration: isEn ? "Calibration" : "校正管理",
   maintenance: isEn ? "Maintenance" : "維修保養",
   files: isEn ? "Files" : "檔案專區",
@@ -902,7 +902,7 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
   articles: isEn ? "Articles" : "文章專區",
   connection: isEn ? "Data Integration" : "資料串接"
  };
- const nav=[{id:"news",name:isEn?"Latest news":"最新消息",icon:BellRing},{id:"articles",name:isEn?"Articles":"文章專區",icon:FileText},{id:"realtime",name:labels.realtime,icon:RadioTower},{id:"data",name:labels.data,icon:Activity},{id:"devices",name:labels.devices,icon:Database},{id:"maintenance",name:labels.maintenance,icon:Wrench},{id:"calibration",name:labels.calibration,icon:FileSpreadsheet},{id:"hobo",name:"HOBO / LI-COR",icon:CloudDownload},{id:"members",name:labels.members,icon:Users},{id:"permissions",name:labels.permissions,icon:ShieldCheck},{id:"locations",name:labels.locations,icon:MapPin},{id:"labs",name:labels.labs,icon:Building2},{id:"maintainers",name:labels.maintainers,icon:UserCheck},{id:"alerts",name:labels.alerts,icon:BellRing},{id:"files",name:labels.files,icon:FolderDown},{id:"connection",name:labels.connection,icon:Code2}];
+ const nav=[{id:"news",name:isEn?"Latest news":"最新消息",icon:BellRing},{id:"articles",name:isEn?"Articles":"文章專區",icon:FileText},{id:"realtime",name:labels.realtime,icon:RadioTower},{id:"data",name:labels.data,icon:Activity},{id:"devices",name:labels.devices,icon:Database},{id:"maintenance",name:labels.maintenance,icon:Wrench},{id:"calibration",name:labels.calibration,icon:FileSpreadsheet},{id:"hobo",name:"LI-COR / HOBO",icon:CloudDownload},{id:"members",name:labels.members,icon:Users},{id:"permissions",name:labels.permissions,icon:ShieldCheck},{id:"locations",name:labels.locations,icon:MapPin},{id:"labs",name:labels.labs,icon:Building2},{id:"maintainers",name:labels.maintainers,icon:UserCheck},{id:"alerts",name:labels.alerts,icon:BellRing},{id:"files",name:labels.files,icon:FolderDown},{id:"connection",name:labels.connection,icon:Code2}];
  const chosen=downloadDevices.find(d=>d.selection_id===id); let columns=Array.from(new Set((page?.data??[]).flatMap(Object.keys)));if(columns.includes("timestamp"))columns=["timestamp",...columns.filter(c=>c!=="timestamp")];
  
  const parseAndImportCsv = async (text: string) => {
@@ -1107,7 +1107,7 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
         : modal==="labSync" ? "同步 Google 試算表地點庫 (Lab ID)"
         : modal==="maintainer" ? (editMaintainer ? "編輯維護人員" : "新增維護人員")
         : modal==="maintainerSync" ? "同步 Google 試算表維護人員名單"
-        : modal==="alertSettings" ? "斷線告警監控與郵件設定"
+        : modal==="alertSettings" ? "設備斷線通知與郵件設定"
         : modal==="requestGrant" ? (isEn ? "Request Device Data Access" : "申請設備資料授權")
         : modal==="reviewGrant" ? "審核設備授權申請"
         : modal==="password" ? "變更密碼"

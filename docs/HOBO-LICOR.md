@@ -170,3 +170,12 @@ Set an individual or batch synchronization interval in minutes (integer 1–1008
 「搜尋同步工作」涵蓋全部歷史紀錄，可輸入部分設備序號、設備名稱或錯誤訊息，搭配工作狀態與來源（定期排程／手動匯入）篩選，按「搜尋工作」執行。結果顯示總紀錄數、符合筆數與目前範圍，每頁 30 筆，以「上一頁／下一頁」瀏覽；「清除搜尋」回到最新紀錄。背景重新整理保留已套用條件，切換條件或頁面會清除原勾選，批量取消／刪除只作用於目前頁面選取的工作。刪除末頁紀錄後自動退回有效頁面。搜尋仅读取本機工作中繼資料，不重新下載 LI-COR 或 S3 資料。
 
 Search all synchronization job history by partial device serial, device name, or error text, and combine status and source filters. Results show the overall count, matched count and current range, with 30 jobs per page. Background refresh preserves applied filters. Changing filters or pages resets selected jobs; bulk operations apply only to selected jobs on the visible page. Clearing the search returns to recent jobs. Empty final pages after deletion are clamped to the last valid page. This search reads local job metadata without fetching LI-COR or S3 measurements.
+
+
+### 每台設備最新同步狀態 / Latest synchronization per device
+
+同步工作預設使用「每台設備最新一筆」：以設備序號排序，每台已建檔設備一列（含從未建立工作的設備），不限制 30 台。最新工作依工作建立時間與工作 ID 判斷；狀態、來源與關鍵字篩選在挑出最新工作後才套用，不會以符合條件的舊工作取代最新工作。「全部歷史工作」仍提供搜尋與每頁 30 筆分頁。
+
+最後成功同步時間以成功抓取並寫入一段資料的實際時間記錄，沒有量測資料的成功回應亦算一次成功同步；排隊、失敗與取消不會更新。紀錄獨立於工作歷史，刪除工作不會清除這個時間。超過 6 小時的設備列顯示紅色並附文字警示；尚無成功時間顯示黃色。畫面每分鐘重新判斷時效。較早版本沒有記錄真正完成時間，暫以已完成工作的建立時間估計並標示「歷史紀錄：以成功工作建立時間估計」，不是拿資料期間結束時間當作成功時間。新同步成功後改用精確記錄。即使排程停用或間隔大於 6 小時，仍依使用者要求顯示 6 小時警示。
+
+The default view lists the newest job for each registered device, sorted by serial, with no 30-device cap. Devices without jobs remain visible and cannot be selected for job actions. Historical search and pagination remain available in a separate view. Freshness uses the actual time of a successful committed fetch, retained independently of job history; failed, queued and cancelled work cannot make it look fresh. Rows older than six hours are red with a text warning; unknown times are yellow. Legacy estimates use completed-job creation times and are explicitly labelled until a new successful fetch records an exact time. The threshold is checked every minute and also applies to disabled schedules or intervals longer than six hours.

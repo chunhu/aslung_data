@@ -50,7 +50,7 @@ export default function HoboView({api,timezone}:Props){
       setEnabled(!!selectedLogger.enabled);setExpectedSchedule({sync_from:selectedLogger.sync_from,enabled:selectedLogger.enabled,interval_minutes:selectedLogger.interval_minutes||60});setIntervalMinutes(String(selectedLogger.interval_minutes||60));
     }else setExpectedSchedule(null);
   },[serial,selectedLogger?.sync_from,selectedLogger?.enabled,selectedLogger?.interval_minutes,timezone]);
-  return <div className="space-y-5"><section className="panel p-6 space-y-4"><div><h2 className="text-xl font-semibold">HOBO / LI-COR 資料</h2><p className="mt-2 text-sm text-slate-500">管理員專用。保留感測器、原始數值與單位，獨立儲存，不套用 ASLUNG PM 校正。日期依 {timezone} 輸入；CSV timestamp 為 UTC。CSV 檔名日期使用臺灣時間。</p></div>
+  return <div className="space-y-5"><section className="panel p-6 space-y-4"><div><h2 className="text-xl font-semibold">LI-COR / HOBO 資料</h2><p className="mt-2 text-sm text-slate-500">管理員專用。保留感測器、原始數值與單位，獨立儲存，不套用 ASLUNG PM 校正。日期依 {timezone} 輸入；CSV timestamp 為 UTC。CSV 檔名日期使用臺灣時間。</p></div>
     {status&&!status.configured&&<p role="alert" className="rounded bg-amber-50 p-3 text-amber-800">尚未設定伺服器 LICOR_API_TOKEN。請在 EC2 .env 設定後重新建立 app 及 calibration-worker 容器。</p>}
     {status?.storage_error&&<p role="alert" className="rounded bg-rose-50 p-3 text-rose-800">S3 歸檔暫停：{status.storage_error}。歸檔恢復前暫停抓取新資料，已抓取資料仍保留本機。</p>}
     <p className="text-sm text-slate-500">儲存模式：{status?.storage==='s3'?'S3（本機僅保留待上傳資料）':'本機 SQLite'}。定期同步需啟動 calibration-worker。設備需先儲存，再執行指定範圍匯入。API 沒有設備清單端點，請從 LI-COR 網站取得 Logger Serial Number。</p>
