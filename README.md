@@ -30,6 +30,10 @@ EC2 若已有獨立的 Nginx 設定，請在網站的 `server` 區塊設定 `cli
 
 ## 已包含功能
 
+資料存取授權的「新增授權」支援按地點或設備多選，可搜尋編號／名稱、全選、選取搜尋結果及清除選取，並顯示已選數量。同一批使用相同會員與日期設定，儲存後每個標的各建立一筆授權；完全相同的既有授權會略過。若任一標的不存在或寫入失敗，整批不會新增。設備全選僅包含目前清單，未來新增設備須另行授權；地點授權仍依原有設備在站期間動態涵蓋未來進駐設備。既有授權維持單筆編輯。
+
+New data access grants support multiple locations or devices, search, select all, select matching results, and clear selection. Each selected target receives a separate grant with the same member and date settings. Exact duplicates are skipped, and a validation or write failure rolls back the entire batch. Selecting all devices covers the current list only; location grants retain their existing dynamic deployment rules. Existing grants are edited individually.
+
 - Email / 密碼登入、自助註冊、Email 驗證與管理員審核；角色與資料授權分開管理。
 - 管理員建立 ASLUNG ID，指派各會員可存取的設備與資料起訖期間。
 - 期間查詢、資料表、JSON 預覽、CSV ZIP / JSON ZIP 下載。

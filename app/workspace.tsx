@@ -3,6 +3,7 @@ import JSZip from "jszip";
 import {exportName} from '@/lib/export-name.mjs';
 import MemberProfileFields, {type MemberProfile} from "@/components/MemberProfileFields";
 import RegistrationReviews from "@/components/RegistrationReviews";
+import GrantTargetSelect from "@/components/GrantTargetSelect";
 import DeviceMultiSelect from "@/components/DeviceMultiSelect";
 import DataFieldGuideLink from '@/components/DataFieldGuideLink';
 import DeviceFleetView from "@/components/DeviceFleetView";
@@ -182,7 +183,9 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
  const [queryFeedback,setQueryFeedback]=useState<{kind:"loading"|"success"|"error";message:string}|null>(null);
  const [id,setId]=useState(""),[start,setStart]=useState(""),[end,setEnd]=useState(""),[page,setPage]=useState<Page|null>(null),[queried,setQueried]=useState<{id:string;start:string;end:string;segment_id?:string;calibration?:string;calibration_snapshot?:string}|null>(null),[search,setSearch]=useState("");
  const [grantDevice,setGrantDevice]=useState(""),[grantEmail,setGrantEmail]=useState(""),[grantId,setGrantId]=useState<number|null>(null),[grantType,setGrantType]=useState<"device"|"lab">("lab"),[grantLab,setGrantLab]=useState("");
-  const [clippingWarning, setClippingWarning] = useState<{
+  const [grantDevices,setGrantDevices]=useState<string[]>([]),[grantLabs,setGrantLabs]=useState<string[]>([]);
+ useEffect(()=>{if(modal==="grant"){setGrantDevices(grantDevice?[grantDevice]:[]);setGrantLabs(grantLab?[grantLab]:[]);}},[modal,grantId,grantDevice,grantLab]);
+ const [clippingWarning, setClippingWarning] = useState<{
     device: Device;
     original: { start: string; end: string };
     clipped: { start: string; end: string; isoStart?: string; isoEnd?: string };
@@ -536,7 +539,7 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
       setEnd(localEnd);
     }
   }, [id, downloadDevices, tz]);
-  async function mutate(p:any){setBusy(true);try{const result=await request("/api/manage",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(p)});if(result.notice)toast.warning(result.notice);await load();setModal("");setConfirmation(null);if(p?.action==="deviceDeleteBulk")setSelectedDevices(new Set());if(p?.action==="deviceDelete")setSelectedDevices(prev=>{const s=new Set(prev);s.delete(p.id);return s;});if(p?.action==="locationDeleteBulk")setSelectedLocations(new Set());if(p?.action==="locationDelete")setSelectedLocations(prev=>{const s=new Set(prev);s.delete(Number(p.id));return s;});if(p?.action==="labDeleteBulk")setSelectedLabs(new Set());if(p?.action==="labDelete")setSelectedLabs(prev=>{const s=new Set(prev);s.delete(p.id);return s;});if(p?.action==="maintainerDeleteBulk")setSelectedMaintainers(new Set());if(p?.action==="maintainerDelete")setSelectedMaintainers(prev=>{const s=new Set(prev);s.delete(p.name);return s;});if(p?.action==="alertLogDeleteBulk"||p?.action==="alertLogClearAll")setSelectedAlertLogs(new Set());if(p?.action==="alertLogDelete")setSelectedAlertLogs(prev=>{const s=new Set(prev);s.delete(Number(p.id));return s;});if(p?.action==="alertCheckDeleteBulk"||p?.action==="alertCheckClearAll")setSelectedAlertChecks(new Set());if(p?.action==="alertCheckDelete")setSelectedAlertChecks(prev=>{const s=new Set(prev);s.delete(Number(p.id));return s;});if(p?.action==="memberDeleteBulk")setSelectedMembers(new Set());if(p?.action==="memberDelete")setSelectedMembers(prev=>{const s=new Set(prev);s.delete(p.email);return s;});toast.success("已儲存變更");return true;}catch(e){toast.error((e as Error).message);return false;}finally{setBusy(false)}}
+  async function mutate(p:any){setBusy(true);try{const result=await request("/api/manage",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(p)});if(result.notice)toast.warning(result.notice);await load();setModal("");setConfirmation(null);if(p?.action==="deviceDeleteBulk")setSelectedDevices(new Set());if(p?.action==="deviceDelete")setSelectedDevices(prev=>{const s=new Set(prev);s.delete(p.id);return s;});if(p?.action==="locationDeleteBulk")setSelectedLocations(new Set());if(p?.action==="locationDelete")setSelectedLocations(prev=>{const s=new Set(prev);s.delete(Number(p.id));return s;});if(p?.action==="labDeleteBulk")setSelectedLabs(new Set());if(p?.action==="labDelete")setSelectedLabs(prev=>{const s=new Set(prev);s.delete(p.id);return s;});if(p?.action==="maintainerDeleteBulk")setSelectedMaintainers(new Set());if(p?.action==="maintainerDelete")setSelectedMaintainers(prev=>{const s=new Set(prev);s.delete(p.name);return s;});if(p?.action==="alertLogDeleteBulk"||p?.action==="alertLogClearAll")setSelectedAlertLogs(new Set());if(p?.action==="alertLogDelete")setSelectedAlertLogs(prev=>{const s=new Set(prev);s.delete(Number(p.id));return s;});if(p?.action==="alertCheckDeleteBulk"||p?.action==="alertCheckClearAll")setSelectedAlertChecks(new Set());if(p?.action==="alertCheckDelete")setSelectedAlertChecks(prev=>{const s=new Set(prev);s.delete(Number(p.id));return s;});if(p?.action==="memberDeleteBulk")setSelectedMembers(new Set());if(p?.action==="memberDelete")setSelectedMembers(prev=>{const s=new Set(prev);s.delete(p.email);return s;});toast.success(p?.action==="grantBulk"?`已新增 ${result.created} 筆授權，略過 ${result.skipped} 筆相同授權。`:"已儲存變更");return true;}catch(e){toast.error((e as Error).message);return false;}finally{setBusy(false)}}
  function reportQueryError(message:string){setQueryFeedback({kind:"error",message});toast.error(message);}
  async function query(params:{id:string;start:string;end:string;segment_id?:string;calibration?:string;calibration_snapshot?:string},cursor=""){
    setBusy(true);
@@ -1058,7 +1061,7 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
     onQr={d=>{setQrDevice(d);setModal("deviceQr");}}
     onTransfer={d=>{setTransferDevice(d);setModal("transfer");}}
     onBulkTransfer={()=>{setTransferDevice(null);setModal("transferBulk");}}
-    onGrant={id=>{setGrantDevice(id);setModal("grant");}}
+    onGrant={id=>{setGrantType("device");setGrantId(null);setGrantEmail("");setGrantLab("");setGrantDevice(id);setModal("grant");}}
     onLegacyImport={()=>setModal("importCsv")}
     onDelete={id=>setConfirmation({action:"deviceDelete",id,title:"刪除此設備？",description:"將一併刪除此設備的資料授權與位置追蹤紀錄，無法復原。"})}
     onBulkDelete={()=>setConfirmation({action:"deviceDeleteBulk",ids:Array.from(selectedDevices),title:`刪除所選 ${selectedDevices.size} 台設備？`,description:"將一併刪除所選設備的資料授權與位置追蹤紀錄，無法復原。"})}
@@ -1144,7 +1147,7 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
           setBusy(true);
           void request("/api/auth/password",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(p)}).then(()=>window.location.assign("/login")).catch(e=>toast.error(e.message)).finally(()=>setBusy(false));
         }else if(modal==="grant"){
-          void mutate({action:"grant",id:grantId,grantType,deviceId:grantType==="device"?grantDevice:null,labId:grantType==="lab"?grantLab:null,email:grantEmail,start:zoned(String(p.start)),end:p.end?zoned(String(p.end)):null});
+          void mutate({action:grantId?"grant":"grantBulk",id:grantId,grantType,targets:grantType==="device"?grantDevices:grantLabs,deviceId:grantType==="device"?grantDevice:null,labId:grantType==="lab"?grantLab:null,email:grantEmail,start:zoned(String(p.start)),end:p.end?zoned(String(p.end)):null});
         }else if(modal==="labSync"){
           setBusy(true);
           void request("/api/manage",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"labSyncGoogle",url:p.url})}).then(async res=>{await load();setModal("");toast.success(`同步成功！共更新 ${res.synced||0} 筆地點資料`);}).catch(e=>toast.error((e as Error).message)).finally(()=>setBusy(false));
@@ -1906,7 +1909,7 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
             }`}
           >
             <span>📟 按設備授權 (ASLUNG ID)</span>
-            <span className="text-[10px] bg-emerald-100 text-emerald-800 px-1.5 py-0.2 rounded font-normal">個別設備</span>
+            <span className="text-[10px] bg-emerald-100 text-emerald-800 px-1.5 py-0.2 rounded font-normal">指定設備</span>
           </button>
         </div>
 
@@ -1916,24 +1919,26 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
               💡 <strong>地點授權特色：</strong>授權該地點（如 <code>N0059</code>）後，該地點目前的所有設備及未來新調動至該地點的設備皆會<strong>自動繼承授權</strong>，無須逐台手動指派。
             </div>
             <Label>地點 (Lab ID)</Label>
-            {pick(
-              grantLab,
-              setGrantLab,
-              labs.map(l => {
+            {grantId ? pick(grantLab,setGrantLab,labs.map(l => {
                 const devCount = devices.filter(d => d.location === l.id).length;
                 const locName = [l.city_name, l.town_name, l.location_name].filter(Boolean).join(" ");
                 return {
                   value: l.id,
                   label: `${l.id}${locName ? " · " + locName : ""} (${devCount} 台設備)`
                 };
-              }),
-              "選擇要授權的地點 (Lab ID)"
-            )}
+              }),"選擇要授權的地點 (Lab ID)") : <GrantTargetSelect key="grant-labs" kind="lab" options={labs.map(l => {
+                const devCount = devices.filter(d => d.location === l.id).length;
+                const locName = [l.city_name, l.town_name, l.location_name].filter(Boolean).join(" ");
+                return {
+                  value: l.id,
+                  label: `${l.id}${locName ? " · " + locName : ""} (${devCount} 台設備)`
+                };
+              })} value={grantLabs} onChange={setGrantLabs} disabled={busy}/>}
           </div>
         ) : (
           <div>
             <Label>ASLUNG ID (設備編號)</Label>
-            {pick(grantDevice,setGrantDevice,devices.map(d=>({value:d.id,label:d.id+(d.description?" · "+d.description:d.name?" · "+d.name:"")+(d.location?` [地點: ${d.location}]`:"")})),"選擇設備")}
+            {grantId ? pick(grantDevice,setGrantDevice,devices.map(d=>({value:d.id,label:d.id+(d.description?" · "+d.description:d.name?" · "+d.name:"")+(d.location?` [地點: ${d.location}]`:"")})),"選擇設備") : <GrantTargetSelect key="grant-devices" kind="device" options={devices.map(d=>({value:d.id,label:d.id+(d.description?" · "+d.description:d.name?" · "+d.name:"")+(d.location?` [地點: ${d.location}]`:"")}))} value={grantDevices} onChange={setGrantDevices} disabled={busy}/>}
           </div>
         )}
 
@@ -1961,7 +1966,7 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
             {modal==="importCsv"?<div className="flex gap-2">
               <Button type="button" variant="outline" disabled={busy} onClick={()=>{document.getElementById("csv-upload")?.click();}}><Upload size={14} className="mr-1"/>從檔案上傳</Button>
               <Button disabled={busy} type="submit">{busy?"匯入中…":"匯入貼上資料"}</Button>
-            </div>:<Button disabled={busy||(modal==="grant"&&((grantType==="device"&&!grantDevice)||(grantType==="lab"&&!grantLab)||!grantEmail))||(modal==="requestGrant"&&((requestType==="device"&&!requestAslungId.trim())||(requestType==="lab"&&!requestLabId.trim())))} type="submit">{modal==="fileLink"?(busy?(isEn?"Saving…":"儲存中…"):(isEn?"Add link and grant access":"新增連結並指派授權")):modal==="fileUpload"?(busy?"上傳中…":"上傳並指派授權"):modal==="fileGrant"?(busy?"儲存中…":"儲存授權設定"):modal==="requestGrant"?(busy?(isEn?"Submitting...":"送出中…"):(isEn?"Submit Request":"送出申請")):modal==="reviewGrant"?(busy?"審核中…":"確認核准開通"):modal==="labSync"||modal==="maintainerSync"?(busy?"同步中…":"開始同步"):(busy?"儲存中…":"儲存")}</Button>}
+            </div>:<Button disabled={busy||(modal==="grant"&&((grantType==="device"&&(grantId?!grantDevice:!grantDevices.length))||(grantType==="lab"&&(grantId?!grantLab:!grantLabs.length))||!grantEmail))||(modal==="requestGrant"&&((requestType==="device"&&!requestAslungId.trim())||(requestType==="lab"&&!requestLabId.trim())))} type="submit">{modal==="grant"&&!grantId?(busy?"儲存中…":`新增 ${grantType==="lab"?grantLabs.length:grantDevices.length} 筆授權`):modal==="fileLink"?(busy?(isEn?"Saving…":"儲存中…"):(isEn?"Add link and grant access":"新增連結並指派授權")):modal==="fileUpload"?(busy?"上傳中…":"上傳並指派授權"):modal==="fileGrant"?(busy?"儲存中…":"儲存授權設定"):modal==="requestGrant"?(busy?(isEn?"Submitting...":"送出中…"):(isEn?"Submit Request":"送出申請")):modal==="reviewGrant"?(busy?"審核中…":"確認核准開通"):modal==="labSync"||modal==="maintainerSync"?(busy?"同步中…":"開始同步"):(busy?"儲存中…":"儲存")}</Button>}
           </>
         )}
       </div>

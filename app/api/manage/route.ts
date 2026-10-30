@@ -460,6 +460,14 @@ export async function POST(r:Request){try{
     throw e;
   }
  }
+ else if(p.action==="grantBulk"){
+  requireAdmin();
+  const {createBulkGrants,DataGrantError}=await import("@/lib/data-grants.mjs");
+  try{
+    const result=createBulkGrants(getConnection(),me,{grantType:p.grantType,targets:p.targets,email:p.email,start:instant(p.start),end:p.end?instant(p.end):null});
+    return Response.json({ok:true,...result});
+  }catch(e){if(e instanceof DataGrantError)throw new AppError(e.status,e.message);throw e;}
+ }
  else if(p.action==="grant"){
   requireAdmin();
   const grant_type = p.grantType === "lab" ? "lab" : "device";
