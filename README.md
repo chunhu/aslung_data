@@ -174,6 +174,12 @@ HTTP 測試自動選擇空閒本機埠，使用臨時 SQLite / 帳號，結束�
 
 管理員可在「校正管理」新增多個 Google 試算表分頁網址、名稱與說明，手動同步、啟用或停用來源，查詢全部設備與歷史版本。此功能不會建立或改動設備授權，不會改寫 MySQL 原始量測資料；現有 admin/member 分級維持不變。
 
+「設備校正參數查詢」提供編輯、單筆刪除，以及勾選本頁參數後批量刪除（每批最多 200 筆）。系統管理員與校正管理員可操作來源目前版本；歷史版本僅供查詢。編輯器時間以 UTC 輸入，結束時間為不包含的上限；空白代表無上限。參數格式、第二段係數與期間衝突驗證失敗時不寫入；刪除須輸入 `DELETE` 確認。
+
+修改會為每個受影響來源建立新版本，保留舊係數、原表日期、操作人與稽核事件。批量操作在同一交易完成；來源同步中或參數版本已變更時拒絕操作，需重新整理。刪除不擴大其他參數的適用區間，也不重算已完成成果。手動修改後，參數列顯示「已手動編輯」、修改時間及操作人；預設暫停該來源自動同步，但啟用來源的目前係數仍可套用。來源卡片提供「允許同步資料覆蓋手動修改」勾選項，套用於整個來源（含刪除項目）：勾選後允許後續手動及每日同步採用已修正試算表；取消勾選恢復保護。未勾選時按「立即同步」仍可確認一次性覆蓋（已刪除參數可能重新匯入）。同步成功後使用來源新版本，失敗則保留目前手動參數及覆蓋偏好。再次編輯或刪除會重新取消覆蓋許可。設定變更保留稽核紀錄；同步進行中不可變更，以避免競態。網站修改不會回寫 Google 試算表。
+
+Calibration lookup supports editing current parameters, deleting one row, and deleting selected rows on the current page (up to 200). Admins and calibration managers can make changes; historical versions are read-only. Editor timestamps use UTC and an exclusive end boundary. Changes create immutable source versions, retain audit history and completed results, and pause source synchronization while keeping enabled coefficients usable. Manually edited rows display the editor and timestamp. A source-level Allow synchronization to overwrite manual changes checkbox enables subsequent manual and scheduled imports of corrected spreadsheet data, including restoration of deleted rows. Unchecking restores protection; new edits or deletions reset this consent. Preference changes are audited and blocked during an active sync. Failed synchronization retains current manual parameters and the saved preference. Without persistent consent, explicit one-time replacement remains available. Batch changes are atomic, and stale versions or sources being synchronized cannot be modified. Deletion requires `DELETE`, does not extend remaining intervals, and does not write back to Google Sheets.
+
 - 伺服器啟動的 instrumentation 會註冊每分鐘排程檢查，每個啟用來源每日臺灣時間 02:00 同步。停機錯過的排程會在啟動後第一輪補查；新增來源也會在下一輪檢查。同步失敗保留舊版本並記錄原因，次日再試，可隨時手動重試。
 - 必要欄位（不分大小寫）：`aslung_id, PM, slope1, intercept1, Start_date`；選填 `End_date, break_point1, slope2, intercept2`，品質指標保留供查詢。`Factor_*` 暫不使用。
 - `PM1, PM2.5, PM10` 分別對應 G3；`PM1_GSA, PM2.5_GSA, PM10_GSA` 對應 GSA。`PM125` 明確保留為僅供查詢，不對應原始量測欄位，也不參與校正計算。其他合法通道名稱以 `UNMAPPED:` 保留，僅供查詢，不猜測或參與計算。

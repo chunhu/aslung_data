@@ -11,7 +11,7 @@ function failure(e: unknown) {
 }
 export async function GET(req:Request) {
   try {
-    const me=await identity(req);if(me.role!=="admin")throw new AppError(403,"只有管理員可以檢視設備履歷。");
+    const me=await identity(req);if(me.role!=="admin")throw new AppError(403,"只有管理員可以檢視設備歷程。");
     const id=new URL(req.url).searchParams.get("id");
     if(!id||id.length>80)throw new AppError(400,"請提供設備編號。");
     const d=getConnection();ensureFleetSchema(d);

@@ -171,6 +171,29 @@ test('calibration API protects admin writes and list access, bounds pagination, 
     assert.deepEqual(data.devices,['AL-9999']);assert.equal(data.records.length,1);assert.equal(data.logs.length,1);
     assert.equal((await api.GET(new Request('http://test/api/calibration?offset=-1'))).status,400);
     assert.equal((await post({action:'enabled',id,enabled:'false'})).status,400);
+    const record=data.records[0];assert.equal(record.is_current,1);
+    const edit={action:'records',operation:'edit',ids:[record.id],patch:{a1:4}};
+    actor.role='member';assert.equal((await post(edit)).status,403);
+    actor.role='calibration_manager';assert.equal((await post(edit,'http://evil')).status,403);
+    assert.equal((await post(edit)).status,200);
+    const current=await (await api.GET(new Request('http://test/api/calibration'))).json();
+    assert.equal(current.records[0].a1,4);assert.equal(current.sources[0].manual_edit,1);
+    assert.equal(current.sources[0].allow_manual_overwrite,0);
+    assert.equal(current.records[0].manual_edited_by,'admin@test');
+    const overwrite={action:'overwrite',id,version:current.records[0].version_id,allowed:true};
+    actor.role='member';assert.equal((await post(overwrite)).status,403);
+    actor.role='calibration_manager';assert.equal((await post(overwrite,'http://evil')).status,403);
+    assert.equal((await post({...overwrite,allowed:'true'})).status,400);
+    assert.equal((await post({...overwrite,version:record.version_id})).status,409);
+    assert.equal((await post(overwrite)).status,200);
+    assert.equal((await (await api.GET(new Request('http://test/api/calibration'))).json()).sources[0].allow_manual_overwrite,1);
+    const old=await (await api.GET(new Request('http://test/api/calibration?version='+record.version_id))).json();
+    assert.equal(old.records[0].is_current,0);assert.equal(old.records[0].a1,2);
+    assert.equal((await post(edit)).status,409);
+    const deletion={action:'records',operation:'delete',ids:[current.records[0].id]};
+    assert.equal((await post(deletion)).status,400);
+    assert.equal((await post({...deletion,confirmation:'DELETE'})).status,200);
+    assert.equal((await (await api.GET(new Request('http://test/api/calibration'))).json()).total,0);
   }finally{d.close();}
 });
 
@@ -303,5 +326,86 @@ test('adding original-date audit fields preserves historical calibration records
     const stored=d.prepare('SELECT * FROM calibration_records').get();
     assert.equal(stored.version_id,7);assert.equal(stored.a1,2);assert.equal(stored.source_start,'');assert.equal(stored.source_end,'');assert.equal(stored.boundary_note,'');
     assert.equal(d.prepare('SELECT COUNT(*) n FROM calibration_records').get().n,1);
+  }finally{d.close();}
+});
+
+
+test('manual record edits create immutable revisions and protect them from both scheduled and forced sync',async()=>{
+  const {d,id}=fixture(),input=csv(row());await c.syncCalibrationSource(d,id,'admin',async()=>input,{force:true});
+  const original=c.currentCalibrationRecords(d)[0],version=original.version_id;
+  const result=c.mutateCalibrationRecords(d,{operation:'edit',ids:[original.id],patch:{a1:'4',b1:'2'}},'editor@test');
+  assert.equal(result.changed,1);const current=c.currentCalibrationRecords(d)[0];assert.equal(current.a1,4);assert.notEqual(current.version_id,version);
+  assert.equal(d.prepare('SELECT a1 FROM calibration_records WHERE id=?').get(original.id).a1,2);
+  assert.equal(d.prepare('SELECT enabled FROM calibration_sources WHERE id=?').get(id).enabled,1);
+  for(const force of [false,true])assert.equal((await c.syncCalibrationSource(d,id,'worker',async()=>assert.fail('manual protection must skip fetch'),{force})).status,'SKIPPED');
+  const restored=await c.syncCalibrationSource(d,id,'admin',async()=>input,{force:true,replaceManual:true});assert.equal(restored.status,'UPDATED');
+  assert.equal(c.currentCalibrationRecords(d)[0].a1,2);assert.equal(d.prepare('SELECT COUNT(*) n FROM calibration_manual_holds').get().n,0);
+  assert.ok(d.prepare("SELECT 1 FROM calibration_history_events WHERE action='EDIT_RECORDS' AND actor='editor@test'").get());d.close();
+});
+
+test('record batch deletion creates one new version per source, retains old coefficients and rejects stale or missing selections atomically',async()=>{
+  const {d,id}=fixture();await c.syncCalibrationSource(d,id,'admin',async()=>csv(row()),{force:true});
+  const second=c.saveCalibrationSource(d,{name:'Second',url:'https://docs.google.com/spreadsheets/d/second/edit?gid=0'},'admin');await c.syncCalibrationSource(d,second,'admin',async()=>csv(row('AL-2')),{force:true});
+  const originals=c.currentCalibrationRecords(d),count=d.prepare('SELECT COUNT(*) n FROM calibration_versions').get().n;
+  assert.throws(()=>c.mutateCalibrationRecords(d,{operation:'delete',ids:[originals[0].id,999999],confirmation:'DELETE'},'admin'),/目前版本/);
+  assert.equal(d.prepare('SELECT COUNT(*) n FROM calibration_versions').get().n,count);
+  assert.throws(()=>c.mutateCalibrationRecords(d,{operation:'delete',ids:[originals[0].id],confirmation:''},'admin'),/DELETE/);
+  const result=c.mutateCalibrationRecords(d,{operation:'delete',ids:originals.map(r=>r.id),confirmation:'DELETE'},'admin');assert.equal(result.versions.length,2);assert.equal(result.changed,2);
+  assert.equal(c.currentCalibrationRecords(d).length,0);assert.equal(d.prepare('SELECT COUNT(*) n FROM calibration_records').get().n,2);
+  assert.equal(d.prepare('SELECT COUNT(*) n FROM calibration_manual_holds').get().n,2);
+  assert.throws(()=>c.mutateCalibrationRecords(d,{operation:'edit',ids:[originals[0].id],patch:{a1:5}},'admin'),/目前版本/);d.close();
+});
+
+test('invalid coefficient edits, temporal overlaps and source conflicts leave versions and holds unchanged',async()=>{
+  const {d,id}=fixture();await c.syncCalibrationSource(d,id,'admin',async()=>csv(row('AL-A','PM1','2024/1/1','2024/2/1'),row('AL-A','PM1','2024/3/1','2024/4/1')),{force:true});
+  const first=c.currentCalibrationRecords(d)[0],count=d.prepare('SELECT COUNT(*) n FROM calibration_versions').get().n;
+  for(const patch of [{a1:'bad'},{a2:3,b2:null},{start:'invalid'},{end:'2023-01-01T00:00:00Z'},{end:'2024-05-01T00:00:00Z'},{channel:'BAD'},{aslung_id:'../bad'},{version_id:1}]){
+    assert.throws(()=>c.mutateCalibrationRecords(d,{operation:'edit',ids:[first.id],patch},'admin'),c.CalibrationError);
+    assert.equal(d.prepare('SELECT COUNT(*) n FROM calibration_versions').get().n,count);assert.equal(d.prepare('SELECT COUNT(*) n FROM calibration_manual_holds').get().n,0);
+  }
+  const second=c.saveCalibrationSource(d,{name:'Other',url:'https://docs.google.com/spreadsheets/d/other/edit?gid=0'},'admin');await c.syncCalibrationSource(d,second,'admin',async()=>csv(row('AL-B')),{force:true});
+  assert.throws(()=>c.mutateCalibrationRecords(d,{operation:'edit',ids:[first.id],patch:{aslung_id:'AL-B'}},'admin'),/衝突/);d.close();
+});
+
+test('failed replacement sync retains manual protection, and active source sync blocks manual changes',async()=>{
+  const {d,id}=fixture();await c.syncCalibrationSource(d,id,'admin',async()=>csv(row()),{force:true});const original=c.currentCalibrationRecords(d)[0];let release;
+  const running=c.syncCalibrationSource(d,id,'worker',()=>new Promise(resolve=>{release=resolve;}),{force:true});
+  assert.throws(()=>c.mutateCalibrationRecords(d,{operation:'delete',ids:[original.id],confirmation:'DELETE'},'admin'),/正在同步/);
+  release(csv(row()));await running;
+  c.mutateCalibrationRecords(d,{operation:'edit',ids:[original.id],patch:{b1:0}},'admin');
+  const result=await c.syncCalibrationSource(d,id,'admin',async()=>{throw new Error('unavailable');},{force:true,replaceManual:true});assert.equal(result.status,'FAILED');
+  assert.equal(d.prepare('SELECT COUNT(*) n FROM calibration_manual_holds').get().n,1);assert.equal(c.currentCalibrationRecords(d)[0].b1,0);d.close();
+});
+
+test('overwrite consent enables scheduled corrected imports; unchecking and later edits restore protection with audit',async()=>{
+  const {d,id}=fixture();try{
+    await c.syncCalibrationSource(d,id,'admin',async()=>csv(row(),row('AL-2')),{force:true});
+    c.mutateCalibrationRecords(d,{operation:'edit',ids:[c.currentCalibrationRecords(d)[0].id],patch:{a1:7}},'editor');
+    let edited=c.currentCalibrationRecords(d)[0];
+    assert.equal(edited.manual_edited_by,'editor');assert.ok(Date.parse(edited.manual_edited_at));
+    assert.equal(c.currentCalibrationRecords(d)[1].manual_edited_at,'');
+    c.setCalibrationOverwrite(d,id,true,edited.version_id,'approver');
+    c.setCalibrationOverwrite(d,id,false,edited.version_id,'approver');
+    assert.equal((await c.syncCalibrationSource(d,id,'scheduler',()=>assert.fail('must remain protected'),{force:true})).status,'SKIPPED');
+    c.setCalibrationOverwrite(d,id,true,edited.version_id,'approver');
+    // Editing another row must preserve the previous row's provenance, but reset source consent.
+    c.mutateCalibrationRecords(d,{operation:'edit',ids:[c.currentCalibrationRecords(d)[1].id],patch:{b1:8}},'other-editor');
+    let current=c.currentCalibrationRecords(d);assert.equal(current[0].manual_edited_at,edited.manual_edited_at);
+    assert.equal(current[0].manual_edited_by,'editor');assert.equal(current[1].manual_edited_by,'other-editor');
+    assert.equal(d.prepare('SELECT allow_overwrite FROM calibration_manual_holds WHERE source_id=?').get(id).allow_overwrite,0);
+    assert.throws(()=>c.setCalibrationOverwrite(d,id,true,edited.version_id,'approver'),/版本已變更/);
+    c.setCalibrationOverwrite(d,id,true,current[0].version_id,'approver');
+    d.prepare('UPDATE calibration_sources SET next_check=? WHERE id=?').run('2000-01-01T00:00:00Z',id);
+    const failed=await c.syncCalibrationSource(d,id,'scheduler',async()=>{throw new Error('offline');});assert.equal(failed.status,'FAILED');
+    assert.equal(d.prepare('SELECT allow_overwrite FROM calibration_manual_holds WHERE source_id=?').get(id).allow_overwrite,1);
+    assert.equal(c.currentCalibrationRecords(d)[0].a1,7);
+    d.prepare('UPDATE calibration_sources SET next_check=? WHERE id=?').run('2000-01-01T00:00:00Z',id);
+    let release;const pending=c.syncCalibrationSource(d,id,'scheduler',()=>new Promise(resolve=>{release=resolve;}));
+    assert.throws(()=>c.setCalibrationOverwrite(d,id,false,current[0].version_id,'approver'),/正在同步/);
+    release(csv(row().replace(',2,1,',',9,1,'),row('AL-2')));assert.equal((await pending).status,'UPDATED');
+    assert.equal(c.currentCalibrationRecords(d)[0].a1,9);assert.equal(c.currentCalibrationRecords(d)[0].manual_edited_at,'');
+    assert.equal(d.prepare('SELECT manual_edited_by FROM calibration_records WHERE id=?').get(edited.id).manual_edited_by,'editor');
+    assert.equal(d.prepare('SELECT COUNT(*) n FROM calibration_manual_holds').get().n,0);
+    assert.ok(d.prepare("SELECT 1 FROM calibration_history_events WHERE action='SET_MANUAL_OVERWRITE' AND actor='approver'").get());
   }finally{d.close();}
 });

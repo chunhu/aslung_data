@@ -10,6 +10,19 @@ function visit(node){if(ts.isFunctionDeclaration(node)&&node.name?.text==='syncS
 visit(ast);assert.ok(sync);
 const code=ts.transpileModule(sync,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
 
+test('protected manual changes require explicit overwrite before any source fetch',async()=>{
+  const calls=[],confirmations=[];
+  const context={syncingRef:{current:new Set()},setSyncing:()=>{},setReplaceSource:s=>confirmations.push(s),
+    api:async(path,options)=>{calls.push(JSON.parse(options.body));return {status:'UPDATED',message:'Done'};},
+    toast:{error:()=>{},info:()=>{},success:()=>{}},setHistoryRefresh:()=>{},load:async()=>{}};
+  const execute=new Function('context',`const {${Object.keys(context).join(',')}}=context;${code};return syncSource;`)(context);
+  const source={id:'protected',name:'Manual',manual_edit:1};
+  await execute(source);assert.deepEqual(confirmations,[source]);assert.deepEqual(calls,[]);
+  await execute(source,true);assert.deepEqual(calls,[{action:'sync',id:'protected',replaceManual:true}]);
+  await execute({...source,allow_manual_overwrite:1});assert.deepEqual(calls.at(-1),{action:'sync',id:'protected'});
+  assert.equal(confirmations.length,1);
+});
+
 test('syncing one card posts one source ID and does not mark the other card busy',async()=>{
   const calls=[],states=[],messages=[];let finish;
   const hold=new Promise(resolve=>{finish=resolve;});

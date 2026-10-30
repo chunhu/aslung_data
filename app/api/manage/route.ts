@@ -13,7 +13,7 @@ export const dynamic="force-dynamic";
 function protectMaintenanceHistory(ids:string[]){
   const d=getConnection();
   if(!d.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='maintenance_orders'").get())return;
-  for(const id of ids)if(d.prepare('SELECT 1 FROM maintenance_orders WHERE device_id=? LIMIT 1').get(id))throw new AppError(409,`設備 ${id} 已有維修保養紀錄，請改為報廢或停用以保留履歷。`);
+  for(const id of ids)if(d.prepare('SELECT 1 FROM maintenance_orders WHERE device_id=? LIMIT 1').get(id))throw new AppError(409,`設備 ${id} 已有維修保養紀錄，請改為報廢或停用以保留歷程。`);
 }
 function deleteDevicesWithHistoryProtection(ids:string[]){
   const d=getConnection();d.exec('BEGIN IMMEDIATE');
