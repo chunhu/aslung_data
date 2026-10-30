@@ -66,6 +66,25 @@ test('revocation closes only its own grant and prevents overlapping transfers an
     assert.equal(p.personalState(d,two).ownerships.length,1);assert.throws(()=>p.personalRecords(d,two,id),/找不到/);
   }finally{d.close();}
 });
+test('only admins can delete released ownership records; grants, transfer boundaries and audit remain',()=>{
+  const d=fixture();try{
+    const owned=bind(d);
+    assert.throws(()=>p.manageOwnership(d,one,{action:'ownershipDelete',id:owned.id,confirmation:'DELETE'}),/只有系統管理員/);
+    assert.throws(()=>p.manageOwnership(d,admin,{action:'ownershipDelete',id:owned.id,confirmation:'DELETE'}),/先解除綁定/);
+    p.manageOwnership(d,admin,{action:'revoke',id:owned.id,confirmation:'REVOKE'});
+    const grants=d.prepare('SELECT * FROM grants').all();
+    assert.throws(()=>p.manageOwnership(d,admin,{action:'ownershipDelete',id:owned.id,confirmation:''}),/DELETE/);
+    assert.equal(p.personalState(d,one).ownerships.length,1);
+    p.manageOwnership(d,admin,{action:'ownershipDelete',id:owned.id,confirmation:'DELETE'});
+    assert.equal(p.personalState(d,one).ownerships.length,0);assert.equal(p.personalState(d,admin).ownerships.length,0);
+    assert.deepEqual(d.prepare('SELECT * FROM grants').all(),grants);
+    assert.ok(d.prepare('SELECT deleted_at FROM device_ownerships WHERE id=?').get(owned.id).deleted_at);
+    assert.ok(d.prepare("SELECT 1 FROM personal_events WHERE action='DELETE_OWNERSHIP' AND actor=?").get(admin.email));
+    assert.throws(()=>p.manageOwnership(d,admin,{action:'ownershipDelete',id:owned.id,confirmation:'DELETE'}),/找不到/);
+    p.requestDevice(d,two,{device_id:'AL-1',evidence:'New owner'});const claim=p.personalState(d,two).claims[0];
+    assert.throws(()=>p.reviewDevice(d,admin,{id:claim.id,decision:'approve',confirmed:true,calibration_enabled:true,start:'2025-01-01T00:00:00Z'}),/交接時間/);
+  }finally{d.close();}
+});
 test('private imports validate ownership and permissions; foreign IDs and version guessing never disclose parameters',()=>{
   const d=fixture();try{
     const owned=bind(d);bind(d,two,'AL-2');const id=source(d),other=source(d,two);const first=upload(d,id);const second=upload(d,other,two,csv('AL-2',8));
@@ -148,6 +167,15 @@ test('personal API rejects CSRF, unauthorized writes and cross-member record dow
     actor=two;assert.equal((await api.GET(new Request('http://test/api/personal?source='+id+'&download=1'))).status,404);
     actor={...one,role:'viewer'};assert.equal((await api.GET(new Request('http://test/api/personal'))).status,403);
     actor=one;const r=await api.GET(new Request('http://test/api/personal?source='+id+'&download=1'));assert.equal(r.status,200);assert.match(await r.text(),/AL-1/);
+    const owned=p.personalState(d,one).ownerships[0];
+    const remove=(origin='http://test',confirmation='DELETE')=>api.POST(new Request('http://test/api/personal',{method:'POST',headers:{origin,'Content-Type':'application/json'},body:JSON.stringify({action:'ownershipDelete',id:owned.id,confirmation})}));
+    assert.equal((await remove()).status,403);
+    actor=admin;assert.equal((await remove('http://evil')).status,403);
+    assert.equal((await remove()).status,409);
+    p.manageOwnership(d,admin,{action:'revoke',id:owned.id,confirmation:'REVOKE'});
+    assert.equal((await remove('http://test','')).status,400);
+    assert.equal((await remove()).status,200);
+    assert.equal((await remove()).status,404);
   }finally{d.close();}
 });
 

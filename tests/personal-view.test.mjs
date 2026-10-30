@@ -33,3 +33,22 @@ test('personal record adapter attaches the selected source and immutable version
   find(tree,n=>n.props['aria-label']==='校正 CSV').props.onChange({target:{value:'changed csv'}});
   assert.equal(updates.get(7),'changed csv');assert.equal(updates.get(8),null);
 });
+
+test('only admins see deletion for released ownerships and confirmation submits the frozen record',async()=>{
+  const ended={id:'released',device_id:'AL-1',email:'one@test',start:'2026-01-01',end:'2026-10-30',calibration_enabled:1};
+  const state={...data,ownerships:[ended,{...ended,id:'active',end:null,device_id:'AL-2'}]};
+  let {View}=view([state,false,'','','',null,'','',null,0,null,'']);
+  let tree=View({...props,admin:true});
+  assert.ok(find(tree,n=>n.props['aria-label']==='刪除歸屬紀錄 AL-1'));
+  assert.equal(find(tree,n=>n.props['aria-label']==='刪除歸屬紀錄 AL-2'),null);
+  ({View}=view([state,false,'','','',null,'','',null,0,null,'']));
+  tree=View(props);assert.equal(find(tree,n=>n.props['aria-label']==='刪除歸屬紀錄 AL-1'),null);
+  const calls=[];
+  ({View}=view([state,false,'','','',null,'','',null,0,{kind:'ownershipDelete',item:ended},'']));
+  tree=View({...props,admin:true});assert.equal(find(tree,n=>n.props.children==='確認').props.disabled,true);
+  ({View}=view([state,false,'','','',null,'','',null,0,{kind:'ownershipDelete',item:ended},'DELETE']));
+  tree=View({...props,admin:true,api:async(path,options)=>{if(options)calls.push(JSON.parse(options.body));return state;}});
+  assert.equal(find(tree,n=>n.props.children==='確認').props.disabled,false);
+  find(tree,n=>n.props.children==='確認').props.onClick();await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(calls,[{action:'ownershipDelete',id:'released',confirmation:'DELETE'}]);
+});

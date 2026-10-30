@@ -23,7 +23,7 @@ export async function POST(req:Request){try{
   switch(p.action){
     case 'claim':result=requestDevice(d,me,p);break;
     case 'review':result=reviewDevice(d,me,p);break;
-    case 'revoke':case 'calibrationPermission':result=manageOwnership(d,me,p);break;
+    case 'revoke':case 'calibrationPermission':case 'ownershipDelete':result=manageOwnership(d,me,p);break;
     case 'sourceSave':result=savePersonalSource(d,me,p);break;
     case 'sourceDelete':case 'sourceSettings':result=personalSourceAction(d,me,p);break;
     case 'preview':{const preview=previewPersonalCsv(d,me,p.csv);result={count:preview.count,records:preview.records.slice(0,100)};break;}
