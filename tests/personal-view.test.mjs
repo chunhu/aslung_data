@@ -52,3 +52,21 @@ test('only admins see deletion for released ownerships and confirmation submits 
   find(tree,n=>n.props.children==='確認').props.onClick();await new Promise(resolve=>setImmediate(resolve));
   assert.deepEqual(calls,[{action:'ownershipDelete',id:'released',confirmation:'DELETE'}]);
 });
+
+test('notes label and admin-only binding request deletion use the request ID rather than the ownership ID',async()=>{
+  const claim={id:'claim-1',device_id:'AL-1',email:'one@test',status:'APPROVED',note:''},state={...data,claims:[claim]};
+  let {View}=view([state,false,'','','',null,'','',null,0,null,'']);
+  let tree=View({...props,admin:true});
+  const html=renderToStaticMarkup(tree);assert.match(html,/備註\/說明/);assert.doesNotMatch(html,/購買／歸屬說明/);
+  assert.ok(find(tree,n=>n.props['aria-label']==='刪除綁定申請紀錄 AL-1'));
+  ({View}=view([state,false,'','','',null,'','',null,0,null,'']));
+  tree=View(props);assert.equal(find(tree,n=>n.props['aria-label']==='刪除綁定申請紀錄 AL-1'),null);
+  const calls=[];
+  ({View}=view([state,false,'','','',null,'','',null,0,{kind:'claimDelete',item:claim},'']));
+  tree=View({...props,admin:true});assert.equal(find(tree,n=>n.props.children==='確認').props.disabled,true);
+  ({View}=view([state,false,'','','',null,'','',null,0,{kind:'claimDelete',item:claim},'DELETE']));
+  tree=View({...props,admin:true,api:async(path,options)=>{if(options)calls.push(JSON.parse(options.body));return state;}});
+  assert.ok(renderToStaticMarkup(tree).includes('已核准的設備綁定與資料授權不受影響'));
+  find(tree,n=>n.props.children==='確認').props.onClick();await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(calls,[{action:'claimDelete',id:'claim-1',confirmation:'DELETE'}]);
+});

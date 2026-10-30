@@ -2,7 +2,7 @@ import {identity,writeGuard,fail,AppError} from '@/lib/server';
 import {getConnection} from '@/lib/store.mjs';
 import {CalibrationError} from '@/lib/calibration.mjs';
 import {fetchCalibrationCsv} from '@/lib/calibration-google.mjs';
-import {personalState,requestDevice,reviewDevice,manageOwnership,savePersonalSource,personalSourceAction,previewPersonalCsv,importPersonalCsv,personalRecords,personalRecordsCsv,mutatePersonalRecords,syncPersonalSource} from '@/lib/personal-calibration.mjs';
+import {personalState,requestDevice,reviewDevice,deleteDeviceClaim,manageOwnership,savePersonalSource,personalSourceAction,previewPersonalCsv,importPersonalCsv,personalRecords,personalRecordsCsv,mutatePersonalRecords,syncPersonalSource} from '@/lib/personal-calibration.mjs';
 export const runtime='nodejs';
 export const dynamic='force-dynamic';
 function failure(e:unknown){return e instanceof CalibrationError?Response.json({error:e.message},{status:e.status,headers:{'Cache-Control':'no-store'}}):fail(e);}
@@ -23,6 +23,7 @@ export async function POST(req:Request){try{
   switch(p.action){
     case 'claim':result=requestDevice(d,me,p);break;
     case 'review':result=reviewDevice(d,me,p);break;
+    case 'claimDelete':result=deleteDeviceClaim(d,me,p);break;
     case 'revoke':case 'calibrationPermission':case 'ownershipDelete':result=manageOwnership(d,me,p);break;
     case 'sourceSave':result=savePersonalSource(d,me,p);break;
     case 'sourceDelete':case 'sourceSettings':result=personalSourceAction(d,me,p);break;

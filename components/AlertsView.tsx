@@ -179,7 +179,7 @@ export default function AlertsView({
 
   return (
     <div className="space-y-6">
-      <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs leading-6 text-amber-900">從未上傳資料或斷線超過一年的設備僅保留警示，不列入通知信。會員可在側欄「告警收信設定」關閉收信；管理員亦可在會員管理調整。</p>
+      <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs leading-6 text-amber-900">從未上傳資料或斷線超過一年的設備僅保留警示，不列入通知信。會員可在側欄「通知收信設定」關閉收信；管理員亦可在會員管理調整。</p>
       {/* 1. Status & Control Panel */}
       <section className="panel p-6">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b pb-5 mb-5">
@@ -205,7 +205,7 @@ export default function AlertsView({
             <h2 className="text-lg font-bold text-slate-800 mt-2">{admin ? "設備斷線監控中心" : "授權與列管設備斷線監控"}</h2>
             <p className="text-xs text-slate-500 mt-0.5">
               {admin
-                ? `當目前使用中的設備超過 ${thresholdMins} 分鐘未回報數據時，系統將自動彙整斷線設備清單並寄送通知信給指定負責人（已移出或報廢/維修之設備不納入告警）。`
+                ? `當目前使用中的設備超過 ${thresholdMins} 分鐘未回報數據時，系統將自動彙整斷線設備清單並寄送通知信給指定負責人（已移出或報廢/維修之設備不納入通知）。`
                 : `顯示您被授權存取與負責列管之使用中設備連線狀況（共 ${inUseDevices.length} 台）。設備超過 ${thresholdMins} 分鐘未回報即判定為斷線。`}
             </p>
           </div>
@@ -214,7 +214,7 @@ export default function AlertsView({
               <>
                 <Button variant="default" disabled={checking} onClick={triggerCheckNow}>
                   <Send size={15} className={`mr-1.5 ${checking ? 'animate-spin' : ''}`} />
-                  {checking ? "檢查中…" : "立即檢查並發送告警"}
+                  {checking ? "檢查中…" : "立即檢查並發送通知"}
                 </Button>
                 <Button variant="outline" onClick={() => setModal("alertSettings")}>
                   <Settings size={15} className="mr-1.5" />
@@ -263,9 +263,9 @@ export default function AlertsView({
             </span>
           </div>
           <div className="p-3 bg-slate-50 rounded-lg border">
-            <span className="text-slate-400 block mb-1">上次告警發送時間</span>
+            <span className="text-slate-400 block mb-1">上次通知發送時間</span>
             <span className="font-mono text-slate-700">
-              {alertSettings?.last_alert_at ? localTime(alertSettings.last_alert_at) : "無告警紀錄"}
+              {alertSettings?.last_alert_at ? localTime(alertSettings.last_alert_at) : "無通知紀錄"}
             </span>
           </div>
         </div>
@@ -366,7 +366,7 @@ export default function AlertsView({
                   <Clock size={16} />
                   檢查執行日誌 (以每次檢查為單位) <span className="text-xs font-normal text-slate-500 font-mono">({displayChecks.length} 次檢查)</span>
                 </h3>
-                <p className="text-xs text-slate-500 mt-0.5">每次自動排程或手動檢查皆獨立記錄；點擊任一列日誌可展開查看斷線設備明細與告警信件發送狀況。</p>
+                <p className="text-xs text-slate-500 mt-0.5">每次自動排程或手動檢查皆獨立記錄；點擊任一列日誌可展開查看斷線設備明細與通知信件發送狀況。</p>
               </div>
               <div className="flex gap-2">
                 {admin && selectedChecks.size > 0 && setConfirmation && (
@@ -430,7 +430,7 @@ export default function AlertsView({
                       <TableHead>觸發方式</TableHead>
                       <TableHead>檢測總數</TableHead>
                       <TableHead>斷線設備</TableHead>
-                      <TableHead>告警狀態</TableHead>
+                      <TableHead>通知狀態</TableHead>
                       <TableHead>通知負責人</TableHead>
                       <TableHead className="text-center">操作</TableHead>
                     </TableRow>
@@ -511,7 +511,7 @@ export default function AlertsView({
                                     action: "alertCheckDelete",
                                     id: check.id,
                                     title: "刪除此筆檢查日誌？",
-                                    description: `確認刪除此筆檢查與其關聯的告警紀錄？此操作無法復原。`,
+                                    description: `確認刪除此筆檢查與其關聯的通知紀錄？此操作無法復原。`,
                                   });
                                 }}
                               >
@@ -530,7 +530,7 @@ export default function AlertsView({
         );
       })()}
 
-      {/* Detail Dialog: 點擊日誌後查看詳細告警資料 */}
+      {/* Detail Dialog: 點擊日誌後查看詳細通知資料 */}
       <Dialog open={!!selectedCheckDetail} onOpenChange={(v) => !v && setSelectedCheckDetail(null)}>
         <DialogContent className="bg-white sm:max-w-3xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
@@ -590,11 +590,11 @@ export default function AlertsView({
                   <div className="p-8 text-center bg-emerald-50/50 border border-emerald-200 rounded-lg">
                     <CheckCircle2 size={36} className="mx-auto text-emerald-600 mb-2" />
                     <h4 className="font-bold text-slate-800 text-sm">該次檢查所有使用中設備均正常連線</h4>
-                    <p className="text-xs text-slate-500 mt-1">未發現超過斷線門檻之設備，未觸發告警通知信。</p>
+                    <p className="text-xs text-slate-500 mt-1">未發現超過斷線門檻之設備，未觸發通知信。</p>
                   </div>
                 ) : (
                   <div>
-                    <h4 className="text-xs font-bold text-slate-700 mb-2">斷線設備清單與告警通知明細 ({checkLogs.length} 筆)</h4>
+                    <h4 className="text-xs font-bold text-slate-700 mb-2">斷線設備清單與通知明細 ({checkLogs.length} 筆)</h4>
                     <div className="border rounded-lg overflow-hidden">
                       <Table>
                         <TableHeader>

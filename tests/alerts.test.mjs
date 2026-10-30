@@ -6,6 +6,7 @@ import * as crypto from 'node:crypto';
 import ts from 'typescript';
 import * as policy from '../lib/alert-policy.mjs';
 import * as maintainerLinks from '../lib/maintainer-links.mjs';
+import * as notification from '../lib/offline-notification.mjs';
 
 function loadTs(path, dependencies) {
   const source=readFileSync(new URL(path,import.meta.url),'utf8');
@@ -56,6 +57,7 @@ function fixture(query, send) {
     })})},
     '@/lib/utils':{formatOfflineDuration:mins=>`${mins} minutes`},
     './alert-policy.mjs':policy,'./maintainer-links.mjs':maintainerLinks,
+    './offline-notification.mjs':notification,
     './alert-lock':locks
   };
   return {sql,store,mails,load:()=>loadTs('../lib/alerts.ts',deps)};
@@ -126,6 +128,9 @@ test('query failure is unknown, empty data is offline, and email/log counts use 
     const result=await f.load().checkAndSendOfflineAlerts();
     assert.equal(result.offlineCount,2);assert.equal(result.unknownCount,1);
     assert.equal(f.mails.length,1);assert.match(f.mails[0].subject,/共 1 台/);
+    assert.match(f.mails[0].subject,/設備斷線通知/);assert.match(f.mails[0].subject,/Device Disconnection Notification/);
+    assert.match(f.mails[0].html,/Location/);assert.match(f.mails[0].text,/Please check the device power supply/);
+    assert.doesNotMatch(f.mails[0].subject+f.mails[0].html+f.mails[0].text,/設備斷線告警/);
     assert.match(f.mails[0].html,new RegExp(`檢查編號：${result.checkId}`));
     const logs=f.sql.prepare('SELECT * FROM alert_logs ORDER BY aslung_id').all();
     assert.equal(logs.find(l=>l.aslung_id==='error').status,'UNKNOWN');
@@ -181,7 +186,7 @@ test('server bundles initialize only one background timer',()=>{
 test('startup hook starts scheduling without a browser and skips build workers',async()=>{
   const runtime=process.env.NEXT_RUNTIME,phase=process.env.NEXT_PHASE;
   let starts=0;
-  const hook=loadTs('../instrumentation.ts',{'./lib/alerts':{initAlertCron(){starts++;}},'./lib/calibration-cron':{initCalibrationCron(){}}});
+  const hook=loadTs('../instrumentation.ts',{'./lib/alerts':{initAlertCron(){starts++;}},'./lib/calibration-cron':{initCalibrationCron(){}},'./lib/personal-cron':{initPersonalCron(){}}});
   try {
     process.env.NEXT_RUNTIME='nodejs';
     process.env.NEXT_PHASE='phase-production-build';

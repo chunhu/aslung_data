@@ -85,6 +85,25 @@ test('only admins can delete released ownership records; grants, transfer bounda
     assert.throws(()=>p.reviewDevice(d,admin,{id:claim.id,decision:'approve',confirmed:true,calibration_enabled:true,start:'2025-01-01T00:00:00Z'}),/交接時間/);
   }finally{d.close();}
 });
+test('deleting binding requests keeps approved ownerships and grants, cancels pending review and permits reapplication',()=>{
+  const d=fixture();try{
+    bind(d);const claim=p.personalState(d,one).claims[0];
+    const owners=d.prepare('SELECT * FROM device_ownerships').all(),grants=d.prepare('SELECT * FROM grants').all();
+    assert.throws(()=>p.deleteDeviceClaim(d,one,{id:claim.id,confirmation:'DELETE'}),/只有系統管理員/);
+    assert.throws(()=>p.deleteDeviceClaim(d,admin,{id:claim.id,confirmation:''}),/DELETE/);
+    p.deleteDeviceClaim(d,admin,{id:claim.id,confirmation:'DELETE'});
+    assert.equal(p.personalState(d,one).claims.length,0);
+    assert.deepEqual(d.prepare('SELECT * FROM device_ownerships').all(),owners);
+    assert.deepEqual(d.prepare('SELECT * FROM grants').all(),grants);
+    assert.ok(d.prepare("SELECT 1 FROM personal_events WHERE action='DELETE_DEVICE_CLAIM' AND actor=?").get(admin.email));
+    assert.throws(()=>p.deleteDeviceClaim(d,admin,{id:claim.id,confirmation:'DELETE'}),/找不到/);
+    p.requestDevice(d,two,{device_id:'AL-2',evidence:'Notes'});const pending=p.personalState(d,two).claims[0];
+    p.deleteDeviceClaim(d,admin,{id:pending.id,confirmation:'DELETE'});
+    assert.equal(d.prepare('SELECT status FROM device_claims WHERE id=?').get(pending.id).status,'CANCELLED');
+    assert.throws(()=>p.reviewDevice(d,admin,{id:pending.id,decision:'approve',confirmed:true,calibration_enabled:true,start:'2026-01-01T00:00:00Z',create_device:true}),/已處理/);
+    p.requestDevice(d,two,{device_id:'AL-2',evidence:'Reapply'});assert.equal(p.personalState(d,two).claims.length,1);
+  }finally{d.close();}
+});
 test('private imports validate ownership and permissions; foreign IDs and version guessing never disclose parameters',()=>{
   const d=fixture();try{
     const owned=bind(d);bind(d,two,'AL-2');const id=source(d),other=source(d,two);const first=upload(d,id);const second=upload(d,other,two,csv('AL-2',8));
@@ -176,6 +195,10 @@ test('personal API rejects CSRF, unauthorized writes and cross-member record dow
     assert.equal((await remove('http://test','')).status,400);
     assert.equal((await remove()).status,200);
     assert.equal((await remove()).status,404);
+    const claim=p.personalState(d,one).claims[0];
+    const removeClaim=(origin='http://test')=>api.POST(new Request('http://test/api/personal',{method:'POST',headers:{origin},body:JSON.stringify({action:'claimDelete',id:claim.id,confirmation:'DELETE'})}));
+    actor=one;assert.equal((await removeClaim()).status,403);
+    actor=admin;assert.equal((await removeClaim('http://evil')).status,403);assert.equal((await removeClaim()).status,200);
   }finally{d.close();}
 });
 

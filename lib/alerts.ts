@@ -3,7 +3,7 @@ import {explicitAlertRecipients} from './maintainer-links.mjs';
 import nodemailer from "nodemailer";
 import { db, syncDeviceStatusesAndLocations } from "@/lib/server";
 import { getPool } from "@/lib/data";
-import { formatOfflineDuration } from "@/lib/utils";
+import {buildOfflineNotification} from './offline-notification.mjs';
 import { acquireAlertLock } from "./alert-lock";
 
 export interface AlertResult {
@@ -333,57 +333,12 @@ async function runOfflineAlertCheck(store: ReturnType<typeof db>, options: { for
       errorMessage = explicitRecipients!==null?"維護身分未關聯可收信的啟用會員，或收件會員已關閉告警通知，僅保留畫面警示":"收件會員已關閉告警通知或帳號已停用，僅保留畫面警示";
     } else if (hasSmtp && transporter && targetEmail) {
       try {
-        const rowsHtml = items.map(it => `
-          <tr style="border-bottom: 1px solid #e2e8f0;">
-            <td style="padding: 8px 12px; font-weight: bold; font-family: monospace;">${it.aslung_id}</td>
-            <td style="padding: 8px 12px;">${it.lab_id}</td>
-            <td style="padding: 8px 12px; color: #dc2626; font-weight: bold;">
-              ${it.offline_mins >= 99999 && !it.last_seen ? "從未上傳" : `斷線約 ${formatOfflineDuration(it.offline_mins, false, it.last_seen)}`}
-            </td>
-            <td style="padding: 8px 12px; font-family: monospace; font-size: 12px; color: #64748b;">
-              ${it.last_seen ? new Date(it.last_seen).toLocaleString("zh-TW", { timeZone: "Asia/Taipei" }) : "從未上傳"}
-            </td>
-          </tr>
-        `).join("");
-
-        const mailHtml = `
-          <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 650px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px;">
-            <h2 style="color: #0f766e; margin-top: 0;">ASLUNG 設備斷線告警通知</h2>
-            <p style="color: #334155; font-size: 14px;">
-              您好 <strong>${mName}</strong>，<br/>
-              系統於定期監控檢查中發現，由您負責維護的 <strong>使用中 ASLUNG 設備</strong> 共有 <strong>${items.length} 台</strong> 已超過斷線門檻（${thresholdMins} 分鐘）未接收到新上傳數據。
-            </p>
-            <table style="width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 13px; text-align: left;">
-              <thead>
-                <tr style="background-color: #f8fafc; border-bottom: 2px solid #cbd5e1;">
-                  <th style="padding: 8px 12px;">ASLUNG ID</th>
-                  <th style="padding: 8px 12px;">目前位置</th>
-                  <th style="padding: 8px 12px;">離線時間</th>
-                  <th style="padding: 8px 12px;">最後上傳時間 (UTC+8)</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${rowsHtml}
-              </tbody>
-            </table>
-            <div style="background-color: #fef2f2; border-left: 4px solid #ef4444; padding: 12px 16px; margin: 20px 0; font-size: 12px; color: #991b1b;">
-              請儘速確認儀器電源、Wi-Fi 網路訊號連線狀況與現場設置環境。
-            </div>
-            <p style="font-size: 11px; color: #94a3b8; border-top: 1px solid #e2e8f0; padding-top: 12px; margin-bottom: 0;">
-              檢查編號：${checkId}；判定時間：${now.toLocaleString("zh-TW", { timeZone: "Asia/Taipei" })}（UTC+8）。<br/>
-              ${queryErrors.size ? `本次另有 ${queryErrors.size} 台設備查詢失敗，未計入斷線數量。<br/>` : ""}
-              此郵件由 ASLUNG 空氣品質監測系統發送，請勿直接回覆。
-            </p>
-          </div>
-        `;
-
+        const message=buildOfflineNotification({maintainer:mName,items,thresholdMins,checkId,checkedAt:now,unknownCount:queryErrors.size});
         await transporter.sendMail({
-          from: settings.smtp_from || `"ASLUNG 系統告警" <${settings.smtp_user}>`,
+          from: settings.smtp_from || `"ASLUNG 系統通知 / ASLUNG Notifications" <${settings.smtp_user}>`,
           to: targetEmail,
-          subject: `[ASLUNG 設備斷線告警] 負責設備共 ${items.length} 台斷線超過 ${thresholdMins} 分鐘提醒 (負責人：${mName})`,
-          html: mailHtml,
+          ...message,
         });
-
         status = "SENT";
       } catch (err: any) {
         console.error(`Failed to send alert email to ${targetEmail}:`, err);
