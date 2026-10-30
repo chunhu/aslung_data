@@ -186,7 +186,7 @@ test('server bundles initialize only one background timer',()=>{
 test('startup hook starts scheduling without a browser and skips build workers',async()=>{
   const runtime=process.env.NEXT_RUNTIME,phase=process.env.NEXT_PHASE;
   let starts=0;
-  const hook=loadTs('../instrumentation.ts',{'./lib/alerts':{initAlertCron(){starts++;}},'./lib/calibration-cron':{initCalibrationCron(){}},'./lib/personal-cron':{initPersonalCron(){}}});
+  const hook=loadTs('../instrumentation.ts',{'./lib/alerts':{initAlertCron(){starts++;}},'./lib/calibration-cron':{initCalibrationCron(){}},'./lib/personal-cron':{initPersonalCron(){}},'./lib/fleet-sync-cron':{initFleetSyncCron(){}}});
   try {
     process.env.NEXT_RUNTIME='nodejs';
     process.env.NEXT_PHASE='phase-production-build';

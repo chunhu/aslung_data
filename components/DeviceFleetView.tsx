@@ -64,7 +64,7 @@ export default function DeviceFleetView(p:Props){
   const action=(fn:()=>void)=>{setDetailId(null);fn();};
   return <div className="space-y-5">
     <div className="flex flex-wrap items-center justify-between gap-3">
-      <div><div className="text-[11px] font-semibold tracking-[0.16em] text-teal-700">FLEET OVERVIEW</div><h2 className="mt-1 text-xl font-semibold text-slate-900">每台設備，都有清楚的下一步</h2><p className="mt-1 text-xs text-slate-500">檢視部署與連線狀態，集中處理需要關注的設備。</p></div>
+      <div><div className="text-[11px] font-semibold tracking-[0.16em] text-teal-700">FLEET OVERVIEW</div><h2 className="mt-1 text-xl font-semibold text-slate-900">每台設備，都有清楚的軌跡記錄</h2><p className="mt-1 text-xs text-slate-500">檢視部署與連線狀態，集中處理需要關注的設備。</p></div>
       <div className="flex flex-wrap gap-2"><Button variant="ghost" onClick={p.onLegacyImport}>匯入設備編號</Button><Button variant="outline" onClick={p.onGoogle}><CloudDownload size={15}/>同步試算表</Button><Button variant="outline" onClick={p.onImport}><FileSpreadsheet size={15}/>匯入預覽</Button><Button onClick={p.onCreate}><Plus size={15}/>新增設備</Button></div>
     </div>
     <div className="grid grid-cols-2 gap-3 xl:grid-cols-5">

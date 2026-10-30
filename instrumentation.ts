@@ -6,5 +6,7 @@ export async function register() {
     initCalibrationCron();
     const { initPersonalCron } = await import('./lib/personal-cron');
     initPersonalCron();
+    const {initFleetSyncCron}=await import('./lib/fleet-sync-cron');
+    initFleetSyncCron();
   }
 }
