@@ -1,7 +1,7 @@
 "use client";
 import {useEffect,useState} from 'react';
 
-export const WORKSPACE_SECTIONS=['news','articles','realtime','data','devices','maintenance','calibration','hobo','members','permissions','locations','labs','maintainers','alerts','files','connection'];
+export const WORKSPACE_SECTIONS=['news','articles','realtime','data','devices','maintenance','calibration','personal','hobo','members','permissions','locations','labs','maintainers','alerts','files','connection'];
 export default function useWorkspaceSection(){
   const [section,setSection]=useState('data');
   const [restored,setRestored]=useState(false);

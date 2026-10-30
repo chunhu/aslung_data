@@ -17,7 +17,9 @@ function protectMaintenanceHistory(ids:string[]){
 }
 function deleteDevicesWithHistoryProtection(ids:string[]){
   const d=getConnection();d.exec('BEGIN IMMEDIATE');
-  try{protectMaintenanceHistory(ids);for(const id of ids){
+  try{protectMaintenanceHistory(ids);
+    if(d.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='device_ownerships'").get())for(const id of ids)if(d.prepare('SELECT 1 FROM device_ownerships WHERE device_id=? LIMIT 1').get(id))throw new AppError(409,`設備 ${id} 已有會員歸屬紀錄，請改為停用或報廢以保留交接歷史。`);
+    for(const id of ids){
     d.prepare('DELETE FROM grants WHERE device_id=?').run(id);
     d.prepare('DELETE FROM device_locations WHERE aslung_id=?').run(id);
     d.prepare('DELETE FROM devices WHERE id=?').run(id);
@@ -89,7 +91,7 @@ export async function GET(request:Request){try{
  const m=await identity();const isAdmin=m.role==="admin";
  // Keep legacy clients compatible; the workspace requests only its current page.
  const scope=request?new URL(request.url).searchParams.get('scope')||'full':'full';
- const scopes=['full','bootstrap','news','articles','realtime','data','devices','maintenance','calibration','hobo','members','permissions','locations','labs','maintainers','alerts','files','connection'];
+ const scopes=['full','bootstrap','news','articles','realtime','data','devices','maintenance','calibration','personal','hobo','members','permissions','locations','labs','maintainers','alerts','files','connection'];
  if(!scopes.includes(scope))throw new AppError(400,'無效的工作空間頁面。');
  const needs=(...pages:string[])=>scope==='full'||pages.includes(scope);
  const needDevices=needs('realtime','data','devices','permissions','locations','labs','maintainers','alerts','members');

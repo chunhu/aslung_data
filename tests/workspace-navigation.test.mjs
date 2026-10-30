@@ -22,7 +22,7 @@ function fixture(t,{stored={},blocked=false,context={}}={}){
  return {views,ctx,storage,writes,render,flush,get tree(){return tree;}};
 }
 function find(node,predicate){if(!React.isValidElement(node))return null;if(predicate(node))return node;for(const child of React.Children.toArray(node.props.children)){const found=find(child,predicate);if(found)return found;}return null;}
-const items=['news','articles','files','realtime','data','hobo','devices','locations','labs','maintainers','maintenance','calibration','alerts','members','permissions','connection'].map(id=>({id,name:id,icon:()=>null}));
+const items=['news','articles','files','realtime','data','hobo','personal','devices','locations','labs','maintainers','maintenance','calibration','alerts','members','permissions','connection'].map(id=>({id,name:id,icon:()=>null}));
 const group=(tree,id)=>find(tree,node=>node.type==='button'&&node.props['aria-controls']==='menu-group-'+id);
 
 test('navigation groups cover every destination exactly once and hide empty unauthorized groups',t=>{

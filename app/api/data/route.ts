@@ -24,7 +24,7 @@ export async function GET(r: Request) {
           : fetchPage(id, start, end, cursor, limit);
 
         const calibrationMode=url.searchParams.get("calibration")||"raw";
-        if(!["raw","both","processed"].includes(calibrationMode))throw new AppError(400,"校正模式僅支援 raw、both 或 processed。");
+        if(!["raw","both","processed","personal"].includes(calibrationMode))throw new AppError(400,"校正模式僅支援 raw、both、personal 或 processed。");
         if(calibrationMode==='processed'){
             if(m.role!=='admin'&&Date.parse(end)-Date.parse(start)>31*86400000)throw new AppError(400,'一般會員查詢與下載不可超過 31 天。');
             if(url.searchParams.get('download')==='1'&&!canExportData(m))throw new AppError(403,'檢視會員沒有下載權限。');
@@ -36,6 +36,13 @@ export async function GET(r: Request) {
         }
         let calibrationSnapshot="";
         let transform=(rows:Record<string,unknown>[])=>rows;
+        if(calibrationMode==='personal'){
+            const {personalQueryRecords}=await import('@/lib/personal-calibration.mjs');
+            const {calibrateRows}=await import('@/lib/calibration.mjs');
+            const {getConnection}=await import('@/lib/store.mjs');
+            try{const result=personalQueryRecords(getConnection(),m,id,url.searchParams.get('calibration_snapshot'));calibrationSnapshot=result.snapshot;transform=rows=>calibrateRows(rows,result.records).map((row:Record<string,unknown>)=>({...row,_calibration_scope:'personal'}));}
+            catch(e){throw new AppError((e as any).status||500,(e as Error).message);}
+        }
         if(calibrationMode==="both"){
             const {currentCalibrationRecords,ensureCalibrationSchema,calibrateRows}=await import("@/lib/calibration.mjs");
             const {getConnection}=await import("@/lib/store.mjs");

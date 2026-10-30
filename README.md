@@ -170,7 +170,17 @@ HTTP 測試自動選擇空閒本機埠，使用臨時 SQLite / 帳號，結束�
 - 此偏好僅影響設備斷線告警，不影響註冊驗證及帳號審核信。通知負責人數與最後告警寄送時間以實際成功寄送為準。
 
 
-### 多來源校正管理
+### 會員專屬設備與校正（試用版）
+
+研究會員與系統管理員可開啟側欄「設備管理 → 我的設備與校正」。會員提交 ASLUNG ID 與購買／歸屬說明，管理員在同頁核對設備及資料接收設定，指定資料可讀起日（UTC），選擇是否開啟個人校正權限，再核准綁定；尚未建檔者可明確勾選一併建立設備。核准會建立獨立的設備資料授權，不會設定硬體上傳或改寫 MySQL。單台設備同時只允許一位擁有者。解除綁定需輸入 `REVOKE`，只結束該綁定建立的授權，保留其他獨立授權及歷史；移轉給新會員的資料起日不可早於前次交接時間。
+
+「我的校正參數」支援 Google 試算表分頁（沿用伺服器唯讀服務帳號／可讀 CSV）及上傳或貼上 CSV。CSV 先檢查與預覽再套用，提供範本；每個檔案最多 2 MB、5000 筆，每位會員最多 20 個有效來源。僅接受目前已核准歸屬且開啟個人校正權限的設備。Google 可選每日臺灣時間 02:00 同步，伺服器每分鐘檢查到期來源；失敗保留舊版本。編輯及單筆／本頁批量刪除建立新版本，歷史唯讀；手動修改後預設阻擋 Google 覆蓋，可勾選來源的覆蓋許可。刪除來源採封存，保留歷史版本與稽核。個人參數完全獨立於官方參數及背景六項工作。
+
+量測查詢及 ZIP 下載可選「原始值＋我的校正參數」。API 使用 `/api/data?calibration=personal`，分頁／下載帶回 `calibration_snapshot=personal:<版本編號列表>` 固定參數。會員只能引用本人版本，且每次重新驗證設備歸屬、個人校正權限與原有量測資料授權；撤銷權限立即生效。缺係數顯示 `NO_FACTOR`，不改套官方值，輸出含 `_calibration_scope=personal` 與各通道版本欄位。此階段不提供會員個人背景六項重算、會員自行分享／移轉或自動驗證硬體上傳；分享與移轉由管理員依授權及交接流程處理。
+
+Research members can request ownership binding under **My devices and calibration**. Administrators verify the device and ingestion setup, approve the UTC data-access start and enable personal calibration per device. Ownership and measurement grants remain separate, transfers cannot overlap previous ownership periods, and releasing ownership closes only its associated grant. Personal Google/CSV sources and immutable versions are stored separately from official coefficients. CSV supports validation, preview, a template and version export. Google supports opt-in daily synchronization with manual-change protection. Query/export with `calibration=personal` and return the `personal:` snapshot to pin versions. Ownership, calibration permission and measurement access are checked on every request; other members' versions are never accessible. Missing private coefficients produce `NO_FACTOR` without official fallback. Personal six-rule background processing is outside this first release.
+
+### 官方多來源校正管理
 
 管理員可在「校正管理」新增多個 Google 試算表分頁網址、名稱與說明，手動同步、啟用或停用來源，查詢全部設備與歷史版本。此功能不會建立或改動設備授權，不會改寫 MySQL 原始量測資料；現有 admin/member 分級維持不變。
 
@@ -299,6 +309,23 @@ docker compose --profile calibration up -d --build calibration-worker
 
 CSV ZIP 內含一個 .csv，JSON ZIP 內含一個 .json，JSON 仍保留設備、授權期間、校正快照與 data 欄位。批次下載先接收每台設備的伺服器 ZIP，再合併為單份 ZIP（CSV／JSON 與清單並列，無巢狀壓縮檔）。不包含檔案專區、附件、QR 圖片及錯誤報告等其他下載功能。下載仍需原本的設備／期間／背景資料授權；viewer 僅能查詢。
 ### 部署校正分支到 EC2
+
+部署前及回退前可先執行完整的「本機應用程式備份」（需要短暫停止網站與 worker）：
+
+```bash
+cd ~/aslung-deployment/aslung_data
+sudo bash scripts/backup_ec2.sh
+# 指定專案外的備份磁碟目錄；映像較大，請事先確認磁碟空間。
+sudo bash scripts/backup_ec2.sh --output /mnt/backup/aslung
+# 省略容器映像（回退時必須另有映像或重新建置）：
+sudo bash scripts/backup_ec2.sh --skip-images
+```
+
+預設備份至專案上層的 `aslung-backups/<UTC時間>-<程序編號>/`，每次使用新目錄，不覆蓋或自動刪除舊備份。包含獨立且完成完整性檢查的 `aslung.sqlite`、`app-data.tar.gz`（整個 `/app/data`：含本機校正／HOBO 資料、上傳檔及原資料庫檔）、`.env`、`compose.yaml`、Git HEAD 程式封存與已追蹤修改補丁，以及目前實際容器映像（預設包含）。`git-commit.txt` 是目前 checkout 的版本，不一定等於已部署映像；`images.txt` 記錄實際容器映像 ID。未追蹤／ignored 原始碼、遠端 MySQL、S3 物件、EC2 主機設定、外部憑證檔與既有備份 volume 不在範圍內；雲端資料需另有獨立備份策略。
+
+腳本與部署共用鎖，拒絕同時執行。先保存設定／映像，再停止原本運行的寫入服務，以原容器映像及唯讀掛載讀取 SQLite 和 `/app/data`，不匯入應用程式或觸發 schema migration。備份完成／失敗均嘗試以原容器恢復運行，不重新建立容器、不更新 Git、不刪除 volumes；失敗會保留未完成檔案供檢查。只有封存檔、SQLite、SHA-256 檢查及服務恢復成功後才留下 `COMPLETE`。意外斷電或 SIGKILL 無法執行復原處理，需自行檢查並恢復容器。
+
+在備份目錄執行 `sha256sum --check SHA256SUMS` 驗證檔案未變動，並確認存在 `COMPLETE`；將整份目錄另存到其他電腦或受保護儲存空間。目錄限制為 700、檔案為 600，包含 `.env` 密鑰，不可提交 Git 或公開分享。還原須另行停止寫入服務，將本機檔案與資料庫作為同一份快照處理，依 `database-path.txt` 確認資料庫位置；不得在網站運行中直接覆蓋 SQLite。此腳本只備份，不執行還原。
 
 在既有 Ubuntu EC2 專案中取得 `scripts/deploy_cal.sh` 後執行：
 

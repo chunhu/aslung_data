@@ -4,5 +4,7 @@ export async function register() {
     initAlertCron();
     const { initCalibrationCron } = await import("./lib/calibration-cron");
     initCalibrationCron();
+    const { initPersonalCron } = await import('./lib/personal-cron');
+    initPersonalCron();
   }
 }
