@@ -13,6 +13,10 @@
 
 ## 設備維修保養
 
+維護人員名冊的新增／編輯表單提供「接收斷線通知」，名冊顯示「接收／已停寄」。既有與新建人員預設接收；關閉後該維護人員的手動、定期斷線通知皆不寄送，包含關聯會員與測試信箱，仍保留畫面警示及略過寄送的紀錄。此設定不需要會員帳號，也不影響其他維護人員。Google 試算表同步會保留網站設定，不會重新開啟；重新勾選並儲存即可恢復（仍須符合會員收信偏好及既有寄信條件）。
+
+The maintainer directory's add/edit form includes “Receive disconnection notifications,” enabled by default. Disabling it suppresses manual and scheduled disconnection emails for that maintainer, including linked accounts and test addresses, while retaining on-screen warnings and skipped-delivery logs. No member account is required. Google Sheet synchronization preserves this preference. Re-enabling remains subject to member opt-outs and existing delivery rules.
+
 設備清單可點擊狀態、目前地點或負責人快速更新，先檢查變更再確認儲存，原編輯／移轉入口仍保留。地點提供可搜尋的已建檔地點選單，可設定負責人及依所選時區填寫生效時間；移轉會結束舊部署並建立新部署，快速更新不接受未來日期、重疊期間或重複部署。未部署設備需先建立部署才能快速指派負責人。狀態改為維修中時可勾選同時建立維修單；未結案維修單會阻止快速改為待命或重新部署。快速操作僅限管理員，並檢查狀態與目前部署是否已被其他操作變更，避免覆寫更新。
 
 「維修保養」選單提供跨設備總覽；設備履歷中的「維修保養」頁籤可查看單台紀錄。支援故障維修、定期保養、校正與更換零件，依待處理、處理中、待驗收、已完成流程更新，也可填寫原因後取消。可依設備、主旨、負責人、廠商、類型、進度及到期日期篩選。

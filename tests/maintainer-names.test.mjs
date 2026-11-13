@@ -1,3 +1,4 @@
+import {ensureMaintainerNotificationSchema} from '../lib/alert-policy.mjs';
 import * as realtimeSettings from '../lib/realtime-settings.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
@@ -27,15 +28,16 @@ test('maintainer list protects names from translation, removes initials, and sea
    '@/components/ui/table':Object.fromEntries(Object.entries({Table:'table',TableHeader:'thead',TableRow:'tr',TableHead:'th',TableBody:'tbody',TableCell:'td'}).map(([key,type])=>[key,tag(type)])),
    '@/components/ui/empty':Object.fromEntries(['Empty','EmptyHeader','EmptyTitle','EmptyDescription','EmptyMedia'].map(k=>[k,tag('div')]))
  }).default;
- const people=[{name:'維護甲',english_name:'Complete English Name',email:'tech@example.test'}];
+ const people=[{name:'維護甲',english_name:'Complete English Name',email:'tech@example.test',offline_email_enabled:0}];
  const props={maintainers:people,devices:[],locations:[],realtimeData:[],search:'complete',setSearch:()=>{},selectedMaintainers:new Set(),setSelectedMaintainers:()=>{},setEditMaintainer:()=>{},setModal:()=>{},setConfirmation:()=>{}};
  const render=en=>renderToStaticMarkup(React.createElement(nameComponents.MaintainerNamesProvider,{maintainers:people,isEnglish:en},React.createElement(View,props)));
  assert.match(render(true),/translate="no" class="notranslate">Complete English Name<\/span>/);
- assert.match(render(false),/>維護甲<\/span>/);assert.doesNotMatch(render(true),/w-7 h-7/);
+ assert.match(render(false),/>維護甲<\/span>/);assert.match(render(false),/已停寄/);assert.match(render(false),/接收斷線通知/);assert.doesNotMatch(render(true),/w-7 h-7/);
 });
 
 test('maintainer API saves English names and sheet sync without the column preserves manual names',async()=>{
  const d=new DatabaseSync(':memory:');d.exec(`CREATE TABLE maintainers(name TEXT PRIMARY KEY,email TEXT,email_test TEXT,phone TEXT,notes TEXT,created_at TEXT,english_name TEXT NOT NULL DEFAULT '');`);
+ ensureMaintainerNotificationSchema(d);
  class AppError extends Error{constructor(status,message){super(message);this.status=status;}}
  let role='admin',csv='maintainer,mail,mail_test\n維護甲,new@example.test,';
  const store={prepare(sql){let args=[];return {bind(...v){args=v;return this;},async run(){return d.prepare(sql).run(...args);},async all(){return {results:d.prepare(sql).all(...args)};}};}};
@@ -49,10 +51,19 @@ test('maintainer API saves English names and sheet sync without the column prese
    const input={action:'maintainer',name:'維護甲',email:'old@example.test',english_name:'Complete English Name'};
    role='member';assert.equal((await post(input)).status,403);role='admin';
    assert.equal((await post(input)).status,200);
+   assert.equal(d.prepare('SELECT offline_email_enabled FROM maintainers').get().offline_email_enabled,1);
+   assert.equal((await post({...input,offline_email_enabled:'false'})).status,400);
+   role='member';assert.equal((await post({...input,offline_email_enabled:false})).status,403);role='admin';
+   assert.equal((await post({...input,offline_email_enabled:false})).status,200);
+   assert.equal(d.prepare('SELECT offline_email_enabled FROM maintainers').get().offline_email_enabled,0);
+   // Older clients and Google sync must preserve a deliberate opt-out.
+   assert.equal((await post(input)).status,200);
+   assert.equal(d.prepare('SELECT offline_email_enabled FROM maintainers').get().offline_email_enabled,0);
    assert.equal((await post({...input,english_name:'X'.repeat(161)})).status,400);
    assert.equal((await post({action:'maintainerSyncGoogle'})).status,200);
    assert.equal(d.prepare('SELECT english_name FROM maintainers').get().english_name,'Complete English Name');
    assert.equal(d.prepare('SELECT email FROM maintainers').get().email,'new@example.test');
+   assert.equal(d.prepare('SELECT offline_email_enabled FROM maintainers').get().offline_email_enabled,0);
    csv='maintainer,mail,english_name\n維護甲,new@example.test,Updated Full Name';
    assert.equal((await post({action:'maintainerSyncGoogle'})).status,200);
    assert.equal(d.prepare('SELECT english_name FROM maintainers').get().english_name,'Updated Full Name');
@@ -78,5 +89,8 @@ test('maintainer API saves English names and sheet sync without the column prese
    assert.equal(d.prepare('SELECT english_name FROM maintainers').get().english_name,'Updated Full Name');
    assert.equal((await post({...input,english_name:''})).status,200);
    assert.equal(d.prepare('SELECT english_name FROM maintainers').get().english_name,'');
+   assert.equal(d.prepare('SELECT offline_email_enabled FROM maintainers').get().offline_email_enabled,0);
+   assert.equal((await post({...input,offline_email_enabled:true})).status,200);
+   assert.equal(d.prepare('SELECT offline_email_enabled FROM maintainers').get().offline_email_enabled,1);
  }finally{globalThis.fetch=oldFetch;d.close();}
 });

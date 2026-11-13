@@ -63,6 +63,55 @@ function fixture(query, send) {
   return {sql,store,mails,load:()=>loadTs('../lib/alerts.ts',deps)};
 }
 
+test('maintainer notification migration preserves existing records, defaults to enabled and is repeatable',()=>{
+  const f=fixture();try{
+    policy.ensureMaintainerNotificationSchema(f.sql);
+    assert.equal(f.sql.prepare('SELECT offline_email_enabled FROM maintainers').get().offline_email_enabled,1);
+    f.sql.exec('UPDATE maintainers SET offline_email_enabled=0');
+    policy.ensureMaintainerNotificationSchema(f.sql);
+    assert.equal(f.sql.prepare('SELECT offline_email_enabled FROM maintainers').get().offline_email_enabled,0);
+    assert.equal(f.sql.prepare('SELECT email FROM maintainers').get().email,'owner@example.test');
+    assert.throws(()=>f.sql.exec('UPDATE maintainers SET offline_email_enabled=2'),/CHECK/);
+  }finally{f.sql.close();}
+});
+
+for(const mode of ['scheduled','manual','test-routing','linked-member'])test(`maintainer-level opt-out prevents all SMTP routing: ${mode}`,async()=>{
+  const f=fixture();try{
+    policy.ensureMaintainerNotificationSchema(f.sql);
+    f.sql.exec('UPDATE maintainers SET offline_email_enabled=0');
+    if(mode==='test-routing')f.sql.exec("UPDATE alert_settings SET use_test_email=1; UPDATE maintainers SET email_test='alternate@example.test'");
+    if(mode==='linked-member'){
+      f.sql.exec("ALTER TABLE members ADD COLUMN user_id TEXT; CREATE UNIQUE INDEX member_ids ON members(user_id); INSERT INTO members VALUES('linked@example.test',1,1,'linked');");
+      maintainerLinks.ensureMaintainerLinkSchema(f.sql);
+      const id=f.sql.prepare('SELECT maintainer_id FROM maintainers').get().maintainer_id;
+      f.sql.prepare('INSERT INTO member_maintainer_links VALUES(?,?,?,?)').run('linked',id,'admin@test',new Date().toISOString());
+    }
+    const result=await f.load().checkAndSendOfflineAlerts({force:mode!=='scheduled'});
+    assert.equal(f.mails.length,0);assert.equal(result.notifiedMaintainers,0);assert.equal(result.offlineCount,2);
+    const logs=f.sql.prepare("SELECT * FROM alert_logs WHERE error_message LIKE '維護人員已關閉%'").all();
+    assert.equal(logs.length,1);assert.equal(logs[0].status,'SKIPPED');
+    // Re-enabling the maintainer does not require an account for the legacy route.
+    f.sql.exec('UPDATE maintainers SET offline_email_enabled=1');
+    await f.load().checkAndSendOfflineAlerts({force:true});
+    assert.equal(f.mails.length,1);
+    assert.equal(f.mails[0].to,mode==='test-routing'?'alternate@example.test':mode==='linked-member'?'linked@example.test':'owner@example.test');
+  }finally{f.sql.close();}
+});
+
+test('disabling one maintainer leaves another maintainer with the same address enabled',async()=>{
+  const f=fixture(async()=>[[{time:new Date(Date.now()-120*60000)}]]);
+  try{
+    policy.ensureMaintainerNotificationSchema(f.sql);
+    f.sql.exec(`UPDATE maintainers SET offline_email_enabled=0;
+      INSERT INTO maintainers(name,email,email_test) VALUES('Other','owner@example.test','');
+      UPDATE device_locations SET maintainer='Other' WHERE aslung_id='fresh';`);
+    await f.load().checkAndSendOfflineAlerts({force:true});
+    assert.equal(f.mails.length,1);assert.equal(f.mails[0].to,'owner@example.test');
+    assert.ok(f.sql.prepare("SELECT 1 FROM alert_logs WHERE maintainer='Other' AND status='SENT'").get());
+    assert.equal(f.sql.prepare("SELECT COUNT(*) n FROM alert_logs WHERE maintainer='Maintainer' AND status='SKIPPED'").get().n,3);
+  }finally{f.sql.close();}
+});
+
 test('lease is shared, can recover after expiry, and old owner cannot release its successor',async()=>{
   const sql=new DatabaseSync(':memory:'),store=makeStore(sql);
   try {

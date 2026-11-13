@@ -1157,7 +1157,7 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
         }else if(modal==="lab"){
           void mutate({action:"lab",...p});
         }else if(modal==="maintainer"){
-          void mutate({action:"maintainer",...p});
+          void mutate({action:"maintainer",...p,offline_email_enabled:p.offline_email_enabled==="1"});
         }else if(modal==="alertSettings"){
           void mutate({action:"alertSettingsUpdate",...p,enabled:p.enabled==="1"?1:0,use_test_email:p.use_test_email==="1"?1:0});
         }else if(modal==="location"){
@@ -1475,6 +1475,8 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
         <Input id="m-email" name="email" type="email" required maxLength={160} placeholder="例如：maintainer@example.com" defaultValue={editMaintainer?.email||""}/>
         <p className="text-xs text-slate-500">{isEn?"Linked maintainer identities send alerts to linked member accounts according to member email settings.":"已設定會員關聯的維護身分，告警改依關聯帳號與各會員收信設定寄送。"}</p><Label htmlFor="m-email-test" className="mt-2">測試用 Email (選填)</Label>
         <Input id="m-email-test" name="email_test" type="email" maxLength={160} placeholder="選填，可用於測試模式" defaultValue={editMaintainer?.email_test||""}/>
+        <label className="flex items-center gap-2 mt-3"><input type="checkbox" name="offline_email_enabled" value="1" defaultChecked={editMaintainer?.offline_email_enabled!==0}/>{isEn?"Receive disconnection notifications":"接收斷線通知"}</label>
+        <p className="text-xs leading-6 text-slate-500">{isEn?"Turning this off stops disconnection emails for this maintainer, including linked members and test addresses. On-screen warnings remain. Google Sheet sync preserves this setting.":"關閉後，此維護人員的斷線通知將停止寄送（包含關聯會員及測試信箱），畫面警示仍保留。同步 Google 試算表會保留此設定。"}</p>
         <Label htmlFor="m-phone" className="mt-2">聯絡電話 (選填)</Label>
         <Input id="m-phone" name="phone" maxLength={50} placeholder="例如：0912-345-678" defaultValue={editMaintainer?.phone||""}/>
         <Label htmlFor="m-notes" className="mt-2">備註 (選填)</Label>

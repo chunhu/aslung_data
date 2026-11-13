@@ -10,6 +10,13 @@ import {downloadSegments,admin,identity,db,config,fail,writeGuard,required,insta
 export const runtime="nodejs";
 export const dynamic="force-dynamic";
 
+function locationRecordId(value:unknown){
+  if((typeof value!=="number"&&typeof value!=="string")||(typeof value==="string"&&!/^[1-9]\d*$/.test(value.trim())))throw new AppError(400,"請提供有效的設備追蹤紀錄 ID。");
+  const id=Number(value);
+  if(!Number.isSafeInteger(id)||id<=0)throw new AppError(400,"請提供有效的設備追蹤紀錄 ID。");
+  return id;
+}
+
 function protectMaintenanceHistory(ids:string[]){
   const d=getConnection();
   if(!d.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='maintenance_orders'").get())return;
@@ -497,8 +504,8 @@ export async function POST(r:Request){try{
  else if(p.action==="endGrants"){requireAdmin();const aslungId=required(p.aslungId),now=new Date().toISOString();await db().prepare("UPDATE grants SET end=? WHERE device_id=? AND (end IS NULL OR end>?)").bind(now,aslungId,now).run();}
  else if(p.action==="locationAdd"){requireAdmin();const labId=required(p.labId),aslungId=required(p.aslungId),maintainer=p.maintainer?String(p.maintainer).trim():null,startTime=instant(p.startTime),endTime=p.endTime?instant(p.endTime):null,active=p.active?1:0;await db().prepare("INSERT INTO device_locations(lab_id,aslung_id,maintainer,start_time,end_time,active) VALUES(?,?,?,?,?,?)").bind(labId,aslungId,maintainer,startTime,endTime,active).run();await syncDeviceStatusesAndLocations();}
  else if(p.action==="locationUpdate"){requireAdmin();const id=required(p.id),labId=required(p.labId),aslungId=required(p.aslungId),maintainer=p.maintainer?String(p.maintainer).trim():null,startTime=instant(p.startTime),endTime=p.endTime?instant(p.endTime):null,active=p.active?1:0;await db().prepare("UPDATE device_locations SET lab_id=?, aslung_id=?, maintainer=?, start_time=?, end_time=?, active=? WHERE id=?").bind(labId,aslungId,maintainer,startTime,endTime,active,id).run();await syncDeviceStatusesAndLocations();}
- else if(p.action==="locationDelete"){requireAdmin();await db().prepare("DELETE FROM device_locations WHERE id=?").bind(required(p.id)).run();await syncDeviceStatusesAndLocations();}
- else if(p.action==="locationDeleteBulk"){requireAdmin();const ids=((p.ids||p.locationIds)??[]) as unknown[];if(!Array.isArray(ids)||ids.length===0)throw new AppError(400,"請選擇要刪除的位置紀錄。");await db().prepare("BEGIN").run();try{for(const id of ids){await db().prepare("DELETE FROM device_locations WHERE id=?").bind(Number(id)).run();}await db().prepare("COMMIT").run();}catch(e){await db().prepare("ROLLBACK").run();throw e;}await syncDeviceStatusesAndLocations();}
+ else if(p.action==="locationDelete"){requireAdmin();await db().prepare("DELETE FROM device_locations WHERE id=?").bind(locationRecordId(p.id)).run();await syncDeviceStatusesAndLocations();}
+ else if(p.action==="locationDeleteBulk"){requireAdmin();const ids=((p.ids||p.locationIds)??[]) as unknown[];if(!Array.isArray(ids)||ids.length===0)throw new AppError(400,"請選擇要刪除的位置紀錄。");const recordIds=[...new Set(ids.map(locationRecordId))];await db().prepare("BEGIN").run();try{for(const id of recordIds){await db().prepare("DELETE FROM device_locations WHERE id=?").bind(id).run();}await db().prepare("COMMIT").run();}catch(e){await db().prepare("ROLLBACK").run();throw e;}await syncDeviceStatusesAndLocations();}
  else if(p.action==="locationImport"){
   requireAdmin();
   const records = p.records as any[];
@@ -667,16 +674,19 @@ export async function POST(r:Request){try{
   const email=required(p.email,160);
   const englishName=p.english_name===undefined?null:(p.english_name===""?"":required(p.english_name,160));
   const emailTest=String(p.email_test||"").trim();
+  if(p.offline_email_enabled!==undefined&&typeof p.offline_email_enabled!=="boolean")throw new AppError(400,"接收斷線通知設定必須為布林值。");
+  const offlineEmail=p.offline_email_enabled===undefined?null:(p.offline_email_enabled?1:0);
   const phone=String(p.phone||"").trim();
   const notes=String(p.notes||"").trim();
   const now=new Date().toISOString();
   await db().prepare(`
-    INSERT INTO maintainers(name,email,email_test,phone,notes,created_at,english_name)
-    VALUES(?,?,?,?,?,?,COALESCE(?,''))
+    INSERT INTO maintainers(name,email,email_test,phone,notes,created_at,english_name,offline_email_enabled)
+    VALUES(?,?,?,?,?,?,COALESCE(?,''),COALESCE(?,1))
     ON CONFLICT(name) DO UPDATE SET
       email=excluded.email, email_test=excluded.email_test, phone=excluded.phone, notes=excluded.notes,
-      english_name=CASE WHEN ? THEN excluded.english_name ELSE maintainers.english_name END
-  `).bind(name,email,emailTest,phone,notes,now,englishName,englishName!==null?1:0).run();
+      english_name=CASE WHEN ? THEN excluded.english_name ELSE maintainers.english_name END,
+      offline_email_enabled=CASE WHEN ? THEN excluded.offline_email_enabled ELSE maintainers.offline_email_enabled END
+  `).bind(name,email,emailTest,phone,notes,now,englishName,offlineEmail,englishName!==null?1:0,offlineEmail!==null?1:0).run();
 } else if(p.action==="maintainerDelete"){
   requireAdmin();
   const name=required(p.name);

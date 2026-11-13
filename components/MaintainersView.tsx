@@ -12,6 +12,7 @@ export interface Maintainer {
   english_name?: string;
   email: string;
   email_test: string;
+  offline_email_enabled?: number;
   phone: string;
   notes: string;
   created_at: string;
@@ -126,6 +127,7 @@ export default function MaintainersView({
                 <TableHead>維護者姓名</TableHead>
                 <TableHead>主要通知 Email (mail)</TableHead>
                 <TableHead>測試信箱 (mail_test)</TableHead>
+                <TableHead>接收斷線通知</TableHead>
                 <TableHead>聯絡電話</TableHead>
                 <TableHead className="text-center">負責設備</TableHead>
                 <TableHead className="text-center">斷線設備 (&gt;60分)</TableHead>
@@ -181,6 +183,7 @@ export default function MaintainersView({
                         <span className="text-slate-400">同主要信箱</span>
                       )}
                     </TableCell>
+                    <TableCell><span className={m.offline_email_enabled===0?"status pending":"status ok"}>{m.offline_email_enabled===0?"已停寄":"接收"}</span></TableCell>
                     <TableCell className="text-xs text-slate-600">{m.phone || <span className="text-slate-400">—</span>}</TableCell>
                     <TableCell className="text-center font-mono text-xs">
                       {assignedDeviceIds.length > 0 ? (

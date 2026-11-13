@@ -315,9 +315,10 @@ async function runOfflineAlertCheck(store: ReturnType<typeof db>, options: { for
   for (const [mName, items] of groupedByMaintainer.entries()) {
     await assertOwned();
     const maintInfo = maintainerMap.get(mName);
-    const explicitRecipients=await explicitAlertRecipients(store,maintInfo);
+    const maintainerOptOut = maintInfo?.offline_email_enabled === 0;
+    const explicitRecipients=maintainerOptOut ? [] : await explicitAlertRecipients(store,maintInfo);
     let targetEmail = "";
-    if (maintInfo) {
+    if (maintInfo && !maintainerOptOut) {
       const primary = explicitRecipients??alertRecipients(maintInfo.email, members);
       const useTest = settings.use_test_email && maintInfo.email_test;
       // Test routing must also respect the primary owner's opt-out.
@@ -328,7 +329,10 @@ async function runOfflineAlertCheck(store: ReturnType<typeof db>, options: { for
     let status = "SIMULATED";
     let errorMessage = "";
 
-    if ((explicitRecipients!==null||maintInfo?.email) && !targetEmail) {
+    if (maintainerOptOut) {
+      status = "SKIPPED";
+      errorMessage = "維護人員已關閉接收斷線通知，僅保留畫面警示";
+    } else if ((explicitRecipients!==null||maintInfo?.email) && !targetEmail) {
       status = "SKIPPED";
       errorMessage = explicitRecipients!==null?"維護身分未關聯可收信的啟用會員，或收件會員已關閉告警通知，僅保留畫面警示":"收件會員已關閉告警通知或帳號已停用，僅保留畫面警示";
     } else if (hasSmtp && transporter && targetEmail) {
