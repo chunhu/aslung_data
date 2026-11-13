@@ -1,3 +1,4 @@
+import {auditOperation} from "@/lib/activity-server";
 import {identity,writeGuard,AppError,fail,syncDeviceStatusesAndLocations} from "@/lib/server";
 import {getConnection} from "@/lib/store.mjs";
 import {quickUpdateDevice} from "@/lib/fleet-quick-edit.mjs";
@@ -21,7 +22,7 @@ export async function GET(req:Request) {
     return Response.json({events:d.prepare('SELECT * FROM device_events WHERE device_id=? ORDER BY created_at DESC,id DESC LIMIT 100').all(id)}, {headers:{"Cache-Control":"no-store"}});
   }catch(e){return failure(e);}
 }
-export async function POST(req:Request) {
+async function handlePOST(req: Request) {
   try {
     writeGuard(req);const me=await identity(req);if(me.role!=="admin")throw new AppError(403,"只有管理員可以執行設備管理。");
     const p=await req.json();if(!p||typeof p!=="object"||Array.isArray(p))throw new AppError(400,"參數不正確。");
@@ -44,3 +45,5 @@ export async function POST(req:Request) {
     throw new AppError(400,"不支援的操作。");
   }catch(e){return failure(e);}
 }
+
+export async function POST(request:Request){return auditOperation(request,()=>handlePOST(request as any));}

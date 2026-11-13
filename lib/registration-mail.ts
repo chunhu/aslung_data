@@ -24,6 +24,12 @@ export function registrationMailer() {
           text:`Please verify your email using the link below (valid for 24 hours). After verification, an administrator will review your application. Approval does not automatically grant data access.\n\n請使用下方連結驗證 Email（24 小時內有效），完成後將由管理員審核。帳號啟用與資料授權分開管理。\n\n${link.href}\n\nIf you did not register, you can ignore this email. 若非您本人申請，請忽略此信。`});
       }catch {throw new RegistrationError(503,'申請已儲存，但驗證信寄送失敗，請稍後使用重新寄送功能 / Application saved, but email delivery failed. Please resend the verification email later.');}
     },
+    async resetPassword({email,language,token}:{email:string;language:string;token:string}) {
+      const link=new URL('/reset-password',origin);link.hash=new URLSearchParams({token}).toString();link.searchParams.set('lang',language==='en'?'en':'zh-TW');
+      await transport.sendMail({from:settings.smtp_from,to:email,
+        subject:'Environmental Observation Data Hub — Reset password / 重設密碼',
+        text:`Use the link below to set a new password (valid for 30 minutes, one use only). Only the most recently requested link works. All existing sign-in sessions will end after a successful reset.\n\n請使用下方連結設定新密碼（30 分鐘內有效，僅能使用一次）。僅最新申請的連結有效，完成後所有既有登入工作階段會失效。\n\n${link.href}\n\nIf you did not request this, ignore this email. Your password has not been changed.\n若非您本人申請，請忽略此信，密碼尚未變更。`});
+    },
     async review(email:string,approved:boolean) {
       await transport.sendMail({from:settings.smtp_from,to:email,
         subject:approved?'ASLUNG — Account approved / 帳號審核通過':'ASLUNG — Application update / 申請審核結果',

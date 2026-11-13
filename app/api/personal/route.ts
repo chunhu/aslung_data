@@ -1,3 +1,4 @@
+import {auditOperation,setActivityAction} from "@/lib/activity-server";
 import {identity,writeGuard,fail,AppError} from '@/lib/server';
 import {getConnection} from '@/lib/store.mjs';
 import {CalibrationError} from '@/lib/calibration.mjs';
@@ -15,10 +16,11 @@ export async function GET(req:Request){try{
   }
   return Response.json(personalState(d,me),{headers:{'Cache-Control':'no-store'}});
 }catch(e){return failure(e);}}
-export async function POST(req:Request){try{
+async function handlePOST(req: Request){try{
   writeGuard(req);const me=await identity(req),body=await req.text();if(Buffer.byteLength(body)>2500000)throw new AppError(413,'表單不可超過 2.5 MB。');
   let p;try{p=JSON.parse(body);}catch{throw new AppError(400,'表單格式不正確。');}
   if(!p||typeof p!=='object'||Array.isArray(p))throw new AppError(400,'表單格式不正確。');
+  setActivityAction(req,p.action,p.device??p.id??p.email);
   const d=getConnection();let result;
   switch(p.action){
     case 'claim':result=requestDevice(d,me,p);break;
@@ -35,3 +37,5 @@ export async function POST(req:Request){try{
   }
   return Response.json(result,{headers:{'Cache-Control':'no-store'}});
 }catch(e){return failure(e);}}
+
+export async function POST(request:Request){return auditOperation(request,()=>handlePOST(request as any));}

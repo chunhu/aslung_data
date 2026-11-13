@@ -1,3 +1,6 @@
+import {limitedBody,safeFileHeaders,HttpSecurityError} from "@/lib/http-security.mjs";
+import {Readable} from "node:stream";
+import {auditOperation,setActivityAction} from "@/lib/activity-server";
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
@@ -9,7 +12,7 @@ import {createFileLink,externalFileUrl,FileLinkError} from '@/lib/file-links.mjs
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET(req: NextRequest) {
+async function handleGET(req: NextRequest) {
   try {
     const me = await identity(req);
     const searchParams = req.nextUrl.searchParams;
@@ -33,24 +36,14 @@ export async function GET(req: NextRequest) {
         throw new AppError(404, "檔案實體不存在於伺服器。");
       }
 
-      const fileBuffer = fs.readFileSync(file.storage_path);
+      const fileSize = fs.statSync(file.storage_path).size;
       const isDownload = searchParams.get("download") === "1";
       if (isDownload) {
         try {
           await db().prepare("UPDATE files SET download_count = download_count + 1 WHERE id=?").bind(fileId).run();
         } catch {}
       }
-      const disposition = isDownload ? "attachment" : "inline";
-      const encodedName = encodeURIComponent(file.name);
-
-      return new Response(fileBuffer, {
-        headers: {
-          "Content-Type": file.mime_type || "application/octet-stream",
-          "Content-Length": String(fileBuffer.length),
-          "Content-Disposition": `${disposition}; filename*=UTF-8''${encodedName}`,
-          "Cache-Control": "private, no-cache, no-store, must-revalidate"
-        }
-      });
+      return new Response(Readable.toWeb(fs.createReadStream(file.storage_path)) as ReadableStream, {headers:{...safeFileHeaders(file,isDownload),'Content-Length':String(fileSize)}});
     }
 
     if (me.role === "admin") {
@@ -67,11 +60,11 @@ export async function GET(req: NextRequest) {
       return Response.json({ files, grants: [] }, { headers: { "Cache-Control": "no-store" } });
     }
   } catch (e) {
-    return fail(e instanceof FileLinkError?new AppError(e.status,e.message):e);
+    return fail(e instanceof FileLinkError||e instanceof HttpSecurityError?new AppError(e.status,e.message):e);
   }
 }
 
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   try {
     writeGuard(req);
     const me = await identity(req);
@@ -80,10 +73,13 @@ export async function POST(req: NextRequest) {
     const contentType = req.headers.get("content-type") || "";
 
     if (contentType.includes("multipart/form-data")) {
-      const formData = await req.formData();
+      const body=await limitedBody(req,11*1024*1024);
+      const formData = await new Request(req.url,{method:'POST',headers:req.headers,body:body as BodyInit}).formData();
       const file = formData.get("file") as File | null;
       if (!file || typeof file === "string") throw new AppError(400, "請選擇要上傳的檔案。");
 
+      if(file.size>10*1024*1024)throw new AppError(413,'檔案上限為 10 MB。');
+      setActivityAction(req,'file.upload',file.name);
       const description = String(formData.get("description") || "").trim();
       let emails: string[] = [];
       try {
@@ -131,6 +127,7 @@ export async function POST(req: NextRequest) {
 
     const body = await req.json() as Record<string, unknown>;
     const action = body?.action;
+    setActivityAction(req,action,body?.id);
 
     if(action==='fileLink')return Response.json(createFileLink(getConnection(),me,body),{headers:{'Cache-Control':'no-store'}});
 
@@ -174,6 +171,10 @@ export async function POST(req: NextRequest) {
 
     throw new AppError(400, "不支援的操作。");
   } catch (e) {
-    return fail(e instanceof FileLinkError?new AppError(e.status,e.message):e);
+    return fail(e instanceof FileLinkError||e instanceof HttpSecurityError?new AppError(e.status,e.message):e);
   }
 }
+
+export async function POST(request:Request){return auditOperation(request,()=>handlePOST(request as any));}
+
+export async function GET(request:NextRequest){if(request.nextUrl.searchParams.has("id"))return auditOperation(request,()=>handleGET(request),"download");return handleGET(request);}

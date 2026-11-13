@@ -1,3 +1,6 @@
+import * as activityAuditMock from './helpers/activity-audit.mjs';
+import * as activityHttpSecurity from '../lib/http-security.mjs';
+import * as activityNodeStream from 'node:stream';
 import * as exportNames from '../lib/export-name.mjs';
 import * as permissions from '../lib/permissions.mjs';
 import * as zipExports from '../lib/csv-zip.mjs';
@@ -158,7 +161,7 @@ test('calibration API protects admin writes and list access, bounds pagination, 
   const {d,id}=fixture();let actor={email:'admin@test',role:'admin'};
   class AppError extends Error{constructor(status,message){super(message);this.status=status;}}
   const api=load('../app/api/calibration/route.ts',{
-    '@/lib/server':{identity:async()=>actor,writeGuard:r=>{if(r.headers.get('origin')!=='http://test')throw new AppError(403,'origin');},AppError,fail:e=>Response.json({error:e.message},{status:e.status||500})},
+    '@/lib/activity-server':activityAuditMock,'@/lib/http-security.mjs':activityHttpSecurity,'node:stream':activityNodeStream,'@/lib/server':{identity:async()=>actor,writeGuard:r=>{if(r.headers.get('origin')!=='http://test')throw new AppError(403,'origin');},AppError,fail:e=>Response.json({error:e.message},{status:e.status||500})},
     '@/lib/store.mjs':{getConnection:()=>d},'@/lib/permissions.mjs':permissions,'@/lib/calibration.mjs':c,'@/lib/calibration-google.mjs':{fetchCalibrationCsv:async()=>csv(row('AL-9999')),calibrationAuthentication:()=> 'public_csv'}
   });
   const post=(payload,origin='http://test')=>api.POST(new Request('http://test/api/calibration',{method:'POST',headers:{origin,'Content-Type':'application/json'},body:JSON.stringify(payload)}));
@@ -202,7 +205,7 @@ test('manual sync fetches only the selected source tab and leaves the other sour
   const second=c.saveCalibrationSource(d,{name:'Second tab',url:'https://docs.google.com/spreadsheets/d/test123/edit?gid=26524521'},'admin@test');
   class AppError extends Error{constructor(status,message){super(message);this.status=status;}}
   const api=load('../app/api/calibration/route.ts',{
-    '@/lib/server':{identity:async()=>({email:'admin@test',role:'admin'}),writeGuard:()=>{},AppError,fail:e=>Response.json({error:e.message},{status:e.status||500})},
+    '@/lib/activity-server':activityAuditMock,'@/lib/http-security.mjs':activityHttpSecurity,'node:stream':activityNodeStream,'@/lib/server':{identity:async()=>({email:'admin@test',role:'admin'}),writeGuard:()=>{},AppError,fail:e=>Response.json({error:e.message},{status:e.status||500})},
     '@/lib/store.mjs':{getConnection:()=>d},'@/lib/permissions.mjs':permissions,'@/lib/calibration.mjs':c,
     '@/lib/calibration-google.mjs':{fetchCalibrationCsv:async source=>{calls.push({id:source.id,gid:c.googleCalibrationUrl(source.url).gid});return csv(row(source.id===id?'AL-1':'AL-2'));}}
   });
@@ -225,7 +228,7 @@ test('data API pins calibration versions across downloads and pagination, while 
     '@/lib/download-segments.mjs':{fetchRangesPage:async(ranges,cursor,limit,fetch)=>fetch(ranges[0].start,ranges[0].end,cursor,limit)},
     '@/lib/calibration.mjs':c,'@/lib/store.mjs':{getConnection:()=>d},
     '@/lib/csv-zip.mjs':zipExports,
-    '@/lib/server':{identity:async()=>({role}),AppError,required:v=>v,instant:v=>new Date(v).toISOString(),
+    '@/lib/activity-server':activityAuditMock,'@/lib/http-security.mjs':activityHttpSecurity,'node:stream':activityNodeStream,'@/lib/server':{identity:async()=>({role}),AppError,required:v=>v,instant:v=>new Date(v).toISOString(),
       permitted:async()=>{if(denied)throw new AppError(403,'denied');},authorizedDataRanges:async()=>[{start:'2024-01-01T00:00:00.000Z',end:'2024-01-02T00:00:00.000Z'}],
       fail:e=>Response.json({error:e.message},{status:e.status||500})},
     '@/lib/permissions.mjs':permissions,

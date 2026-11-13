@@ -10,7 +10,7 @@ export const NAVIGATION_GROUPS=[
   {id:'data',zh:'監測與資料',en:'Monitoring and data',sections:['realtime','data','hobo']},
   {id:'devices',zh:'設備管理',en:'Device management',sections:['personal','devices','locations','labs','maintainers','maintenance']},
   {id:'calibration',zh:'校正與異常通知',en:'Calibration and notifications',sections:['calibration','alerts']},
-  {id:'members',zh:'會員與權限',en:'Members and access',sections:['members','permissions']},
+  {id:'members',zh:'會員與權限',en:'Members and access',sections:['members','permissions','activity']},
   {id:'integration',zh:'資料串接',en:'Data integration',sections:['connection']},
 ];
 const DEFAULT_GROUPS=Object.fromEntries(NAVIGATION_GROUPS.map(group=>[group.id,group.id==='resources'||group.id==='data']));

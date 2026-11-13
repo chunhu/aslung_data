@@ -1,3 +1,6 @@
+import * as activityAuditMock from './helpers/activity-audit.mjs';
+import * as activityHttpSecurity from '../lib/http-security.mjs';
+import * as activityNodeStream from 'node:stream';
 import {ensureMaintainerNotificationSchema} from '../lib/alert-policy.mjs';
 import * as realtimeSettings from '../lib/realtime-settings.mjs';
 import {test} from 'node:test';
@@ -43,7 +46,7 @@ test('maintainer API saves English names and sheet sync without the column prese
  const store={prepare(sql){let args=[];return {bind(...v){args=v;return this;},async run(){return d.prepare(sql).run(...args);},async all(){return {results:d.prepare(sql).all(...args)};}};}};
  const module=load('../app/api/manage/route.ts',{
    '@/lib/store.mjs':{getConnection:()=>d},'@/lib/registration.mjs':{RegistrationError:class extends Error{}},'@/lib/registration-mail':{},'node:crypto':{},'@/lib/realtime-settings.mjs':realtimeSettings,'@/lib/passwords.mjs':{},
-   '@/lib/server':{db:()=>store,identity:async()=>({role,email:'admin@test'}),writeGuard:req=>{if(req.headers.get('origin')!=='http://test')throw new AppError(403,'origin');},AppError,required:(v,max=160)=>{if(typeof v!=='string'||!v.trim()||v.length>max)throw new AppError(400,'required');return v.trim();},fail:e=>Response.json({error:e.message},{status:e.status||500})}
+   '@/lib/activity-server':activityAuditMock,'@/lib/http-security.mjs':activityHttpSecurity,'node:stream':activityNodeStream,'@/lib/server':{db:()=>store,identity:async()=>({role,email:'admin@test'}),writeGuard:req=>{if(req.headers.get('origin')!=='http://test')throw new AppError(403,'origin');},AppError,required:(v,max=160)=>{if(typeof v!=='string'||!v.trim()||v.length>max)throw new AppError(400,'required');return v.trim();},fail:e=>Response.json({error:e.message},{status:e.status||500})}
  });
  const post=p=>module.POST(new Request('http://test/api/manage',{method:'POST',headers:{origin:'http://test','Content-Type':'application/json'},body:JSON.stringify(p)}));
  const oldFetch=globalThis.fetch;globalThis.fetch=async()=>new Response(csv);

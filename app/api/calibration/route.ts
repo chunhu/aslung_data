@@ -1,3 +1,4 @@
+import {auditOperation} from "@/lib/activity-server";
 import {canManageCalibration} from '@/lib/permissions.mjs';
 import {identity,writeGuard,AppError,fail} from '@/lib/server';
 import {getConnection} from '@/lib/store.mjs';
@@ -28,7 +29,7 @@ export async function GET(req:Request){try{
     devices:d.prepare('SELECT DISTINCT r.aslung_id FROM calibration_records r JOIN calibration_sources s ON s.current_version=r.version_id ORDER BY r.aslung_id LIMIT 10000').all().map((r:any)=>r.aslung_id)
   },{headers:{'Cache-Control':'no-store'}});
 }catch(e){return failure(e);}}
-export async function POST(req:Request){try{
+async function handlePOST(req: Request){try{
   writeGuard(req);const me=await identity(req);if(!canManageCalibration(me))throw new AppError(403,'只有系統管理員或校正管理員可以管理校正來源。');
   const p=await req.json();if(!p||typeof p!=='object'||Array.isArray(p))throw new AppError(400,'表單內容不正確。');
   const d=getConnection();ensureCalibrationSchema(d);
@@ -41,3 +42,5 @@ export async function POST(req:Request){try{
   if(p.action==='sync')return Response.json(await syncCalibrationSource(d,p.id,me.email,fetchCalibrationCsv,{force:true,replaceManual:p.replaceManual===true}));
   throw new AppError(400,'不支援的操作。');
 }catch(e){return failure(e);}}
+
+export async function POST(request:Request){return auditOperation(request,()=>handlePOST(request as any));}

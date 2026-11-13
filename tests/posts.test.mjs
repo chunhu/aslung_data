@@ -1,3 +1,6 @@
+import * as activityAuditMock from './helpers/activity-audit.mjs';
+import * as activityHttpSecurity from '../lib/http-security.mjs';
+import * as activityNodeStream from 'node:stream';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
@@ -67,7 +70,7 @@ function compile(file,deps){const code=ts.transpileModule(readFileSync(new URL('
   const module={exports:{}};new Function('require','module','exports',code)(name=>{assert.ok(name in deps,name);return deps[name];},module,module.exports);return module.exports;}
 test('HTTP boundary rejects anonymous/member writes and foreign origins; unpublished content cannot be fetched by ID',async()=>{
   const d=db();class AppError extends Error{constructor(status,message){super(message);this.status=status;}}
-  const route=compile('app/api/posts/route.ts',{'@/lib/posts.mjs':posts,'@/lib/store.mjs':{getConnection:()=>d},'@/lib/server':{
+  const route=compile('app/api/posts/route.ts',{'@/lib/posts.mjs':posts,'@/lib/store.mjs':{getConnection:()=>d},'@/lib/activity-server':activityAuditMock,'@/lib/http-security.mjs':activityHttpSecurity,'node:stream':activityNodeStream,'@/lib/server':{
     AppError,identity:async req=>{const role=req.headers.get('test-role');if(!role)throw new AppError(401,'login');return {...admin,role};},
     writeGuard:req=>{if(req.headers.get('origin')!=='https://site.invalid')throw new AppError(403,'origin');},fail:e=>Response.json({error:e.message},{status:e.status||500}),
   }});

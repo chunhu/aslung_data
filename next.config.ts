@@ -9,7 +9,9 @@ const config:NextConfig={
  // Full website manuals are private route assets, never public static files.
  outputFileTracingIncludes:{"/docs/*":["./docs/ASLUNG_Website_User_Manual_*"]},
  async headers(){return [
-  {source:"/:path*",headers:[{key:"X-Content-Type-Options",value:"nosniff"},{key:"X-Frame-Options",value:"DENY"},{key:"Referrer-Policy",value:"same-origin"}]},
+  {source:"/:path*",headers:[{key:"X-Content-Type-Options",value:"nosniff"},{key:"X-Frame-Options",value:"DENY"},{key:"Referrer-Policy",value:"same-origin"},{key:"Content-Security-Policy",value:"object-src 'none'; base-uri 'self'; frame-ancestors 'self'"},{key:"Permissions-Policy",value:"geolocation=(), microphone=()"}]},
+  // Static Next headers override route response headers; preserve the upload sandbox.
+  {source:"/api/files",headers:[{key:"Content-Security-Policy",value:"sandbox; default-src 'none'; frame-ancestors 'self'"},{key:"Referrer-Policy",value:"no-referrer"}]},
   // Only documentation HTML may appear in the site's own documentation reader.
   {source:"/docs/:path*.html",headers:[{key:"X-Frame-Options",value:"SAMEORIGIN"}]}
  ];}

@@ -1,3 +1,6 @@
+import * as activityAuditMock from './helpers/activity-audit.mjs';
+import * as activityHttpSecurity from '../lib/http-security.mjs';
+import * as activityNodeStream from 'node:stream';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -8,7 +11,7 @@ test('cleanup API restricts preview, confirm, audit and retries to admins and ch
   class AppError extends Error{constructor(status,message){super(message);this.status=status;}}
   const methods={cleanupStatus:()=>{calls.push('status');return {counts:[],tasks:[]};},previewCleanup:async(d,p)=>{calls.push(['preview',p]);return {id:'plan'};},
     confirmCleanup:async(d,p)=>{calls.push(['confirm',p]);return {ok:true};},retryCleanup:(d,id)=>calls.push(['retry',id])};
-  const deps={'@/lib/server':{AppError,identity:async()=>({role,email:'admin@test'}),writeGuard:()=>{if(!guard)throw new AppError(403,'origin');},fail:e=>Response.json({error:e.message},{status:e.status||500})},
+  const deps={'@/lib/activity-server':activityAuditMock,'@/lib/http-security.mjs':activityHttpSecurity,'node:stream':activityNodeStream,'@/lib/server':{AppError,identity:async()=>({role,email:'admin@test'}),writeGuard:()=>{if(!guard)throw new AppError(403,'origin');},fail:e=>Response.json({error:e.message},{status:e.status||500})},
     '@/lib/store.mjs':{getConnection:()=>{opened++;return {}; }},'@/lib/processing-cleanup.mjs':methods};
   const code=ts.transpileModule(readFileSync(new URL('../app/api/processing/cleanup/route.ts',import.meta.url),'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;
   const module={exports:{}};new Function('require','module','exports',code)(name=>{assert.ok(name in deps,name);return deps[name];},module,module.exports);

@@ -11,9 +11,11 @@ import useAppLanguage from "@/components/useAppLanguage";
 export default function LoginForm(){
  const language=useAppLanguage(),en=language!=="zh-TW";
  const [error,setError]=useState(""),[busy,setBusy]=useState(false);
- const [stats,setStats]=useState<{totalViews?:number;todayViews?:number}|null>(null);
+ const [stats,setStats]=useState<{totalViews?:number;todayViews?:number;totalVisits?:number;todayVisits?:number}|null>(null);
  useEffect(()=>{
+   const update=(event:Event)=>setStats((event as CustomEvent).detail);window.addEventListener("aslung-stats-updated",update);
    fetch("/api/stats").then(r=>r.json()).then(d=>setStats(d)).catch(()=>{});
+   return()=>window.removeEventListener("aslung-stats-updated",update);
  },[]);
  return (
   <main translate="no" lang={en?"en":"zh-Hant"} className="min-h-screen relative flex items-center justify-center p-6 bg-[#102d40]">
@@ -50,13 +52,13 @@ export default function LoginForm(){
     </form>
     <p className="text-xs text-slate-500 mt-6 leading-6 flex gap-2">
       <LockKeyhole size={15} className="shrink-0 mt-1"/>
-      {en?"New users can apply for an account. Email verification and administrator approval are required. Contact an administrator to reset a forgotten password.":"新使用者可申請帳號，經 Email 驗證及管理員審核後使用。如忘記密碼，請聯絡管理員重設。"}
+      {en?"New users can apply for an account. Email verification and administrator approval are required. Use “Forgot password” to request a reset email.":"新使用者可申請帳號，經 Email 驗證及管理員審核後使用。如忘記密碼，可申請寄送重設連結。"}
     </p>
-    <div className="mt-4 flex flex-wrap gap-4 text-sm text-teal-700"><a href="/register" className="underline">{en?"Apply for an account":"申請會員帳號"}</a><a href="/register?lang=en" className="underline" translate="no">Register in English</a></div>
+    <div className="mt-4 flex flex-wrap gap-4 text-sm text-teal-700"><a href={"/forgot-password?lang="+(en?"en":"zh-TW")} className="underline">{en?"Forgot password?":"忘記密碼？"}</a><a href="/register" className="underline">{en?"Apply for an account":"申請會員帳號"}</a><a href="/register?lang=en" className="underline" translate="no">Register in English</a></div>
     {stats && (
       <div className="mt-6 pt-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-400">
-        <span className="flex items-center gap-1.5"><Eye size={13} className="text-teal-600"/> {en?"Total visits:":"網站累計瀏覽："}<strong className="text-slate-600 font-semibold">{stats.totalViews?.toLocaleString() ?? 0}</strong> {en?"visits":"次"}</span>
-        <span>{en?"Today:":"今日："}<strong className="text-slate-600 font-semibold">{stats.todayViews ?? 0}</strong> {en?"visits":"次"}</span>
+        <span className="flex items-center gap-1.5"><Eye size={13} className="text-teal-600"/> {en?"Total visits:":"網站累計造訪："}<strong className="text-slate-600 font-semibold">{stats.totalVisits?.toLocaleString() ?? 0}</strong> {en?"visits":"次"}</span>
+        <span>{en?"Today:":"今日："}<strong className="text-slate-600 font-semibold">{stats.todayVisits ?? 0}</strong> {en?"visits":"次"}</span>
       </div>
     )}
    </section>

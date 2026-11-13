@@ -1,3 +1,6 @@
+import * as activityAuditMock from './helpers/activity-audit.mjs';
+import * as activityHttpSecurity from '../lib/http-security.mjs';
+import * as activityNodeStream from 'node:stream';
 import * as exportNames from '../lib/export-name.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
@@ -37,7 +40,7 @@ test('CSV ZIP API exports all raw pages and rejects unauthorized downloads befor
   let role='admin',allowed=true,calls=0;
   class AppError extends Error{constructor(status,message){super(message);this.status=status;}}
   const server={AppError,required:v=>v,instant:v=>new Date(v).toISOString(),identity:async()=>({role}),permitted:async()=>{if(!allowed)throw new AppError(403,'denied');},authorizedDataRanges:async()=>[{start:'2024-01-01T00:00:00.000Z',end:'2024-01-02T00:00:00.000Z'}],fail:e=>Response.json({error:e.message},{status:e.status||500})};
-  const deps={'@/lib/export-name.mjs':exportNames,'@/lib/server':server,'@/lib/permissions.mjs':{canExportData:m=>m.role!=='viewer'},'@/lib/download-segments.mjs':{},'@/lib/csv-zip.mjs':{csvChunks,csvZipResponse,jsonChunks,jsonZipResponse},'@/lib/data':{fetchPage:async(id,s,e,cursor)=>{calls++;return {data:[{timestamp:cursor?'2024-01-01T00:01:00.000Z':'2024-01-01T00:00:00.000Z',aslung_id:id,PM1_G3:cursor?2:1}],has_more:!cursor,next_cursor:cursor?null:'next'};}}};
+  const deps={'@/lib/export-name.mjs':exportNames,'@/lib/activity-server':activityAuditMock,'@/lib/http-security.mjs':activityHttpSecurity,'node:stream':activityNodeStream,'@/lib/server':server,'@/lib/permissions.mjs':{canExportData:m=>m.role!=='viewer'},'@/lib/download-segments.mjs':{},'@/lib/csv-zip.mjs':{csvChunks,csvZipResponse,jsonChunks,jsonZipResponse},'@/lib/data':{fetchPage:async(id,s,e,cursor)=>{calls++;return {data:[{timestamp:cursor?'2024-01-01T00:01:00.000Z':'2024-01-01T00:00:00.000Z',aslung_id:id,PM1_G3:cursor?2:1}],has_more:!cursor,next_cursor:cursor?null:'next'};}}};
   const code=ts.transpileModule(readFileSync(new URL('../app/api/data/route.ts',import.meta.url),'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;
   const module={exports:{}};new Function('require','module','exports',code)(key=>{assert.ok(key in deps,key);return deps[key];},module,module.exports);
   const call=(format='csvzip',download='1')=>module.exports.GET(new Request('http://localhost/api/data?aslung_id=AL-1&start=2024-01-01T00:00:00Z&end=2024-01-02T00:00:00Z&download='+download+'&format='+format));

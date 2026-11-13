@@ -1,3 +1,6 @@
+import * as activityAuditMock from './helpers/activity-audit.mjs';
+import * as activityHttpSecurity from '../lib/http-security.mjs';
+import * as activityNodeStream from 'node:stream';
 import * as exportNames from '../lib/export-name.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
@@ -159,7 +162,7 @@ test('processing API protects writes, enforces result data permission and viewer
   const server={AppError,identity:async()=>member,writeGuard:()=>{if(!guard)throw new AppError(403,'origin');},
     fail:e=>Response.json({error:e.message},{status:e.status||500}),required:(v)=>{if(!v||typeof v!=='string')throw new AppError(400,'required');return v;},
     instant:v=>new Date(v).toISOString(),permitted:async()=>{checked++;if(!allow)throw new AppError(403,'denied');}};
-  const deps={'@/lib/export-name.mjs':exportNames,'@/lib/server':server,'@/lib/permissions.mjs':permissions,'@/lib/store.mjs':{getConnection:()=>d},'@/lib/processing-jobs.mjs':jobs,'@/lib/global-processing.mjs':globalProcessing,'@/lib/csv-zip.mjs':zipExports};
+  const deps={'@/lib/export-name.mjs':exportNames,'@/lib/activity-server':activityAuditMock,'@/lib/http-security.mjs':activityHttpSecurity,'node:stream':activityNodeStream,'@/lib/server':server,'@/lib/permissions.mjs':permissions,'@/lib/store.mjs':{getConnection:()=>d},'@/lib/processing-jobs.mjs':jobs,'@/lib/global-processing.mjs':globalProcessing,'@/lib/csv-zip.mjs':zipExports};
   const code=ts.transpileModule(readFileSync(new URL('../app/api/processing/route.ts',import.meta.url),'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;
   const module={exports:{}};new Function('require','module','exports',code)(key=>{assert.ok(key in deps);return deps[key];},module,module.exports);
   const api=module.exports,get=q=>api.GET(new Request('http://localhost/api/processing'+q)),post=p=>api.POST(new Request('http://localhost/api/processing',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)}));
@@ -187,7 +190,7 @@ test('processing API protects writes, enforces result data permission and viewer
 test('history filters and pagination expose older jobs and metadata details without reading results',async()=>{
   const d=await fixture();let role='admin';
   class AppError extends Error{constructor(status,message){super(message);this.status=status;}}
-  const deps={'@/lib/server':{AppError,identity:async()=>({role}),permitted:async()=>{},required:v=>v,fail:e=>Response.json({error:e.message},{status:e.status||500})},
+  const deps={'@/lib/activity-server':activityAuditMock,'@/lib/http-security.mjs':activityHttpSecurity,'node:stream':activityNodeStream,'@/lib/server':{AppError,identity:async()=>({role}),permitted:async()=>{},required:v=>v,fail:e=>Response.json({error:e.message},{status:e.status||500})},
     '@/lib/permissions.mjs':permissions,'@/lib/store.mjs':{getConnection:()=>d},'@/lib/processing-jobs.mjs':jobs,
     '@/lib/global-processing.mjs':globalProcessing,'@/lib/csv-zip.mjs':zipExports,'@/lib/export-name.mjs':exportNames};
   const code=ts.transpileModule(readFileSync(new URL('../app/api/processing/route.ts',import.meta.url),'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;
@@ -305,7 +308,7 @@ test('measurement API exposes completed results, paginates a pinned file and ret
   process.env.CALIBRATION_RESULT_DIR=root;let me={role:'admin',email:'admin'},allow=true,permissionChecks=0;
   class AppError extends Error{constructor(status,message){super(message);this.status=status;}}
   const server={AppError,identity:async()=>me,fail:e=>Response.json({error:e.message},{status:e.status||500}),required:v=>v,instant:v=>new Date(v).toISOString(),authorizedDataRanges:async(m,id,start,end)=>[{start,end}],permitted:async()=>{permissionChecks++;if(!allow)throw new AppError(403,'denied');}};
-  const deps={'@/lib/export-name.mjs':exportNames,'@/lib/server':server,'@/lib/permissions.mjs':permissions,'@/lib/download-segments.mjs':{},'@/lib/data':{fetchPage:()=>{throw new Error('must not query MySQL');}},'@/lib/processed-query.mjs':{processedDataResponse},'@/lib/store.mjs':{getConnection:()=>d}};
+  const deps={'@/lib/export-name.mjs':exportNames,'@/lib/activity-server':activityAuditMock,'@/lib/http-security.mjs':activityHttpSecurity,'node:stream':activityNodeStream,'@/lib/server':server,'@/lib/permissions.mjs':permissions,'@/lib/download-segments.mjs':{},'@/lib/data':{fetchPage:()=>{throw new Error('must not query MySQL');}},'@/lib/processed-query.mjs':{processedDataResponse},'@/lib/store.mjs':{getConnection:()=>d}};
   const code=ts.transpileModule(readFileSync(new URL('../app/api/data/route.ts',import.meta.url),'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;
   const module={exports:{}};new Function('require','module','exports',code)(key=>{assert.ok(key in deps,key);return deps[key];},module,module.exports);
   try{

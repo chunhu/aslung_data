@@ -1,7 +1,7 @@
 "use client";
 import {useEffect,useState} from 'react';
 
-export const WORKSPACE_SECTIONS=['news','articles','realtime','data','devices','maintenance','calibration','personal','hobo','members','permissions','locations','labs','maintainers','alerts','files','connection'];
+export const WORKSPACE_SECTIONS=['news','articles','realtime','data','devices','maintenance','calibration','personal','hobo','members','permissions','locations','labs','maintainers','alerts','files','connection','activity'];
 export default function useWorkspaceSection(){
   const [section,setSection]=useState('data');
   const [restored,setRestored]=useState(false);
@@ -24,7 +24,7 @@ export default function useWorkspaceSection(){
     // particular, the initial "data" value must not overwrite #hobo on mount.
     if(!restored)return;
     try{window.localStorage.setItem('aslung_section',section);}catch{/* URL state remains available. */}
-    if(window.location.hash!==`#${section}`)window.history.replaceState(null,'',`#${section}`);
+    if(window.location.hash!==`#${section}`){window.history.replaceState(null,'',`#${section}`);if(typeof window.dispatchEvent==='function')window.dispatchEvent(new Event('aslung-navigation'));}
   },[section,restored]);
   return [section,setSection,restored] as const;
 }

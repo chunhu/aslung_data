@@ -1,3 +1,6 @@
+import * as activityAuditMock from './helpers/activity-audit.mjs';
+import * as activityHttpSecurity from '../lib/http-security.mjs';
+import * as activityNodeStream from 'node:stream';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -49,7 +52,7 @@ function fixture(query, send) {
   const store=makeStore(sql),mails=[];
   const deps={
     nodemailer:{createTransport:()=>({sendMail:async mail=>{mails.push(mail);await send?.(mail);}})},
-    '@/lib/server':{db:()=>store,syncDeviceStatusesAndLocations:async()=>{}},
+    '@/lib/activity-server':activityAuditMock,'@/lib/http-security.mjs':activityHttpSecurity,'node:stream':activityNodeStream,'@/lib/server':{db:()=>store,syncDeviceStatusesAndLocations:async()=>{}},
     '@/lib/data':{getPool:()=>({query:query|| (async(options,[id])=>{
       assert.equal(options.timeout,20000);
       if(id==='error')throw new Error('database unavailable');

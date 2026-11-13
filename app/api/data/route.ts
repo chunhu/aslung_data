@@ -1,3 +1,4 @@
+import {auditOperation} from "@/lib/activity-server";
 import {canExportData} from '@/lib/permissions.mjs';
 import {fetchRangesPage} from "@/lib/download-segments.mjs";
 import {identity,fail,required,instant,authorizedDataRanges,permitted,AppError} from "@/lib/server";
@@ -7,7 +8,7 @@ import {exportName} from '@/lib/export-name.mjs';
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET(r: Request) {
+async function handleGET(r: Request) {
     try {
         const url = new URL(r.url);
         const id = required(url.searchParams.get("aslung_id"), 80);
@@ -95,3 +96,5 @@ export async function GET(r: Request) {
         return fail(e);
     }
 }
+
+export async function GET(request:Request){if(new URL(request.url).searchParams.get("download")==="1")return auditOperation(request,()=>handleGET(request),"download");return handleGET(request);}

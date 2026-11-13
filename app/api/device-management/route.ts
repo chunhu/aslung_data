@@ -1,3 +1,4 @@
+import {auditOperation,setActivityAction} from "@/lib/activity-server";
 import {identity,writeGuard,AppError,fail} from '@/lib/server';
 import {getConnection} from '@/lib/store.mjs';
 import {canManageDevices} from '@/lib/permissions.mjs';
@@ -14,9 +15,11 @@ export async function GET(req:Request){try{
   ensureFleetSchema(d);
   return Response.json({devices,locations,labs:d.prepare('SELECT id,location_name,city_name,town_name FROM labs ORDER BY id').all(),maintainers:d.prepare('SELECT name,english_name FROM maintainers ORDER BY name').all(),events:d.prepare('SELECT * FROM device_events ORDER BY id DESC LIMIT 1000').all().filter((r:any)=>ids.has(r.device_id)).slice(0,100)},{headers:{'Cache-Control':'no-store'}});
 }catch(e){return failure(e);}}
-export async function POST(req:Request){try{
+async function handlePOST(req: Request){try{
   writeGuard(req);const me=await identity(req);if(!canManageDevices(me))throw new AppError(403,'沒有設備管理權限。');
   const p=await req.json();if(!p||p.action!=='quick'||typeof p.id!=='string')throw new AppError(400,'僅支援已授權設備的快速更新。');
   const d=getConnection();assertManagedDevice(d,me,p.id);
   return Response.json({ok:true,...quickUpdateDevice(d,p,me.email,()=>assertManagedDevice(d,me,p.id))});
 }catch(e){return failure(e);}}
+
+export async function POST(request:Request){return auditOperation(request,()=>handlePOST(request as any));}

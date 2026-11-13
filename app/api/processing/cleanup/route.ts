@@ -1,3 +1,4 @@
+import {auditOperation,setActivityAction} from "@/lib/activity-server";
 import {identity,writeGuard,AppError,fail} from '@/lib/server';
 import {getConnection} from '@/lib/store.mjs';
 import {cleanupStatus,previewCleanup,confirmCleanup,retryCleanup} from '@/lib/processing-cleanup.mjs';
@@ -13,7 +14,7 @@ export async function GET(req:Request){try{
   const me=await identity(req);if(me.role!=='admin')throw new AppError(403,'僅系統管理員可查看清除記錄。');
   return Response.json(cleanupStatus(getConnection()),{headers});
 }catch(e){return failure(e);}}
-export async function POST(req:Request){try{
+async function handlePOST(req: Request){try{
   writeGuard(req);const me=await identity(req);if(me.role!=='admin')throw new AppError(403,'僅系統管理員可清除校正成果。');
   const body=await req.json();if(!body||typeof body!=='object'||Array.isArray(body))throw new AppError(400,'表單內容不正確。');
   const d=getConnection();
@@ -25,3 +26,5 @@ export async function POST(req:Request){try{
   if(body.action==='retry'){retryCleanup(d,body.id);return Response.json({ok:true},{headers});}
   throw new AppError(400,'不支援的操作。');
 }catch(e){return failure(e);}}
+
+export async function POST(request:Request){return auditOperation(request,()=>handlePOST(request as any));}

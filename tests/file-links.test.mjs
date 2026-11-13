@@ -1,3 +1,6 @@
+import * as activityAuditMock from './helpers/activity-audit.mjs';
+import * as activityHttpSecurity from '../lib/http-security.mjs';
+import * as activityNodeStream from 'node:stream';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
@@ -39,9 +42,9 @@ test('migration preserves uploaded files and grants, and external links are stor
 });
 function routes(d){
  class AppError extends Error{constructor(status,message){super(message);this.status=status;}}
- const calls=[];const fs={existsSync:()=>{calls.push('exists');return true;},readFileSync:()=>{calls.push('read');return Buffer.from('local bytes');},unlinkSync:()=>{calls.push('unlink');},mkdirSync:()=>{calls.push('mkdir');},writeFileSync:()=>{calls.push('write');}};
+ const calls=[];const fs={existsSync:()=>{calls.push('exists');return true;},statSync:()=>({size:11}),createReadStream:()=>{calls.push('read');return activityNodeStream.Readable.from([Buffer.from('local bytes')]);},unlinkSync:()=>{calls.push('unlink');},mkdirSync:()=>{calls.push('mkdir');},writeFileSync:()=>{calls.push('write');}};
  const db=()=>({prepare(sql){let args=[];return {bind(...values){args=values;return this;},async first(){return d.prepare(sql).get(...args);},async all(){return {results:d.prepare(sql).all(...args)};},async run(){return d.prepare(sql).run(...args);}};}});
- const route=compile('app/api/files/route.ts',{'node:fs':{default:fs,...fs},'node:path':{default:path},'node:crypto':{default:crypto},'@/lib/store.mjs':{getConnection:()=>d},'@/lib/file-links.mjs':links,'@/lib/server':{
+ const route=compile('app/api/files/route.ts',{'node:fs':{default:fs,...fs},'node:path':{default:path},'node:crypto':{default:crypto},'@/lib/store.mjs':{getConnection:()=>d},'@/lib/file-links.mjs':links,'@/lib/activity-server':activityAuditMock,'@/lib/http-security.mjs':activityHttpSecurity,'node:stream':activityNodeStream,'@/lib/server':{
   AppError,db,identity:async req=>{const role=req.headers.get('test-role');if(!role)throw new AppError(401,'login');return {role,email:req.headers.get('test-email')||`${role}@test.invalid`};},
   writeGuard:req=>{if(req.headers.get('origin')!=='https://app.invalid')throw new AppError(403,'origin');},fail:e=>Response.json({error:e.message},{status:e.status||500}),
  }});return {route,calls};

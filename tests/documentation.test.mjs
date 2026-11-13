@@ -1,3 +1,6 @@
+import * as activityAuditMock from './helpers/activity-audit.mjs';
+import * as activityHttpSecurity from '../lib/http-security.mjs';
+import * as activityNodeStream from 'node:stream';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync,existsSync} from 'node:fs';
@@ -68,7 +71,7 @@ test('direct website manual URLs require a current system administrator for ever
   class AppError extends Error{constructor(status,message){super(message);this.status=status;}}
   let current;
   const server={AppError,identity:async()=>{if(!current)throw new AppError(401,'Login required');return current;},fail:e=>Response.json({error:e.message},{status:e.status||500})};
-  const deps={'node:fs/promises':await import('node:fs/promises'),'node:path':await import('node:path'),'@/lib/server':server};
+  const deps={'node:fs/promises':await import('node:fs/promises'),'node:path':await import('node:path'),'@/lib/activity-server':activityAuditMock,'@/lib/http-security.mjs':activityHttpSecurity,'node:stream':activityNodeStream,'@/lib/server':server};
   const code=ts.transpileModule(read('app/docs/[file]/route.ts').toString(),{compilerOptions:{module:ts.ModuleKind.CommonJS}}).outputText;
   const module={exports:{}};new Function('require','module','exports',code)(name=>{assert.ok(name in deps,name);return deps[name];},module,module.exports);
   const get=file=>module.exports.GET(new Request(`http://test/docs/${file}`),{params:Promise.resolve({file})});

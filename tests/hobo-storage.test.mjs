@@ -1,3 +1,6 @@
+import * as activityAuditMock from './helpers/activity-audit.mjs';
+import * as activityHttpSecurity from '../lib/http-security.mjs';
+import * as activityNodeStream from 'node:stream';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
@@ -170,7 +173,7 @@ test('cleanup API blocks members and foreign origins before preview or deletion'
   const d=database();let role='member',allowed=true;
   class AppError extends Error{constructor(status,message){super(message);this.status=status;}}
   const cleanup=await import('../lib/hobo-cleanup.mjs'),hobo=await import('../lib/hobo.mjs');
-  const deps={'@/lib/server':{identity:async()=>({role,email:'admin'}),AppError,writeGuard:()=>{if(!allowed)throw new AppError(403,'origin');},fail:e=>Response.json({error:e.message},{status:e.status||500})},'@/lib/store.mjs':{getConnection:()=>d},'@/lib/hobo.mjs':hobo,'@/lib/hobo-cleanup.mjs':cleanup};
+  const deps={'@/lib/activity-server':activityAuditMock,'@/lib/http-security.mjs':activityHttpSecurity,'node:stream':activityNodeStream,'@/lib/server':{identity:async()=>({role,email:'admin'}),AppError,writeGuard:()=>{if(!allowed)throw new AppError(403,'origin');},fail:e=>Response.json({error:e.message},{status:e.status||500})},'@/lib/store.mjs':{getConnection:()=>d},'@/lib/hobo.mjs':hobo,'@/lib/hobo-cleanup.mjs':cleanup};
   const source=readFileSync(new URL('../app/api/hobo/cleanup/route.ts',import.meta.url),'utf8');const code=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;
   const module={exports:{}};new Function('require','exports','module',code)(name=>{assert.ok(name in deps,name);return deps[name];},module.exports,module);
   const {GET,POST}=module.exports;assert.equal((await GET(new Request('http://local/api/hobo/cleanup'))).status,403);

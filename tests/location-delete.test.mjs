@@ -1,3 +1,6 @@
+import * as activityAuditMock from './helpers/activity-audit.mjs';
+import * as activityHttpSecurity from '../lib/http-security.mjs';
+import * as activityNodeStream from 'node:stream';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
@@ -12,7 +15,7 @@ function fixture(){
  class AppError extends Error{constructor(status,message){super(message);this.status=status;}}
  const store={prepare(sql){let values=[];return {bind(...v){values=v;return this;},async run(){return d.prepare(sql).run(...values);}};}};
  const deps={'@/lib/store.mjs':{getConnection:()=>d},'@/lib/registration.mjs':{RegistrationError:class extends Error{}},'@/lib/registration-mail':{},'node:crypto':{},'@/lib/passwords.mjs':{},'@/lib/realtime-settings.mjs':{},
- '@/lib/server':{db:()=>store,identity:async()=>({role,email:'test@example.test'}),writeGuard:r=>{if(r.headers.get('origin')!=='http://test')throw new AppError(403,'origin');},AppError,fail:e=>Response.json({error:e.message},{status:e.status||500}),syncDeviceStatusesAndLocations:async()=>{syncs++;},required:v=>{if(typeof v!=='string'||!v.trim())throw new AppError(400,'請完整填寫欄位。');return v.trim();}}};
+ '@/lib/activity-server':activityAuditMock,'@/lib/http-security.mjs':activityHttpSecurity,'node:stream':activityNodeStream,'@/lib/server':{db:()=>store,identity:async()=>({role,email:'test@example.test'}),writeGuard:r=>{if(r.headers.get('origin')!=='http://test')throw new AppError(403,'origin');},AppError,fail:e=>Response.json({error:e.message},{status:e.status||500}),syncDeviceStatusesAndLocations:async()=>{syncs++;},required:v=>{if(typeof v!=='string'||!v.trim())throw new AppError(400,'請完整填寫欄位。');return v.trim();}}};
  const code=ts.transpileModule(readFileSync(new URL('../app/api/manage/route.ts',import.meta.url),'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;
  const m={exports:{}};new Function('require','module','exports',code)(name=>{assert.ok(name in deps,name);return deps[name];},m,m.exports);
  return {d,role:r=>{role=r;},syncs:()=>syncs,post:(p,origin='http://test')=>m.exports.POST(new Request('http://test/api/manage',{method:'POST',headers:{origin,'Content-Type':'application/json'},body:JSON.stringify(p)}))};

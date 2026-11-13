@@ -1,3 +1,4 @@
+import {auditOperation} from "@/lib/activity-server";
 import { NextRequest } from "next/server";
 import { identity, db, fail, writeGuard, AppError } from "@/lib/server";
 import { checkAndSendOfflineAlerts } from "@/lib/alerts";
@@ -37,7 +38,7 @@ export async function GET(req: NextRequest) {
   }
 }
 
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   try {
     writeGuard(req);
     const me = await identity(req);
@@ -97,3 +98,5 @@ export async function POST(req: NextRequest) {
     return fail(e);
   }
 }
+
+export async function POST(request:Request){return auditOperation(request,()=>handlePOST(request as any));}

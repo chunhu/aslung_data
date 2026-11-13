@@ -1,3 +1,4 @@
+import {auditOperation} from "@/lib/activity-server";
 import {identity,writeGuard,AppError,fail} from '@/lib/server';
 import {getConnection} from '@/lib/store.mjs';
 import {HoboError,ensureHoboSchema,hoboStatus,queryHoboJobs,saveHoboLogger,saveHoboBatch,queueHoboSync,retryHoboSync,cancelHoboSync,cancelHoboBatch,manageHoboJobs,hoboRange,hoboSerial} from '@/lib/hobo.mjs';
@@ -7,7 +8,7 @@ export const dynamic='force-dynamic';
 const headers={'Cache-Control':'no-store'};
 async function access(req:Request){const me=await identity(req);if(me.role!=='admin')throw new AppError(403,'僅管理員可操作 HOBO 資料。');return me;}
 function failure(e:unknown){return fail(e instanceof HoboError?new AppError(e.status,e.message):e);}
-export async function GET(req:Request){try{
+async function handleGET(req:Request){try{
   await access(req);const url=new URL(req.url),action=url.searchParams.get('action')||'status',d=getConnection();
   if(action==='status')return Response.json(hoboStatus(d),{headers});
   if(action==='jobs')return Response.json(queryHoboJobs(d,{q:url.searchParams.get('q')||'',status:url.searchParams.get('status')||'',source:url.searchParams.get('source')||'',offset:Number(url.searchParams.get('offset')||0),view:url.searchParams.get('view')||'history'}),{headers});
@@ -25,7 +26,7 @@ export async function GET(req:Request){try{
   }
   throw new AppError(400,'不支援的操作。');
 }catch(e){return failure(e);}}
-export async function POST(req:Request){try{
+async function handlePOST(req: Request){try{
   writeGuard(req);const me=await access(req);const body=await req.json();const d=getConnection();
   if(body?.action==='batch'){
     if(body.queue&&!process.env.LICOR_API_TOKEN?.trim())throw new AppError(503,'請先在 EC2 .env 設定 LICOR_API_TOKEN 並重建容器。');
@@ -46,3 +47,7 @@ export async function POST(req:Request){try{
   else throw new AppError(400,'不支援的操作。');
   return Response.json({ok:true},{headers});
 }catch(e){return failure(e);}}
+
+export async function GET(request:Request){if(new URL(request.url).searchParams.get("action")==="csv")return auditOperation(request,()=>handleGET(request),"download");return handleGET(request);}
+
+export async function POST(request:Request){return auditOperation(request,()=>handlePOST(request as any));}

@@ -1,3 +1,6 @@
+import * as activityAuditMock from './helpers/activity-audit.mjs';
+import * as activityHttpSecurity from '../lib/http-security.mjs';
+import * as activityNodeStream from 'node:stream';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
@@ -261,7 +264,7 @@ test('HOBO API rejects non-admin read/write/download, enforces origin, and expor
   class AppError extends Error{constructor(status,message){super(message);this.status=status;}}
   const hobo=await import('../lib/hobo.mjs');
   const storage=await import('../lib/hobo-storage.mjs');
-  const deps={'@/lib/server':{identity:async()=>({role,email:'test'}),AppError,writeGuard:()=>{if(!origin)throw new AppError(403,'origin');},fail:e=>Response.json({error:e.message},{status:e.status||500})},'@/lib/store.mjs':{getConnection:()=>d},'@/lib/hobo.mjs':hobo,'@/lib/hobo-storage.mjs':storage};
+  const deps={'@/lib/activity-server':activityAuditMock,'@/lib/http-security.mjs':activityHttpSecurity,'node:stream':activityNodeStream,'@/lib/server':{identity:async()=>({role,email:'test'}),AppError,writeGuard:()=>{if(!origin)throw new AppError(403,'origin');},fail:e=>Response.json({error:e.message},{status:e.status||500})},'@/lib/store.mjs':{getConnection:()=>d},'@/lib/hobo.mjs':hobo,'@/lib/hobo-storage.mjs':storage};
   const source=readFileSync(new URL('../app/api/hobo/route.ts',import.meta.url),'utf8');
   const code=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;
   const module={exports:{}};new Function('require','exports','module',code)(name=>{assert.ok(name in deps);return deps[name];},module.exports,module);
@@ -524,4 +527,11 @@ test('legacy success times are explicitly estimated from successful jobs, never 
   d.prepare("UPDATE hobo_jobs SET status='DONE',created_at='2026-10-27T01:00:00Z' WHERE id=?").run(id);
   const newer=queueHoboSync(d,{serial,start,end});d.prepare("UPDATE hobo_jobs SET created_at='2026-10-29T01:00:00Z' WHERE id=?").run(newer);
   const row=queryHoboJobs(d,{view:'latest'}).jobs[0];assert.equal(row.last_success_at,'2026-10-27T01:00:00Z');assert.equal(row.last_success_estimated,1);d.close();
+});
+
+test('latest job ties follow insertion order rather than random UUID ordering',()=>{
+ const d=store(),serial='12345678';
+ const first=queueHoboSync(d,{serial,start,end});d.prepare("UPDATE hobo_jobs SET status='FAILED',created_at='2026-11-13T00:00:00Z' WHERE id=?").run(first);
+ const second=queueHoboSync(d,{serial,start,end});d.prepare("UPDATE hobo_jobs SET status='FAILED',created_at='2026-11-13T00:00:00Z' WHERE id=?").run(second);
+ assert.equal(queryHoboJobs(d,{view:'latest'}).jobs.find(job=>job.serial===serial).id,second);d.close();
 });

@@ -1,3 +1,6 @@
+import * as activityAuditMock from './helpers/activity-audit.mjs';
+import * as activityHttpSecurity from '../lib/http-security.mjs';
+import * as activityNodeStream from 'node:stream';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
@@ -12,7 +15,7 @@ test('maintenance API protects writes, denies ordinary member records and protec
   let me={role:'admin',email:'admin@test'},signedIn=true;
   class AppError extends Error{constructor(status,message){super(message);this.status=status;}}
   const deps={
-    '@/lib/server':{identity:async()=>{if(!signedIn)throw new AppError(401,'login');return me;},AppError,fail:e=>Response.json({error:e.message},{status:e.status||500}),writeGuard:req=>{if(req.headers.get('origin')!=='http://test')throw new AppError(403,'origin');}},
+    '@/lib/activity-server':activityAuditMock,'@/lib/http-security.mjs':activityHttpSecurity,'node:stream':activityNodeStream,'@/lib/server':{identity:async()=>{if(!signedIn)throw new AppError(401,'login');return me;},AppError,fail:e=>Response.json({error:e.message},{status:e.status||500}),writeGuard:req=>{if(req.headers.get('origin')!=='http://test')throw new AppError(403,'origin');}},
     '@/lib/store.mjs':{getConnection:()=>d},'@/lib/maintenance.mjs':maintenance
   };
   const code=ts.transpileModule(readFileSync(new URL('../app/api/maintenance/route.ts',import.meta.url),'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;

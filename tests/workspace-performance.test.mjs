@@ -1,3 +1,6 @@
+import * as activityAuditMock from './helpers/activity-audit.mjs';
+import * as activityHttpSecurity from '../lib/http-security.mjs';
+import * as activityNodeStream from 'node:stream';
 import {test,after} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtempSync,rmSync,readFileSync} from 'node:fs';
@@ -76,7 +79,7 @@ const server={writeGuard:()=>{},identity:async()=>({...actor}),db:()=>store,AppE
     return buildDownloadSegments(me,d.prepare('SELECT * FROM devices').all(),d.prepare('SELECT * FROM device_locations').all(),d.prepare('SELECT * FROM grants WHERE email=?').all(me.email),d.prepare('SELECT name,email FROM maintainers WHERE email=?').all(me.email));
   }};
 const manage=load('../app/api/manage/route.ts',{
-  '@/lib/server':server,'@/lib/store.mjs':{getConnection:()=>d},'@/lib/registration.mjs':{RegistrationError:class extends Error{}},'@/lib/registration-mail':{},
+  '@/lib/activity-server':activityAuditMock,'@/lib/http-security.mjs':activityHttpSecurity,'node:stream':activityNodeStream,'@/lib/server':server,'@/lib/store.mjs':{getConnection:()=>d},'@/lib/registration.mjs':{RegistrationError:class extends Error{}},'@/lib/registration-mail':{},
   '@/lib/realtime-settings.mjs':realtimeSettings,'@/lib/passwords.mjs':{},'node:crypto':{},
 });
 const get=async scope=>{
@@ -120,7 +123,7 @@ test('cached realtime readings reauthorize on each request and again after I/O',
   }}}};
   const pool={query:async({values})=>{queries++;if(revokeDuringQuery)allow=false;return [values.map(id=>({aslung_id:id,time:'2026-10-01 00:00:00',battery:0}))];}};
   const route=load('../app/api/realtime/route.ts',{
-    '@/lib/server':{...server,identity:async()=>({role,email:'member@test'}),db:()=>realtimeStore},
+    '@/lib/activity-server':activityAuditMock,'@/lib/http-security.mjs':activityHttpSecurity,'node:stream':activityNodeStream,'@/lib/server':{...server,identity:async()=>({role,email:'member@test'}),db:()=>realtimeStore},
     '@/lib/realtime-settings.mjs':realtimeSettings,'@/lib/data':{getPool:()=>pool},'@/lib/realtime-readings.mjs':{latestRealtimeReadings},
   });
   const call=q=>route.GET(new Request('http://test/api/realtime'+(q||'')));

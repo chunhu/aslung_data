@@ -1,3 +1,4 @@
+import {auditOperation} from "@/lib/activity-server";
 import {identity,writeGuard,AppError,fail,permitted,required,instant} from '@/lib/server';
 import {canExportData} from '@/lib/permissions.mjs';
 import {getConnection} from '@/lib/store.mjs';
@@ -8,7 +9,7 @@ import {globalProcessingSettings,saveGlobalProcessing} from '@/lib/global-proces
 export const runtime='nodejs';
 export const dynamic='force-dynamic';
 const noStore={'Cache-Control':'no-store'};
-export async function GET(req:Request){try{
+async function handleGET(req:Request){try{
   const me=await identity(req),d=getConnection();ensureProcessingSchema(d);const q=new URL(req.url).searchParams;
   if(q.has('id')){
     const job=d.prepare('SELECT * FROM processing_jobs WHERE id=?').get(required(q.get('id'),80));
@@ -61,7 +62,7 @@ export async function GET(req:Request){try{
     u.status AS upload_status,u.last_error AS upload_error,u.attempts AS upload_attempts,u.retry_at AS upload_retry_at
     FROM processing_jobs j LEFT JOIN processing_uploads u ON u.job_id=j.id${where} ORDER BY j.created_at DESC,j.id DESC LIMIT ? OFFSET ?`).all(...values,pageSize,(currentPage-1)*pageSize),schedules:d.prepare('SELECT * FROM processing_schedules ORDER BY device').all()},{headers:noStore});
 }catch(e){return fail(e);}}
-export async function POST(req:Request){try{
+async function handlePOST(req: Request){try{
   writeGuard(req);const me=await identity(req);if(me.role!=='admin')throw new AppError(403,'背景工作設定僅供系統管理員使用。');
   const p=await req.json();if(!p||typeof p!=='object'||Array.isArray(p))throw new AppError(400,'表單內容不正確。');
   const d=getConnection();ensureProcessingSchema(d);
@@ -82,3 +83,7 @@ export async function POST(req:Request){try{
     return Response.json({ok:true,ids});
   }catch(e){if(e instanceof AppError)throw e;throw new AppError(400,(e as Error).message);}
 }catch(e){return fail(e);}}
+
+export async function POST(request:Request){return auditOperation(request,()=>handlePOST(request as any));}
+
+export async function GET(request:Request){if(new URL(request.url).searchParams.get("download")==="1")return auditOperation(request,()=>handleGET(request),"download");return handleGET(request);}

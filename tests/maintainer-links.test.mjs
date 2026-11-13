@@ -1,3 +1,6 @@
+import * as activityAuditMock from './helpers/activity-audit.mjs';
+import * as activityHttpSecurity from '../lib/http-security.mjs';
+import * as activityNodeStream from 'node:stream';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
@@ -101,7 +104,7 @@ test('status API ignores arbitrary target accounts, returns no measurement value
   try{
     bind(d,[identity(d,'Owner')]);
     const api=load('../app/api/my-maintained-devices/route.ts',{
-      '@/lib/server':{identity:async()=>member,fail:e=>Response.json({error:e.message},{status:e.status||500})},'@/lib/store.mjs':{getConnection:()=>d},'@/lib/maintainer-links.mjs':links,
+      '@/lib/activity-server':activityAuditMock,'@/lib/http-security.mjs':activityHttpSecurity,'node:stream':activityNodeStream,'@/lib/server':{identity:async()=>member,fail:e=>Response.json({error:e.message},{status:e.status||500})},'@/lib/store.mjs':{getConnection:()=>d},'@/lib/maintainer-links.mjs':links,
       '@/lib/data':{getPool:()=>({query:async({sql,values})=>{calls++;assert.match(sql,/^SELECT time /);assert.deepEqual(values,['AL-1']);if(revoke)bind(d,[]);if(mode==='error')throw new Error('database details');return [mode==='empty'?[]:[{time:new Date(Date.now()-90*60000)}]];}})}
     });
     const call=()=>api.GET(new Request('http://localhost/api/my-maintained-devices?email=other@test'));
@@ -115,7 +118,7 @@ test('status API ignores arbitrary target accounts, returns no measurement value
 test('link API rejects non-admin reads/writes and foreign origins, while administrators can link themselves',async()=>{
   const d=fixture();let me=member,origin=true;
   class AppError extends Error{constructor(status,message){super(message);this.status=status;}}
-  const api=load('../app/api/maintainer-links/route.ts',{'@/lib/server':{AppError,identity:async()=>me,writeGuard:()=>{if(!origin)throw new AppError(403,'origin');},fail:e=>Response.json({error:e.message},{status:e.status||500})},'@/lib/store.mjs':{getConnection:()=>d},'@/lib/maintainer-links.mjs':links});
+  const api=load('../app/api/maintainer-links/route.ts',{'@/lib/activity-server':activityAuditMock,'@/lib/http-security.mjs':activityHttpSecurity,'node:stream':activityNodeStream,'@/lib/server':{AppError,identity:async()=>me,writeGuard:()=>{if(!origin)throw new AppError(403,'origin');},fail:e=>Response.json({error:e.message},{status:e.status||500})},'@/lib/store.mjs':{getConnection:()=>d},'@/lib/maintainer-links.mjs':links});
   const get=()=>api.GET(new Request('http://localhost/api/maintainer-links?email=admin@test'));
   const post=body=>api.POST(new Request('http://localhost/api/maintainer-links',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}));
   try{

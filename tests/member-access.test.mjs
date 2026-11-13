@@ -1,3 +1,6 @@
+import * as activityAuditMock from './helpers/activity-audit.mjs';
+import * as activityHttpSecurity from '../lib/http-security.mjs';
+import * as activityNodeStream from 'node:stream';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
@@ -78,7 +81,7 @@ test('device management endpoints hide out-of-scope devices and reject tampered 
   class AppError extends Error{constructor(status,message){super(message);this.status=status;}}
   const fleet=await import('../lib/fleet-store.mjs');
   const server={identity:async()=>me,AppError,fail:e=>Response.json({error:e.message},{status:e.status||500}),writeGuard:r=>{if(r.headers.get('origin')!=='http://test')throw new AppError(403,'origin');}};
-  const api=load('../app/api/device-management/route.ts',{'@/lib/server':server,'@/lib/store.mjs':{getConnection:()=>d},'@/lib/permissions.mjs':permissions,'@/lib/member-access.mjs':access,'@/lib/fleet-store.mjs':fleet,'@/lib/fleet-quick-edit.mjs':{quickUpdateDevice:(db,p,email,authorize)=>{if(revoke)d.prepare('DELETE FROM member_device_scopes').run();authorize();writes++;return {updated:1};}}});
+  const api=load('../app/api/device-management/route.ts',{'@/lib/activity-server':activityAuditMock,'@/lib/http-security.mjs':activityHttpSecurity,'node:stream':activityNodeStream,'@/lib/server':server,'@/lib/store.mjs':{getConnection:()=>d},'@/lib/permissions.mjs':permissions,'@/lib/member-access.mjs':access,'@/lib/fleet-store.mjs':fleet,'@/lib/fleet-quick-edit.mjs':{quickUpdateDevice:(db,p,email,authorize)=>{if(revoke)d.prepare('DELETE FROM member_device_scopes').run();authorize();writes++;return {updated:1};}}});
   const post=(p,origin='http://test')=>api.POST(new Request('http://test/api/device-management',{method:'POST',headers:{origin,'Content-Type':'application/json'},body:JSON.stringify(p)}));
   try{
     let response=await api.GET(new Request('http://test/api/device-management'));assert.equal(response.status,200);const body=await response.json();assert.deepEqual(body.devices.map(r=>r.id),['AL-1']);assert.ok(body.locations.every(r=>r.aslung_id==='AL-1'));

@@ -1,3 +1,4 @@
+import {auditOperation} from "@/lib/activity-server";
 import {identity,writeGuard,fail,AppError} from '@/lib/server';
 import {getConnection} from '@/lib/store.mjs';
 import {listMaintenance,saveMaintenance,addMaintenanceAttachment,getMaintenanceAttachment,MaintenanceError} from '@/lib/maintenance.mjs';
@@ -19,7 +20,7 @@ export async function GET(req:Request){
     return Response.json(result,{headers});
   }catch(e){return failure(e);}
 }
-export async function POST(req:Request){
+async function handlePOST(req: Request){
   try{
     writeGuard(req);const me=await identity(req),d=getConnection();
     if((req.headers.get('content-type')||'').includes('multipart/form-data')){
@@ -34,3 +35,5 @@ export async function POST(req:Request){
     return Response.json({ok:true,...result},{headers});
   }catch(e){return failure(e);}
 }
+
+export async function POST(request:Request){return auditOperation(request,()=>handlePOST(request as any));}

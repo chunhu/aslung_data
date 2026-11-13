@@ -1,3 +1,6 @@
+import * as activityAuditMock from './helpers/activity-audit.mjs';
+import * as activityHttpSecurity from '../lib/http-security.mjs';
+import * as activityNodeStream from 'node:stream';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
@@ -181,7 +184,7 @@ test('personal API rejects CSRF, unauthorized writes and cross-member record dow
   const d=fixture();let actor=one;try{
     bind(d);const id=source(d);upload(d,id);
     class AppError extends Error{constructor(status,message){super(message);this.status=status;}}
-    const api=load('../app/api/personal/route.ts',{'@/lib/server':{identity:async()=>actor,writeGuard:req=>{if(req.headers.get('origin')!=='http://test')throw new AppError(403,'origin');},AppError,fail:e=>Response.json({error:e.message},{status:e.status||500})},'@/lib/store.mjs':{getConnection:()=>d},'@/lib/calibration.mjs':c,'@/lib/personal-calibration.mjs':p,'@/lib/calibration-google.mjs':{fetchCalibrationCsv:async()=>csv()}});
+    const api=load('../app/api/personal/route.ts',{'@/lib/activity-server':activityAuditMock,'@/lib/http-security.mjs':activityHttpSecurity,'node:stream':activityNodeStream,'@/lib/server':{identity:async()=>actor,writeGuard:req=>{if(req.headers.get('origin')!=='http://test')throw new AppError(403,'origin');},AppError,fail:e=>Response.json({error:e.message},{status:e.status||500})},'@/lib/store.mjs':{getConnection:()=>d},'@/lib/calibration.mjs':c,'@/lib/personal-calibration.mjs':p,'@/lib/calibration-google.mjs':{fetchCalibrationCsv:async()=>csv()}});
     assert.equal((await api.POST(new Request('http://test/api/personal',{method:'POST',body:'{}'}))).status,403);
     actor=two;assert.equal((await api.GET(new Request('http://test/api/personal?source='+id+'&download=1'))).status,404);
     actor={...one,role:'viewer'};assert.equal((await api.GET(new Request('http://test/api/personal'))).status,403);
@@ -207,7 +210,7 @@ test('measurement API applies only private factors, pins export versions and sti
     bind(d);bind(d,two,'AL-2');const id=source(d),other=source(d,two);upload(d,id);const foreign=upload(d,other,two,csv('AL-2',10));
     class AppError extends Error{constructor(status,message){super(message);this.status=status;}}
     const api=load('../app/api/data/route.ts',{
-      '@/lib/server':{identity:async()=>actor,required:v=>v,instant:v=>new Date(v).toISOString(),AppError,
+      '@/lib/activity-server':activityAuditMock,'@/lib/http-security.mjs':activityHttpSecurity,'node:stream':activityNodeStream,'@/lib/server':{identity:async()=>actor,required:v=>v,instant:v=>new Date(v).toISOString(),AppError,
         permitted:async()=>{if(denied)throw new AppError(403,'No data access');},authorizedDataRanges:async()=>[{start:'2026-01-01T00:00:00Z',end:'2026-01-02T00:00:00Z'}],fail:e=>Response.json({error:e.message},{status:e.status||500})},
       '@/lib/store.mjs':{getConnection:()=>d},'@/lib/personal-calibration.mjs':p,'@/lib/calibration.mjs':c,'@/lib/permissions.mjs':permissions,
       '@/lib/csv-zip.mjs':zip,'@/lib/export-name.mjs':exportNames,'@/lib/download-segments.mjs':{},

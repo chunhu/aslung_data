@@ -1,3 +1,6 @@
+import * as activityAuditMock from './helpers/activity-audit.mjs';
+import * as activityHttpSecurity from '../lib/http-security.mjs';
+import * as activityNodeStream from 'node:stream';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
@@ -15,7 +18,7 @@ test('fleet API enforces admin and origin, previews without mutation and validat
   class AppError extends Error{constructor(status,message){super(message);this.status=status;}}
   let role='admin';
   const dependencies={
-    '@/lib/server':{identity:async()=>({role,email:'admin@example.test'}),AppError,
+    '@/lib/activity-server':activityAuditMock,'@/lib/http-security.mjs':activityHttpSecurity,'node:stream':activityNodeStream,'@/lib/server':{identity:async()=>({role,email:'admin@example.test'}),AppError,
       writeGuard:req=>{if(req.headers.get('origin')!=='http://fleet.test')throw new AppError(403,'origin');},
       fail:e=>Response.json({error:e.message},{status:e.status||500}),syncDeviceStatusesAndLocations:async()=>{}},
     '@/lib/store.mjs':{getConnection:()=>d},'@/lib/fleet-quick-edit.mjs':{quickUpdateDevice:()=>({updated:1})},'@/lib/fleet-store.mjs':fleet,'@/lib/fleet-sync.mjs':sync

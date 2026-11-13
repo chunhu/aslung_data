@@ -1,3 +1,5 @@
+import {limitedBody,limitedJson,HttpSecurityError} from "@/lib/http-security.mjs";
+import {auditOperation,setActivityAction} from "@/lib/activity-server";
 import {getConnection} from "@/lib/store.mjs";
 import {validateProfile,saveProfile,reviewRegistration,RegistrationError} from "@/lib/registration.mjs";
 import {registrationMailer} from "@/lib/registration-mail";
@@ -98,7 +100,7 @@ export async function GET(request:Request){try{
  const m=await identity();const isAdmin=m.role==="admin";
  // Keep legacy clients compatible; the workspace requests only its current page.
  const scope=request?new URL(request.url).searchParams.get('scope')||'full':'full';
- const scopes=['full','bootstrap','news','articles','realtime','data','devices','maintenance','calibration','personal','hobo','members','permissions','locations','labs','maintainers','alerts','files','connection'];
+ const scopes=['full','bootstrap','news','articles','realtime','data','devices','maintenance','calibration','personal','hobo','members','permissions','locations','labs','maintainers','alerts','files','connection','activity'];
  if(!scopes.includes(scope))throw new AppError(400,'無效的工作空間頁面。');
  const needs=(...pages:string[])=>scope==='full'||pages.includes(scope);
  const needDevices=needs('realtime','data','devices','permissions','locations','labs','maintainers','alerts','members');
@@ -295,6 +297,7 @@ export async function GET(request:Request){try{
    check_interval_mins: 60, offline_threshold_mins: 60, use_test_email: 0, smtp_host: "", smtp_port: 587, smtp_user: "", smtp_pass: "", smtp_from: "", realtime_interval_secs: 60,
    ...(alertSettingsRaw || {})
  };
+ alertSettings.smtp_pass="";
  alertSettings.realtime_cache_secs = normalizeRealtimeCacheSeconds(alertSettings.realtime_cache_secs);
  alertSettings.realtime_interval_secs = normalizeRealtimeInterval(alertSettings.realtime_interval_secs, true);
 
@@ -314,8 +317,9 @@ export async function GET(request:Request){try{
  },{headers:{"Cache-Control":"no-store"}});
 }catch(e){return fail(e)}}
 
-export async function POST(r:Request){try{
- writeGuard(r);const me=await identity(r);const isAdmin=me.role==="admin";const p=await r.json() as Record<string,unknown>;if(!p||typeof p!=="object"||Array.isArray(p))throw new AppError(400,"請提供正確的表單資料。");
+async function handlePOST(r: Request){try{
+ writeGuard(r);const me=await identity(r);const isAdmin=me.role==="admin";const p=await limitedJson(r,16*1024*1024) as Record<string,unknown>;if(!p||typeof p!=="object"||Array.isArray(p))throw new AppError(400,"請提供正確的表單資料。");
+ setActivityAction(r,p.action,p.email??p.device_id??p.id??'');
  const requireAdmin=()=>{if(!isAdmin)throw new AppError(403,"權限不足。")};
   if(p.action==="alertEmailPreference"){
     const email=p.email===undefined?me.email:required(p.email,254).toLowerCase();
@@ -406,6 +410,7 @@ export async function POST(r:Request){try{
      await db().prepare("UPDATE api_tokens SET email=? WHERE email=?").bind(newEmail, originalEmail).run();
      await db().prepare("UPDATE file_grants SET email=? WHERE email=?").bind(newEmail, originalEmail).run();
    }
+   if(hash||newEmail!==originalEmail)await db().prepare("DELETE FROM sessions WHERE email=?").bind(newEmail).run();
    if(typeof p.country==="string")saveProfile(getConnection(),newEmail,profile);
    if(newEmail!==originalEmail){
      await db().prepare("UPDATE member_profiles SET email_verified_at=NULL,registration_status='pending_email',reviewed_at=NULL,reviewed_by=NULL,review_note='' WHERE email=? AND registration_status!='approved'").bind(newEmail).run();
@@ -531,15 +536,9 @@ export async function POST(r:Request){try{
 } else if(p.action==="locationSyncGoogle"){
   requireAdmin();
   let url=typeof p.url==="string"&&p.url.trim()?p.url.trim():"https://docs.google.com/spreadsheets/d/1Vzaz14hHco2u8nmjoKBqDC12k-OX6lMjyrP_UhAhZrI/export?format=csv&gid=140603820#gid=140603820";
-  const mid=url.match(/\/d\/([a-zA-Z0-9_-]+)/);
-  const mgid=url.match(/gid=([0-9]+)/);
-  if(mid){
-    url=`https://docs.google.com/spreadsheets/d/${mid[1]}/export?format=csv`+(mgid?`&gid=${mgid[1]}`:"");
-  }
   const onlyAslung=p.onlyAslung!==false;
-  const res=await fetch(url,{headers:{"User-Agent":"Mozilla/5.0"}});
-  if(!res.ok)throw new AppError(500,`無法從 Google 試算表下載資料 (HTTP ${res.status})`);
-  const csvText=await res.text();
+  const {fetchGoogleCsv}=await import("@/lib/http-security.mjs");
+  let csvText;try{csvText=await fetchGoogleCsv(url);}catch(e){throw new AppError((e as any).status||502,(e as Error).message);}
   const rows=parseCsvRows(csvText);
   if(rows.length<=1)throw new AppError(400,"Google 試算表內容為空。");
   const headers=rows[0].map(h=>h.trim().toLowerCase());
@@ -620,14 +619,8 @@ export async function POST(r:Request){try{
 } else if(p.action==="labSyncGoogle"){
   requireAdmin();
   let url=typeof p.url==="string"&&p.url.trim()?p.url.trim():"https://docs.google.com/spreadsheets/d/1Vzaz14hHco2u8nmjoKBqDC12k-OX6lMjyrP_UhAhZrI/edit?gid=1071144150#gid=1071144150";
-  const mid=url.match(/\/d\/([a-zA-Z0-9_-]+)/);
-  const mgid=url.match(/gid=([0-9]+)/);
-  if(mid){
-    url=`https://docs.google.com/spreadsheets/d/${mid[1]}/export?format=csv`+(mgid?`&gid=${mgid[1]}`:"");
-  }
-  const res=await fetch(url,{headers:{"User-Agent":"Mozilla/5.0"}});
-  if(!res.ok)throw new AppError(500,`無法從 Google 試算表下載地點資料 (HTTP ${res.status})`);
-  const csvText=await res.text();
+  const {fetchGoogleCsv}=await import("@/lib/http-security.mjs");
+  let csvText;try{csvText=await fetchGoogleCsv(url);}catch(e){throw new AppError((e as any).status||502,(e as Error).message);}
   const rows=parseCsvRows(csvText);
   if(rows.length<=1)throw new AppError(400,"試算表內容為空。");
   const headers=rows[0].map(h=>h.trim().toLowerCase());
@@ -705,14 +698,8 @@ export async function POST(r:Request){try{
 } else if(p.action==="maintainerSyncGoogle"){
   requireAdmin();
   let url=typeof p.url==="string"&&p.url.trim()?p.url.trim():"https://docs.google.com/spreadsheets/d/1Vzaz14hHco2u8nmjoKBqDC12k-OX6lMjyrP_UhAhZrI/export?format=csv&gid=603688252#gid=603688252";
-  const mid=url.match(/\/d\/([a-zA-Z0-9_-]+)/);
-  const mgid=url.match(/gid=([0-9]+)/);
-  if(mid){
-    url=`https://docs.google.com/spreadsheets/d/${mid[1]}/export?format=csv`+(mgid?`&gid=${mgid[1]}`:"");
-  }
-  const res=await fetch(url,{headers:{"User-Agent":"Mozilla/5.0"}});
-  if(!res.ok)throw new AppError(500,`無法從 Google 試算表下載維護人員資料 (HTTP ${res.status})`);
-  const csvText=await res.text();
+  const {fetchGoogleCsv}=await import("@/lib/http-security.mjs");
+  let csvText;try{csvText=await fetchGoogleCsv(url);}catch(e){throw new AppError((e as any).status||502,(e as Error).message);}
   const rows=parseCsvRows(csvText);
   if(rows.length<=1)throw new AppError(400,"試算表內容為空。");
   const headers=rows[0].map(h=>h.trim().toLowerCase());
@@ -750,6 +737,7 @@ export async function POST(r:Request){try{
   const result = await checkAndSendOfflineAlerts({ force: true });
   return Response.json({ok:true,result});
 } else if(p.action==="cronCheck"){
+  requireAdmin();
   const { checkAndSendOfflineAlerts } = await import("@/lib/alerts");
   const result = await checkAndSendOfflineAlerts({ force: false });
   return Response.json({ok:true,result});
@@ -911,4 +899,6 @@ export async function POST(r:Request){try{
   }
 } else throw new AppError(400,"不支援此操作。");
  return Response.json({ok:true});
-}catch(e){if(e instanceof RegistrationError)return fail(new AppError(e.status,e.message));if(e instanceof Error&&e.message.includes("UNIQUE constraint"))return Response.json({error:"此 ID 或名稱已存在。"},{status:409});return fail(e)}}
+}catch(e){if(e instanceof HttpSecurityError||e instanceof RegistrationError)return fail(new AppError(e.status,e.message));if(e instanceof Error&&e.message.includes("UNIQUE constraint"))return Response.json({error:"此 ID 或名稱已存在。"},{status:409});return fail(e)}}
+
+export async function POST(request:Request){return auditOperation(request,()=>handlePOST(request as any));}

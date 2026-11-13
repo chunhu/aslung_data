@@ -1,3 +1,6 @@
+import * as activityAuditMock from './helpers/activity-audit.mjs';
+import * as activityHttpSecurity from '../lib/http-security.mjs';
+import * as activityNodeStream from 'node:stream';
 import * as exportNames from '../lib/export-name.mjs';
 import * as permissions from '../lib/permissions.mjs';
 import {test} from 'node:test';
@@ -50,7 +53,7 @@ test('real API authorization enforces segment/device identity and downloads ever
     const calls=[];
     const route=loadTs('../app/api/data/route.ts',{
       '@/lib/download-segments.mjs':segments,
-      '@/lib/server':{...server,identity:async()=>member},
+      '@/lib/activity-server':activityAuditMock,'@/lib/http-security.mjs':activityHttpSecurity,'node:stream':activityNodeStream,'@/lib/server':{...server,identity:async()=>member},
       '@/lib/permissions.mjs':permissions,
       '@/lib/csv-zip.mjs':zipExports,
     '@/lib/export-name.mjs':exportNames,'@/lib/data':{fetchPage:async(id,s,e)=>{

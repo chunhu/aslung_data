@@ -1,3 +1,6 @@
+import * as activityAuditMock from './helpers/activity-audit.mjs';
+import * as activityHttpSecurity from '../lib/http-security.mjs';
+import * as activityNodeStream from 'node:stream';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
@@ -47,7 +50,7 @@ test('manage endpoint enforces admin and origin checks and returns accurate batc
  const d=fixture();let me=actor;
  class AppError extends Error{constructor(status,message){super(message);this.status=status;}}
  const server={identity:async()=>me,AppError,writeGuard:r=>{if(r.headers.get('origin')!=='http://test')throw new AppError(403,'origin');},instant:s=>{if(!Number.isFinite(Date.parse(s)))throw new AppError(400,'date');return new Date(s).toISOString();},fail:e=>Response.json({error:e.message},{status:e.status||500})};
- const api=load('../app/api/manage/route.ts',{'@/lib/server':server,'@/lib/store.mjs':{getConnection:()=>d},'@/lib/registration.mjs':{RegistrationError:class extends Error{}},'@/lib/registration-mail':{},'@/lib/passwords.mjs':{},'@/lib/realtime-settings.mjs':{},'node:crypto':{},'@/lib/data-grants.mjs':grants});
+ const api=load('../app/api/manage/route.ts',{'@/lib/activity-server':activityAuditMock,'@/lib/http-security.mjs':activityHttpSecurity,'node:stream':activityNodeStream,'@/lib/server':server,'@/lib/store.mjs':{getConnection:()=>d},'@/lib/registration.mjs':{RegistrationError:class extends Error{}},'@/lib/registration-mail':{},'@/lib/passwords.mjs':{},'@/lib/realtime-settings.mjs':{},'node:crypto':{},'@/lib/data-grants.mjs':grants});
  const post=(p,origin='http://test')=>api.POST(new Request('http://test/api/manage',{method:'POST',headers:{origin,'Content-Type':'application/json'},body:JSON.stringify({action:'grantBulk',...input,...p})}));
  try{
   assert.equal((await post({},'http://evil')).status,403);me={email:'member@test',role:'member'};assert.equal((await post({})).status,403);me=actor;

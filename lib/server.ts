@@ -5,7 +5,7 @@ export {recordSiteVisit, getSiteStats};
 import {getSessionUser} from "./auth";
 export class AppError extends Error { constructor(public status:number,message:string){super(message)} }
 export function db(){return getStore();}
-export function config(){const e=process.env;return {url:e.MYSQL_HOST || "35.160.61.178", token:e.MYSQL_PASSWORD || "datasel"};}
+export function config(){const e=process.env;return {url:e.MYSQL_HOST || "", token:e.MYSQL_PASSWORD || ""};}
 export async function identity(r?: Request){
  let email = "";
  let userId = "";
@@ -39,7 +39,7 @@ export async function identity(r?: Request){
  return {...m,user_id:userId || m.user_id,allowMaintainerNameMatch:!profile?.registered_at};
 }
 export async function admin(){const m=await identity();if(m.role!=="admin")throw new AppError(403,"只有管理員可以操作。");return m;}
-export function fail(e:unknown){if(e instanceof AppError)return Response.json({error:e.message},{status:e.status,headers:{"Cache-Control":"no-store"}});console.error(e);return Response.json({error: e instanceof Error ? e.message : "服務暫時無法使用，請稍後重試。"}, {status:500});}
+export function fail(e:unknown){if(e instanceof Error&&e.name==="PasswordCapacityError")return Response.json({error:"密碼服務忙碌，請稍後重試。"},{status:429,headers:{"Cache-Control":"no-store","Retry-After":"5"}});if(e instanceof AppError)return Response.json({error:e.message},{status:e.status,headers:{"Cache-Control":"no-store"}});console.error("[API] Unexpected server error");return Response.json({error:"服務暫時無法使用，請稍後重試。"}, {status:500,headers:{"Cache-Control":"no-store"}});}
 export function writeGuard(r:Request){const origin=r.headers.get("origin");if(!process.env.APP_ORIGIN||origin!==process.env.APP_ORIGIN)throw new AppError(403,"請從網站內送出操作。");}
 export function required(v:unknown,max=160){if(typeof v!=="string"||!v.trim()||v.length>max)throw new AppError(400,"請完整填寫欄位。");return v.trim();}
 export function instant(v:unknown){

@@ -1,3 +1,5 @@
+import {limitedBody,limitedJson,HttpSecurityError,clientIp} from "@/lib/http-security.mjs";
+import {recordRequestEvent,checkLoginRate} from "@/lib/activity-server";
 import {NextResponse} from "next/server";
 import {randomBytes} from "node:crypto";
 import {getConnection} from "@/lib/store.mjs";
@@ -6,17 +8,22 @@ import {sessionCookie} from "@/lib/auth";
 import {writeGuard,fail,AppError} from "@/lib/server";
 export const runtime="nodejs";export const dynamic="force-dynamic";
 let dummy:Promise<string>|undefined;
-export async function POST(r:Request){try{
- writeGuard(r);const p=await r.json() as any;if(!p||typeof p.email!=="string"||typeof p.password!=="string"||p.email.length>254||p.password.length>128)throw new AppError(400,"請輸入 Email 與密碼。");
+export async function POST(r:Request){let attempted="";try{
+ writeGuard(r);const p=await limitedJson(r,4096) as any;if(!p||typeof p.email!=="string"||typeof p.password!=="string"||p.email.length>254||p.password.length>128)throw new AppError(400,"請輸入 Email 與密碼。");
  const inputId=p.email.trim().toLowerCase(),d=getConnection(),now=Date.now();
+ attempted=inputId;checkLoginRate(r);
  // Reserve the attempt before expensive password verification to bound concurrent retries.
  d.prepare("INSERT INTO login_attempts(email,window_start,failures) VALUES(?,?,0) ON CONFLICT(email) DO UPDATE SET window_start=CASE WHEN window_start<? THEN excluded.window_start ELSE window_start END,failures=CASE WHEN window_start<? THEN 0 ELSE failures END").run(inputId,now,now-900000,now-900000);
  const attempt=d.prepare("UPDATE login_attempts SET failures=failures+1 WHERE email=? AND failures<5 RETURNING failures").get(inputId);
  if(!attempt)throw new AppError(429,"登入嘗試過多，請於 15 分鐘後再試。");
- const member=d.prepare("SELECT * FROM members WHERE email=? OR nickname=?").get(inputId, inputId) as any;
- dummy??=hashPassword(randomBytes(24).toString("hex"));
- const valid=await verifyPassword(p.password,member?.password_hash??await dummy);
+ let member=d.prepare("SELECT * FROM members WHERE email=? OR nickname=?").get(inputId, inputId) as any;
+ const encoded=member?.password_hash??await (dummy??=hashPassword(randomBytes(24).toString("hex")).catch(error=>{dummy=undefined;throw error;}));
+ const valid=await verifyPassword(p.password,encoded);
  if(!member||!valid)throw new AppError(401,"Email 或密碼不正確 / Incorrect email or password.");
+ // A password reset/disable may finish while scrypt verification is in flight.
+ const current=d.prepare("SELECT * FROM members WHERE email=?").get(member.email) as any;
+ if(!current||current.password_hash!==member.password_hash)throw new AppError(401,"Email 或密碼不正確 / Incorrect email or password.");
+ member=current;
  d.prepare("DELETE FROM login_attempts WHERE email=?").run(inputId);
  if(!member.active){
    const profile=d.prepare("SELECT registration_status FROM member_profiles WHERE email=?").get(member.email) as any;
@@ -28,12 +35,13 @@ export async function POST(r:Request){try{
  d.prepare("INSERT INTO sessions(token_hash,email,expires_at) VALUES(?,?,?)").run(tokenHash(token),member.email,now+43200000);
  try {
    const nowIso = new Date().toISOString();
-   const ip = r.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || r.headers.get("x-real-ip") || "127.0.0.1";
+   const ip = clientIp(r);
    const ua = r.headers.get("user-agent")?.slice(0, 255) || "";
    d.prepare("UPDATE members SET login_count = COALESCE(login_count, 0) + 1, last_login_at = ? WHERE email = ?").run(nowIso, member.email);
    d.prepare("INSERT INTO login_logs (email, ip, user_agent, created_at) VALUES (?, ?, ?, ?)").run(member.email, ip, ua, nowIso);
  } catch (err) {
    console.error("Failed to record login stats:", err);
  }
+ recordRequestEvent(r,{kind:"auth",event:"login",actor:member.email});
  const response=NextResponse.json({ok:true},{headers:{"Cache-Control":"no-store"}});response.cookies.set(sessionCookie(token));return response;
-}catch(e){return fail(e)}}
+}catch(e){recordRequestEvent(r,{kind:"auth",event:"login",target:attempted,outcome:"failure"});return fail(e instanceof HttpSecurityError?new AppError(e.status,e.message):e)}}
