@@ -544,3 +544,11 @@ HOBO 搜尋每頁 200 筆，透過 `next_cursor` / `cursor` 接續下一筆符�
 資料庫初始化會新增 `file_folders`、`file_groups`、`file_group_members`、`file_permissions` 及遷移狀態表，並在 `files` 加入資料夾欄位。舊檔案歸入「未分類」，既有 `file_grants` 一次性轉為不限期的檢視＋下載授權，保留原先存取；新上傳至未授權資料夾的檔案不自動公開。舊版管理 API 仍重新檢查新版權限，更新舊式會員名單不會刪除新設的資料夾或群組授權。部署前依既有流程備份 SQLite，部署後需重新啟動網站使初始化生效。
 
 驗證：`node --test tests/file-access.test.mjs tests/file-links.test.mjs tests/workspace-performance.test.mjs`；建置後執行 `node tests/file-management-http.mjs`，使用獨立暫存 SQLite、臨時 HTTP 伺服器及測試檔案，驗證真實上傳、群組、四種權限、授權期間、轉授撤銷、外部連結與舊 API 的存取限制，不連線正式資料或寄信。
+
+### 批量撤銷設備／地點資料授權
+
+管理員在「資料授權」可先依會員、授權類型或關鍵字篩選，再逐筆勾選或全選目前篩選結果，按「批量撤銷授權」。變更篩選會清除選取，確認視窗逐筆列出會員、設備／地點與日期；同一介面的單筆撤銷也使用相同檢查。
+
+後端 `revokeBulk` 每批接受 1 至 10000 筆授權快照，在同一交易內重新確認管理員仍啟用，並比對所選授權的會員、類型、標的及起訖時間。任何紀錄已異動／被刪除時整批回覆 409，不執行部分撤銷；資料庫中途失敗亦整批回滾。僅撤銷所選紀錄，其他個別或地點授權維持有效；撤銷地點授權會使設備失去該來源的繼承存取。完成後須重新指派才能恢復授權，這個操作不會刪除會員、設備或量測資料。
+
+驗證：`node --test tests/data-grants.test.mjs` 及建置後 `node tests/workspace-performance-http.mjs`，涵蓋篩選全選、確認內容、權限與來源檢查、資料異動競爭、交易回滾，以及撤銷後即時存取失效。

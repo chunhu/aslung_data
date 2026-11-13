@@ -90,9 +90,24 @@ try{
   assert.deepEqual(liveScope.realtimeDeviceIds,[]);assert.deepEqual(liveScope.devices,[]);assert.deepEqual(liveScope.locations,[]);assert.deepEqual(liveScope.downloadSegments,[]);
   const restrictedLive=await request('/api/realtime','member');assert.equal(restrictedLive.status,200);assert.deepEqual(await restrictedLive.json(),[]);
 
+  // Real HTTP batch revoke: only reviewed IDs, live admin checks and atomic stale protection.
+  const directId=Number(d.prepare("INSERT INTO grants(grant_type,device_id,email,start) VALUES('device','AL-0','member@test.invalid','2020-01-01T00:00:00Z')").run().lastInsertRowid);
+  d.prepare("INSERT INTO labs(id,created_at) VALUES('LAB','2020-01-01')").run();
+  const labId=Number(d.prepare("INSERT INTO grants(grant_type,lab_id,email,start) VALUES('lab','LAB','member@test.invalid','2020-01-01T00:00:00Z')").run().lastInsertRowid);
+  const beforeRevoke=d.prepare('SELECT COUNT(*) n FROM grants').get().n;
+  const reviewed=d.prepare('SELECT * FROM grants WHERE id IN (?,?)').all(directId,labId).map(row=>Object.fromEntries(['id','grant_type','device_id','lab_id','email','start','end'].map(key=>[key,row[key]??null])));
+  const revoke=(role,rows=reviewed,requestOrigin=base)=>fetch(base+'/api/manage',{method:'POST',headers:{Cookie:cookies.get(role),Origin:requestOrigin,'Content-Type':'application/json'},body:JSON.stringify({action:'revokeBulk',grants:rows})});
+  assert.equal((await revoke('member')).status,403);assert.equal((await revoke('admin',reviewed,'https://other.invalid')).status,403);
+  assert.equal((await revoke('admin',[reviewed[0],{...reviewed[1],email:'other@test.invalid'}])).status,409);
+  assert.equal(d.prepare('SELECT COUNT(*) n FROM grants').get().n,beforeRevoke);
+  const removed=await revoke('admin');assert.equal(removed.status,200);assert.equal(removed.headers.get('cache-control'),'no-store');assert.deepEqual(await removed.json(),{ok:true,revoked:2});
+  assert.equal(d.prepare('SELECT COUNT(*) n FROM grants').get().n,beforeRevoke-2);
+  assert.deepEqual((await (await request('/api/manage?scope=realtime','member')).json()).realtimeDeviceIds,[]);
+  assert.deepEqual(await (await request('/api/realtime','member')).json(),[]);
+
   d.prepare("UPDATE members SET active=0 WHERE email='member@test.invalid'").run();
   assert.equal((await request('/api/manage?scope=news','member')).status,401);
-  console.log(`PASS: standalone page scopes, 5 roles, admin cache settings, HOBO cursor pagination, revocation, disabled sessions, read-only initialization; payload full=${fullBytes}, news=${newsBytes} bytes.`);
+  console.log(`PASS: standalone page scopes, 5 roles, admin cache settings, HOBO cursor pagination, bulk grant revocation, disabled sessions, read-only initialization; payload full=${fullBytes}, news=${newsBytes} bytes.`);
 }finally{
   child.kill('SIGTERM');if(child.exitCode===null)await new Promise(r=>child.once('exit',r));
   d.close();rmSync(dir,{recursive:true,force:true});

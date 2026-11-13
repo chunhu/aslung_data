@@ -508,6 +508,11 @@ async function handlePOST(r: Request){try{
     }
   }
 }
+ else if(p.action==="revokeBulk"){
+  requireAdmin();const {revokeBulkGrants,DataGrantError}=await import("@/lib/data-grants.mjs");
+  try{return Response.json({ok:true,...revokeBulkGrants(getConnection(),me,{grants:p.grants})},{headers:{"Cache-Control":"no-store"}});}
+  catch(e){if(e instanceof DataGrantError)throw new AppError(e.status,e.message);throw e;}
+ }
  else if(p.action==="revoke"){requireAdmin();await db().prepare("DELETE FROM grants WHERE id=?").bind(required(p.id)).run();}
  else if(p.action==="transfer"){requireAdmin();const aslungId=required(p.aslungId),labId=required(p.labId),startTime=p.startTime?instant(p.startTime):new Date().toISOString();await db().prepare("BEGIN").run();try{await db().prepare("UPDATE device_locations SET end_time=?, active=0 WHERE aslung_id=? AND active=1").bind(startTime,aslungId).run();await db().prepare("INSERT INTO device_locations(lab_id,aslung_id,start_time,active) VALUES(?,?,?,1)").bind(labId,aslungId,startTime).run();await db().prepare("UPDATE devices SET location=? WHERE id=?").bind(labId,aslungId).run();await db().prepare("COMMIT").run();}catch(e){await db().prepare("ROLLBACK").run();throw e;}await syncDeviceStatusesAndLocations();}
  else if(p.action==="transferBulk"){requireAdmin();const aslungIds=p.aslungIds as string[],labId=required(p.labId),startTime=new Date().toISOString();if(!Array.isArray(aslungIds)||!aslungIds.length)throw new AppError(400,"請選擇要移轉的設備。");await db().prepare("BEGIN").run();try{for(const id of aslungIds){await db().prepare("UPDATE device_locations SET end_time=?, active=0 WHERE aslung_id=? AND active=1").bind(startTime,id).run();await db().prepare("INSERT INTO device_locations(lab_id,aslung_id,start_time,active) VALUES(?,?,?,1)").bind(labId,id,startTime).run();await db().prepare("UPDATE devices SET location=? WHERE id=?").bind(labId,id).run();}await db().prepare("COMMIT").run();}catch(e){await db().prepare("ROLLBACK").run();throw e;}await syncDeviceStatusesAndLocations();}
