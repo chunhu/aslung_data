@@ -86,6 +86,7 @@ test('HTTP boundary rejects anonymous/member writes and foreign origins; unpubli
 });
 function component(states=[]){let index=0;const tag=({children})=>React.createElement('div',null,children);return compile('components/PostsView.tsx',{
   react:{...React,useState:value=>[index<states.length?states[index++]:((index++,value)),()=>{}],useEffect:()=>{},useRef:value=>({current:value})},'react/jsx-runtime':jsx,
+  'next/dynamic':{default:()=>()=>null},'@/components/RichPostBody':{default:()=>null},
   'date-fns-tz':{formatInTimeZone},'@/components/ui/button':{Button:tag},'@/components/ui/input':{Input:props=>React.createElement('input',props)},'@/components/ui/textarea':{Textarea:props=>React.createElement('textarea',props)},
   'lucide-react':Object.fromEntries(['BellRing','FileText','Pin','Plus','ArrowLeft','Search'].map(key=>[key,()=>null])),
 });}

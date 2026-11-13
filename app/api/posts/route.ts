@@ -1,3 +1,4 @@
+import {limitedJson,HttpSecurityError} from '@/lib/http-security.mjs';
 import {auditOperation} from "@/lib/activity-server";
 import {identity,writeGuard,AppError,fail} from '@/lib/server';
 import {getConnection} from '@/lib/store.mjs';
@@ -5,7 +6,7 @@ import {PostError,listPosts,getPost,savePost} from '@/lib/posts.mjs';
 export const runtime='nodejs';
 export const dynamic='force-dynamic';
 const headers={'Cache-Control':'no-store'};
-function failure(e:unknown){return fail(e instanceof PostError?new AppError(e.status,e.message):e);}
+function failure(e:unknown){return fail(e instanceof PostError||e instanceof HttpSecurityError?new AppError(e.status,e.message):e);}
 export async function GET(req:Request){try{
   const me=await identity(req),url=new URL(req.url),manage=url.searchParams.get('manage')==='1';
   const id=url.searchParams.get('id');
@@ -18,9 +19,9 @@ export async function GET(req:Request){try{
 async function handlePOST(req: Request){try{
   writeGuard(req);const me=await identity(req);
   if(me.role!=='admin')throw new AppError(403,'只有系統管理員可以發布或管理內容。');
-  const raw=await req.text();if(new TextEncoder().encode(raw).length>256000)throw new AppError(413,'貼文內容過大。');
-  let body;try{body=JSON.parse(raw);}catch{throw new AppError(400,'貼文格式不正確。');}
-  return Response.json(savePost(getConnection(),me,body),{headers});
+  const body=await limitedJson(req,1500000);
+  const current=await identity(req);if(current.role!=='admin')throw new AppError(403,'管理權限已變更，請重新登入。');
+  return Response.json(savePost(getConnection(),current,body),{headers});
 }catch(e){return failure(e);}}
 
 export async function POST(request:Request){return auditOperation(request,()=>handlePOST(request as any));}

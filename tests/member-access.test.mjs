@@ -36,7 +36,7 @@ test('two-role migration preserves members, preferences, sessions, grants, index
     assert.equal(d.prepare('SELECT COUNT(*) n FROM members').get().n,2);assert.equal(d.prepare('SELECT COUNT(*) n FROM sessions').get().n,1);assert.equal(d.prepare('SELECT COUNT(*) n FROM grants').get().n,1);
     assert.equal(d.prepare("SELECT alert_email_enabled FROM members WHERE email='member@test'").get().alert_email_enabled,0);
     assert.deepEqual(d.prepare('PRAGMA foreign_key_check').all(),[]);assert.equal(d.prepare('PRAGMA foreign_keys').get().foreign_keys,1);
-    for(const role of ['device_manager','calibration_manager','viewer','member'])d.prepare("UPDATE members SET role=? WHERE email='member@test'").run(role);
+    for(const role of ['device_manager','calibration_manager','viewer','member','basic'])d.prepare("UPDATE members SET role=? WHERE email='member@test'").run(role);
     assert.throws(()=>d.prepare("UPDATE members SET role='superuser' WHERE email='member@test'").run(),/CHECK/);
     assert.throws(()=>d.prepare("INSERT INTO members(email,user_id,role) VALUES('new@test','member','member')").run(),/UNIQUE/);
   }finally{d.close();}
@@ -67,11 +67,11 @@ test('self changes, pending registrations, invalid roles, member escalation and 
   }finally{d.close();}
 });
 test('capabilities separate calibration, equipment, data export and viewer writes',()=>{
-  assert.equal(Object.keys(permissions.MEMBER_ROLES).length,5);
+  assert.equal(Object.keys(permissions.MEMBER_ROLES).length,6);
   for(const role of Object.keys(permissions.MEMBER_ROLES)){
     assert.equal(permissions.canManageCalibration({role}),['admin','calibration_manager'].includes(role));
     assert.equal(permissions.canManageDevices({role}),['admin','device_manager'].includes(role));
-    assert.equal(permissions.canExportData({role}),role!=='viewer');assert.equal(permissions.canWriteMaintenance({role}),role!=='viewer');
+    assert.equal(permissions.canExportData({role}),!['viewer','basic'].includes(role));assert.equal(permissions.canWriteMaintenance({role}),!['viewer','basic'].includes(role));
   }
   assert.equal(permissions.canExportData({role:'unknown'}),false);
 });
@@ -117,4 +117,24 @@ test('a stale administrator identity cannot grant roles after system access is r
     assert.equal(d.prepare("SELECT role FROM members WHERE email='member@test'").get().role,'member');
     assert.equal(d.prepare('SELECT COUNT(*) n FROM member_access_events').get().n,0);
   }finally{d.close();}
+});
+
+test('five-role migration adds general members without changing existing file grants, groups or sessions',()=>{
+ const d=fixture();try{
+  access.ensureMemberAccessSchema(d);
+  // Simulate a database from the previous release with five allowed roles.
+  d.exec('PRAGMA foreign_keys=OFF; BEGIN');
+  const original=d.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='members'").get().sql;
+  d.exec(original.replace('CREATE TABLE "members"','CREATE TABLE old_roles').replace('CREATE TABLE members(','CREATE TABLE old_roles(').replace(",'basic'",''));
+  d.exec('INSERT INTO old_roles SELECT * FROM members; DROP TABLE members; ALTER TABLE old_roles RENAME TO members; COMMIT; PRAGMA foreign_keys=ON');
+  d.exec(`CREATE TABLE files(id TEXT PRIMARY KEY,uploader_email TEXT REFERENCES members(email) ON DELETE CASCADE);
+    CREATE TABLE file_permissions(id TEXT PRIMARY KEY,user_email TEXT REFERENCES members(email) ON DELETE CASCADE ON UPDATE CASCADE);
+    CREATE TABLE file_group_members(group_id TEXT,email TEXT REFERENCES members(email) ON DELETE CASCADE ON UPDATE CASCADE);
+    INSERT INTO files VALUES('f','member@test');INSERT INTO file_permissions VALUES('p','member@test');INSERT INTO file_group_members VALUES('g','member@test');`);
+  access.ensureMemberAccessSchema(d);access.ensureMemberAccessSchema(d);
+  d.prepare("UPDATE members SET role='basic' WHERE email='member@test'").run();
+  for(const table of ['sessions','grants','files','file_permissions','file_group_members'])assert.equal(d.prepare('SELECT COUNT(*) n FROM '+table).get().n,1,table);
+  assert.deepEqual(d.prepare('PRAGMA foreign_key_check').all(),[]);
+  assert.equal(permissions.roleLabel('basic'),'一般會員');assert.equal(permissions.roleLabel('viewer'),'資料檢視會員');
+ }finally{d.close();}
 });

@@ -6,7 +6,7 @@ import {Input} from '@/components/ui/input';
 import {Dialog,DialogContent,DialogHeader,DialogTitle,DialogDescription} from '@/components/ui/dialog';
 import {toast} from 'sonner';
 type Props={member:{email:string;name:string;role:string};devices:{id:string;description?:string;location?:string}[];api:(url:string,options?:RequestInit)=>Promise<any>;onClose:()=>void;onSaved:()=>Promise<void>;isEnglish:boolean};
-const descriptions:Record<string,string>={admin:'管理全部系統、會員與資料。',device_manager:'僅可修改下方指定設備的狀態、部署、負責人及維修紀錄；量測資料仍需另外授權。',calibration_manager:'管理全部校正來源、同步與參數查詢；量測資料仍需另外授權。',member:'依既有設備、地點與資料期間授權查詢及下載。',viewer:'依既有授權查詢；禁止資料下載、批次匯出及維修寫入。'};
+const descriptions:Record<string,string>={basic:'僅可使用最新消息、文章專區與檔案專區；檔案仍須另外授權，無法使用設備、量測資料或 API 串接。',admin:'管理全部系統、會員與資料。',device_manager:'僅可修改下方指定設備的狀態、部署、負責人及維修紀錄；量測資料仍需另外授權。',calibration_manager:'管理全部校正來源、同步與參數查詢；量測資料仍需另外授權。',member:'依既有設備、地點與資料期間授權查詢及下載。',viewer:'依既有授權查詢；禁止資料下載、批次匯出及維修寫入。'};
 export default function MemberAccessDialog(p:Props){
   const [role,setRole]=useState(p.member.role),[ids,setIds]=useState<Set<string>>(new Set()),[search,setSearch]=useState(''),[busy,setBusy]=useState(false),[ready,setReady]=useState(false),[error,setError]=useState(''),[events,setEvents]=useState<any[]>([]);
   useEffect(()=>{let live=true;void p.api('/api/member-access?'+new URLSearchParams({email:p.member.email})).then(data=>{if(live){setIds(new Set(data.device_ids));setEvents(data.events);setReady(true);}}).catch(e=>{if(live)setError(e.message);});return()=>{live=false;};},[p.member.email,p.api]);

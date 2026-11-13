@@ -98,11 +98,15 @@ function parseCsvRows(text: string): string[][] {
 }
 
 export async function GET(request:Request){try{
- const m=await identity();const isAdmin=m.role==="admin";
+ const m=await identity(request);const isAdmin=m.role==="admin";
  // Keep legacy clients compatible; the workspace requests only its current page.
  const scope=request?new URL(request.url).searchParams.get('scope')||'full':'full';
  const scopes=['full','bootstrap','news','articles','realtime','data','devices','maintenance','calibration','personal','hobo','members','permissions','locations','labs','maintainers','alerts','files','connection','activity'];
  if(!scopes.includes(scope))throw new AppError(400,'無效的工作空間頁面。');
+ if(m.role==='basic'){
+   if(!['full','bootstrap','news','articles','files'].includes(scope))throw new AppError(403,'一般會員僅可使用最新消息、文章專區與檔案專區。');
+   return Response.json({scope,me:{email:m.email,name:m.name,role:m.role,login_count:m.login_count||0,...(await db().prepare('SELECT * FROM member_profiles WHERE email=?').bind(m.email).first()||{})},isMaintainer:false,realtimeDeviceIds:[],summary:null,devices:[],downloadSegments:[],members:[],grants:[],locations:[],tokens:[],files:[],fileGrants:[],labs:[],maintainers:[],alertChecks:[],alertLogs:[],grantRequests:[],alertSettings:{},connected:false,siteStats:getSiteStats()},{headers:{'Cache-Control':'no-store'}});
+ }
  const needs=(...pages:string[])=>scope==='full'||pages.includes(scope);
  const needDevices=needs('realtime','data','devices','permissions','locations','labs','maintainers','alerts','members');
  const needAlerts=needs('alerts');
@@ -326,6 +330,7 @@ async function handlePOST(r: Request){try{
  writeGuard(r);const me=await identity(r);const isAdmin=me.role==="admin";const p=await limitedJson(r,16*1024*1024) as Record<string,unknown>;if(!p||typeof p!=="object"||Array.isArray(p))throw new AppError(400,"請提供正確的表單資料。");
  setActivityAction(r,p.action,p.email??p.device_id??p.id??'');
  const requireAdmin=()=>{if(!isAdmin)throw new AppError(403,"權限不足。")};
+  if(me.role==='basic'&&p.action!=='profileUpdate')throw new AppError(403,'一般會員不可操作設備、資料或 API 授權設定。');
   if(p.action==="alertEmailPreference"){
     const email=p.email===undefined?me.email:required(p.email,254).toLowerCase();
     if(!isAdmin&&email.toLowerCase()!==me.email.toLowerCase())throw new AppError(403,"只能修改自己的告警收信設定。");
@@ -359,10 +364,12 @@ async function handlePOST(r: Request){try{
  if(!validPassword(p.password)) throw new AppError(400,"初始密碼需為 12 至 128 個字元。");
  const hash = await hashPassword(p.password);
  const profile = validateProfile(p,false);
+ const initialRole=p.role===undefined?'member':p.role;
+ if(!['basic','member','viewer'].includes(String(initialRole)))throw new AppError(400,'建立會員請選擇一般會員、研究會員或資料檢視會員；管理角色請於建立後設定。');
  
  await db().prepare("BEGIN IMMEDIATE").run();
  try {
-   await db().prepare("INSERT INTO members(email,user_id,name,nickname,role,active,password_hash) VALUES(?,?,?,?,'member',1,?)").bind(email,crypto.randomUUID(),required(p.name),nickname,hash).run();
+   await db().prepare("INSERT INTO members(email,user_id,name,nickname,role,active,password_hash) VALUES(?,?,?,?,?,1,?)").bind(email,crypto.randomUUID(),required(p.name),nickname,initialRole,hash).run();
    saveProfile(getConnection(),email,profile);
    await db().prepare("COMMIT").run();
  } catch(e) {

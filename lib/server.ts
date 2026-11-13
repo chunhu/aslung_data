@@ -31,6 +31,7 @@ export async function identity(r?: Request){
  const emailLower = email.toLowerCase();
  const m:any=await db().prepare("SELECT * FROM members WHERE email=?").bind(emailLower).first();
  if(!m||!m.active)throw new AppError(403,"此帳號尚未開通會員權限，請聯絡管理員。");
+ if(m.role==='basic'&&r&&!['/api/manage','/api/files','/api/posts','/api/posts/images','/api/auth/password'].includes(new URL(r.url).pathname))throw new AppError(403,'一般會員僅可使用最新消息、文章專區與檔案專區。');
  if(userId){
    if(m.user_id&&m.user_id!==userId)throw new AppError(403,"帳號識別不符，請聯絡管理員。");
    if(!m.user_id)await db().prepare("UPDATE members SET user_id=? WHERE email=? AND user_id IS NULL").bind(userId,emailLower).run();

@@ -228,3 +228,25 @@ div[id*="goog-gt-tt"] {
 .workspace-brand>div:nth-child(2){min-width:0;flex:1}.workspace-brand strong,.workspace-brand span{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
 .workspace-brand .site-brand-title{flex:1;min-width:0}.workspace-brand .site-brand-title strong{display:block;font-size:17px;letter-spacing:0;line-height:1.35;overflow-wrap:break-word}.workspace-brand .site-brand-title span{letter-spacing:0;line-height:1.5}
+
+/* Shared rich post layout for editor and safe reader output. */
+.post-rich-content{line-height:1.8;overflow-wrap:anywhere;color:#334155;min-width:0}
+.post-rich-content p{margin:.5em 0;white-space:pre-wrap;min-height:1.2em}
+.post-rich-content h1{font-size:2em;font-weight:700;margin:1em 0 .5em}
+.post-rich-content h2{font-size:1.6em;font-weight:700;margin:1em 0 .5em}
+.post-rich-content h3{font-size:1.3em;font-weight:650;margin:1em 0 .5em}
+.post-rich-content h4{font-size:1.1em;font-weight:650;margin:1em 0 .5em}
+.post-rich-content ul{list-style:disc;padding-left:1.6em;margin:.7em 0}
+.post-rich-content ol{list-style:decimal;padding-left:1.6em;margin:.7em 0}
+.post-rich-content blockquote{border-left:4px solid #5dc5b0;padding:.4em 1em;margin:1em 0;background:#f0fdfa}
+.post-rich-content a{color:#0f766e;text-decoration:underline}
+.post-rich-content img{max-width:100%;height:auto;object-fit:contain;margin:1em 0;border-radius:4px}
+.post-rich-content table{border-collapse:collapse;width:100%;table-layout:auto;margin:1em 0}
+.post-rich-content td,.post-rich-content th{border:1px solid #cbd5e1;padding:8px!important;height:auto!important;min-width:50px;vertical-align:top;font-size:inherit}
+.post-rich-content th{font-weight:600!important;background:#f1f5f9}
+.post-rich-content pre{overflow:auto;white-space:pre;padding:1em;border-radius:6px;background:#0f172a;color:#e2e8f0}
+.post-rich-content :not(pre)>code{background:#f1f5f9;border-radius:3px;padding:.1em .3em}
+.post-rich-content hr{border-top:1px solid #cbd5e1;margin:1em 0}
+.post-rich-content .ProseMirror-selectednode{outline:2px solid #0d9488}
+.post-rich-content .selectedCell{background:#ccfbf1}
+.post-rich-content [data-resize-handle]{background:#0d9488;width:10px;height:10px;border:1px solid white;border-radius:2px}
