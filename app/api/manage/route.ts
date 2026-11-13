@@ -1,3 +1,4 @@
+import {grantOnlyRealtime,currentRealtimeGrants} from "@/lib/realtime-access.mjs";
 import {limitedBody,limitedJson,HttpSecurityError} from "@/lib/http-security.mjs";
 import {auditOperation,setActivityAction} from "@/lib/activity-server";
 import {getConnection} from "@/lib/store.mjs";
@@ -287,7 +288,7 @@ export async function GET(request:Request){try{
 `).all()).results:[];
  const locations=needLocations?(await db().prepare("SELECT * FROM device_locations ORDER BY start_time DESC").all()).results:[];
  const tokens=needs('connection')?(await db().prepare("SELECT id, created_at FROM api_tokens WHERE email=? ORDER BY created_at DESC").bind(m.email).all()).results:[];
- const files=needFiles?(await (isAdmin?db().prepare("SELECT * FROM files ORDER BY created_at DESC"):db().prepare("SELECT f.* FROM files f JOIN file_grants fg ON fg.file_id=f.id WHERE fg.email=? ORDER BY f.created_at DESC").bind(m.email)).all()).results:[];
+ const files=needFiles?(await import('@/lib/file-access.mjs')).accessibleFileMetadata(getConnection(),m):[];
  const fileGrants=isAdmin&&needFiles?(await db().prepare("SELECT * FROM file_grants").all()).results:[];
  const labs=needLabs?(await db().prepare("SELECT * FROM labs ORDER BY id").all()).results:[];
  const maintainers=needMaintainers?(await db().prepare("SELECT * FROM maintainers ORDER BY name").all()).results:[];
@@ -301,14 +302,18 @@ export async function GET(request:Request){try{
  alertSettings.realtime_cache_secs = normalizeRealtimeCacheSeconds(alertSettings.realtime_cache_secs);
  alertSettings.realtime_interval_secs = normalizeRealtimeInterval(alertSettings.realtime_interval_secs, true);
 
+ const realtimeGrants=grantOnlyRealtime(m)&&needDevices?await currentRealtimeGrants(async(sql:string,args:any[])=>{const result=await db().prepare(sql).bind(...args).all();return result.results;},m):null;
+ const realtimeDeviceIds=realtimeGrants?[...realtimeGrants.keys()]:null;
+ if(scope==='realtime'&&realtimeGrants)devices=devices.filter(device=>realtimeGrants.has(device.id));
  const siteStats=getSiteStats();
- const permittedSegments=needSegments?await downloadSegments(m):[];
+ let permittedSegments=needSegments?await downloadSegments(m):[];
+ if(scope==='realtime'&&realtimeGrants)permittedSegments=permittedSegments.filter((segment:any)=>realtimeGrants.has(segment.id));
  const segmentIds=new Set(permittedSegments.map((segment:any)=>segment.segment_id));
  const visibleLocations=isAdmin?locations:locations.filter((location:any)=>segmentIds.has(String(location.id)));
  const visibleNames=new Set(visibleLocations.map((location:any)=>String(location.maintainer||"").trim()).filter(Boolean));
  const visibleMaintainers=isAdmin?maintainers:maintainers.filter((person:any)=>String(person.email||"").toLowerCase()===m.email.toLowerCase()||visibleNames.has(String(person.name||"").trim())).map((person:any)=>({name:person.name,english_name:person.english_name||"",email:person.email}));
  return Response.json({
-   scope, isMaintainer:navMaintainer,
+   scope, realtimeDeviceIds, isMaintainer:navMaintainer,
    summary:isAdmin?{devices:(await db().prepare('SELECT COUNT(*) n FROM devices').first())?.n||0,members:(await db().prepare("SELECT COUNT(*) n FROM members WHERE active=1 AND role='member'").first())?.n||0,grants:(await db().prepare('SELECT COUNT(*) n FROM grants').first())?.n||0}:null,
    me:{alert_email_enabled:((await db().prepare("SELECT alert_email_enabled FROM members WHERE email=?").bind(m.email).first()) as any)?.alert_email_enabled ?? 1,email:m.email,name:m.name,role:m.role,allowMaintainerNameMatch:m.allowMaintainerNameMatch,login_count:m.login_count||0,last_login_at:m.last_login_at||null,...(await db().prepare("SELECT * FROM member_profiles WHERE email=?").bind(m.email).first()||{})},
    devices,downloadSegments:permittedSegments,members,grants,locations:visibleLocations,tokens,files,fileGrants,
@@ -789,32 +794,10 @@ async function handlePOST(r: Request){try{
     ON CONFLICT(id) DO UPDATE SET realtime_interval_secs = excluded.realtime_interval_secs
   `).bind(secs).run();
   return Response.json({ok:true,realtime_interval_secs:secs});
-} else if(p.action==="fileDelete"){
-  requireAdmin();
-  const fileId=required(p.id);
-  const file:any=await db().prepare("SELECT * FROM files WHERE id=?").bind(fileId).first();
-  if(file){
-    if(!file.external_url&&file.storage_path){try{const fsMod=await import("node:fs");if(fsMod.existsSync(file.storage_path))fsMod.unlinkSync(file.storage_path);}catch{}}
-    await db().prepare("DELETE FROM file_grants WHERE file_id=?").bind(fileId).run();
-    await db().prepare("DELETE FROM files WHERE id=?").bind(fileId).run();
-  }
-} else if(p.action==="fileGrantsUpdate"){
-  requireAdmin();
-  const fileId=required(p.fileId);
-  const emails=p.emails as string[];
-  if(!Array.isArray(emails))throw new AppError(400,"成員名單格式不正確。");
-  await db().prepare("BEGIN").run();
-  try{
-    await db().prepare("DELETE FROM file_grants WHERE file_id=?").bind(fileId).run();
-    const insertGrant=db().prepare("INSERT OR IGNORE INTO file_grants (file_id, email, created_at) VALUES (?, ?, ?)");
-    const now=new Date().toISOString();
-    for(const em of emails){
-      if(typeof em==="string"&&em.trim()){
-        insertGrant.bind(fileId, em.trim().toLowerCase(), now).run();
-      }
-    }
-    await db().prepare("COMMIT").run();
-  }catch(e){await db().prepare("ROLLBACK").run();throw e;}
+} else if(p.action==="fileDelete"||p.action==="fileGrantsUpdate"){
+  requireAdmin();const access=await import('@/lib/file-access.mjs');
+  try{return Response.json(p.action==='fileDelete'?access.deleteManagedFile(getConnection(),me,required(p.id)):access.replaceLegacyFileGrants(getConnection(),me,required(p.fileId),p.emails),{headers:{'Cache-Control':'no-store'}});}
+  catch(e){if(e instanceof access.FileAccessError)throw new AppError(e.status,e.message);throw e;}
 } else if(p.action==="alertLogDelete"){
   requireAdmin();
   const id=Number(p.id);

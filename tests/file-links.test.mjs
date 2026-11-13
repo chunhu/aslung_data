@@ -12,10 +12,11 @@ import React from 'react';
 import * as jsx from 'react/jsx-runtime';
 import {renderToStaticMarkup} from 'react-dom/server';
 import * as links from '../lib/file-links.mjs';
+import * as fileAccess from '../lib/file-access.mjs';
 const admin={email:'admin@test.invalid',role:'admin'};
 const input=(extra={})=>({name:'外部報告',url:'https://storage.example.invalid/report.pdf?signature=A%2BB&expires=999',description:'Report',emails:['member@test.invalid'],...extra});
 function fixture(){const d=new DatabaseSync(':memory:');d.exec(`PRAGMA foreign_keys=ON;
- CREATE TABLE members(email TEXT PRIMARY KEY);INSERT INTO members VALUES('admin@test.invalid'),('member@test.invalid'),('other@test.invalid');
+ CREATE TABLE members(email TEXT PRIMARY KEY,role TEXT DEFAULT 'member',active INTEGER DEFAULT 1);INSERT INTO members(email) VALUES('admin@test.invalid'),('member@test.invalid'),('other@test.invalid');UPDATE members SET role='admin' WHERE email='admin@test.invalid';
  CREATE TABLE files(id TEXT PRIMARY KEY,name TEXT NOT NULL,size INTEGER NOT NULL,mime_type TEXT NOT NULL,description TEXT,uploader_email TEXT REFERENCES members(email),storage_path TEXT NOT NULL,download_count INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL);
  CREATE TABLE file_grants(id INTEGER PRIMARY KEY,file_id TEXT REFERENCES files(id) ON DELETE CASCADE,email TEXT REFERENCES members(email),created_at TEXT,UNIQUE(file_id,email));
  INSERT INTO files VALUES('local','Local report',12,'text/plain','','admin@test.invalid','/existing/report.txt',7,'2026-10-01');
@@ -37,14 +38,14 @@ test('migration preserves uploaded files and grants, and external links are stor
  assert.equal(d.prepare("SELECT COUNT(*) n FROM file_grants WHERE file_id='local'").get().n,1);
  assert.throws(()=>links.createFileLink(d,admin,input({emails:['unknown@test.invalid']})),e=>e.status===400);
  assert.equal(d.prepare('SELECT COUNT(*) n FROM files').get().n,2);
- for(const role of ['member','viewer','device_manager','calibration_manager'])assert.throws(()=>links.createFileLink(d,{...admin,role},input()),e=>e.status===403);
+ for(const role of ['member','viewer','device_manager','calibration_manager'])assert.throws(()=>links.createFileLink(d,{email:'member@test.invalid',role},input()),e=>e.status===403);
  d.close();
 });
 function routes(d){
  class AppError extends Error{constructor(status,message){super(message);this.status=status;}}
  const calls=[];const fs={existsSync:()=>{calls.push('exists');return true;},statSync:()=>({size:11}),createReadStream:()=>{calls.push('read');return activityNodeStream.Readable.from([Buffer.from('local bytes')]);},unlinkSync:()=>{calls.push('unlink');},mkdirSync:()=>{calls.push('mkdir');},writeFileSync:()=>{calls.push('write');}};
  const db=()=>({prepare(sql){let args=[];return {bind(...values){args=values;return this;},async first(){return d.prepare(sql).get(...args);},async all(){return {results:d.prepare(sql).all(...args)};},async run(){return d.prepare(sql).run(...args);}};}});
- const route=compile('app/api/files/route.ts',{'node:fs':{default:fs,...fs},'node:path':{default:path},'node:crypto':{default:crypto},'@/lib/store.mjs':{getConnection:()=>d},'@/lib/file-links.mjs':links,'@/lib/activity-server':activityAuditMock,'@/lib/http-security.mjs':activityHttpSecurity,'node:stream':activityNodeStream,'@/lib/server':{
+ const route=compile('app/api/files/route.ts',{'node:fs':{default:fs,...fs},'node:path':{default:path},'node:crypto':{default:crypto,...crypto},'@/lib/store.mjs':{getConnection:()=>d},'@/lib/file-links.mjs':links,'@/lib/file-access.mjs':fileAccess,'@/lib/activity-server':activityAuditMock,'@/lib/http-security.mjs':activityHttpSecurity,'node:stream':activityNodeStream,'@/lib/server':{
   AppError,db,identity:async req=>{const role=req.headers.get('test-role');if(!role)throw new AppError(401,'login');return {role,email:req.headers.get('test-email')||`${role}@test.invalid`};},
   writeGuard:req=>{if(req.headers.get('origin')!=='https://app.invalid')throw new AppError(403,'origin');},fail:e=>Response.json({error:e.message},{status:e.status||500}),
  }});return {route,calls};
@@ -59,7 +60,7 @@ test('file API grants protect redirects and lists, counts authorized opens and n
  const opened=await route.GET(request(`?id=${fileId}&download=1`,'member'));assert.equal(opened.status,303);assert.equal(opened.headers.get('location'),input().url);
  assert.match(opened.headers.get('cache-control'),/no-store/);assert.equal(opened.headers.get('referrer-policy'),'no-referrer');assert.equal(d.prepare('SELECT download_count FROM files WHERE id=?').get(fileId).download_count,1);
  assert.deepEqual(calls,[]);assert.equal((await (await route.GET(request('','member'))).json()).files.length,2);assert.equal((await (await route.GET(request('','other'))).json()).files.length,0);
- d.prepare('DELETE FROM file_grants WHERE file_id=?').run(fileId);assert.equal((await route.GET(request(`?id=${fileId}&download=1`,'member'))).status,403);
+ fileAccess.replaceLegacyFileGrants(d,admin,fileId,[]);assert.equal((await route.GET(request(`?id=${fileId}&download=1`,'member'))).status,403);
  const local=await route.GET(request('?id=local&download=1','member'));assert.equal(local.status,200);assert.equal(await local.text(),'local bytes');assert.deepEqual(calls,['exists','read']);calls.length=0;
  d.prepare('UPDATE files SET storage_path=? WHERE id=?').run('/should-never-be-touched',fileId);
  const deleted=await route.POST(request('','admin',{method:'POST',body:JSON.stringify({action:'fileDelete',id:fileId})}));assert.equal(deleted.status,200);assert.deepEqual(calls,[]);assert.equal(d.prepare('SELECT COUNT(*) n FROM files WHERE id=?').get(fileId).n,0);d.close();

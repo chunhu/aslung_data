@@ -1,3 +1,4 @@
+import * as realtimeAccess from '../lib/realtime-access.mjs';
 import * as activityAuditMock from './helpers/activity-audit.mjs';
 import * as activityHttpSecurity from '../lib/http-security.mjs';
 import * as activityNodeStream from 'node:stream';
@@ -31,11 +32,11 @@ test('registration and admin API enforce origin, review permissions, activation 
   const mailer={verify:async mail=>{capturedMail=mail;},review:async()=>{throw new Error('Isolated test: SMTP unavailable');}};
   const commonServer={...server,identity:async()=>actor};
   const register=load('../app/api/auth/register/route.ts',{
-    '@/lib/store.mjs':{getConnection:()=>d},'@/lib/registration.mjs':registration,'@/lib/registration-mail':{registrationMailer:()=>mailer},'@/lib/activity-server':activityAuditMock,'@/lib/http-security.mjs':activityHttpSecurity,'node:stream':activityNodeStream,'@/lib/server':commonServer
+    '@/lib/store.mjs':{getConnection:()=>d},'@/lib/registration.mjs':registration,'@/lib/registration-mail':{registrationMailer:()=>mailer},'@/lib/activity-server':activityAuditMock,'@/lib/http-security.mjs':activityHttpSecurity,'node:stream':activityNodeStream,'@/lib/realtime-access.mjs':realtimeAccess,'@/lib/server':commonServer
   });
   const manage=load('../app/api/manage/route.ts',{
     '@/lib/member-access.mjs':access,'node:crypto':{...crypto,default:crypto},'@/lib/store.mjs':{getConnection:()=>d},'@/lib/registration.mjs':registration,
-    '@/lib/registration-mail':{registrationMailer:()=>mailer},'@/lib/activity-server':activityAuditMock,'@/lib/http-security.mjs':activityHttpSecurity,'node:stream':activityNodeStream,'@/lib/server':commonServer,'@/lib/realtime-settings.mjs':realtime,'@/lib/passwords.mjs':passwords
+    '@/lib/registration-mail':{registrationMailer:()=>mailer},'@/lib/activity-server':activityAuditMock,'@/lib/http-security.mjs':activityHttpSecurity,'node:stream':activityNodeStream,'@/lib/realtime-access.mjs':realtimeAccess,'@/lib/server':commonServer,'@/lib/realtime-settings.mjs':realtime,'@/lib/passwords.mjs':passwords
   });
   const oldOrigin=process.env.APP_ORIGIN;process.env.APP_ORIGIN='http://localhost:3001';
   const request=(payload,origin=process.env.APP_ORIGIN)=>new Request('http://localhost:3001/api',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify(payload)});
@@ -86,7 +87,7 @@ test('login explains registration status only after password verification and is
   const login=load('../app/api/auth/login/route.ts',{
     'next/server':{NextResponse:{json:body=>Object.assign(Response.json(body),{cookies:{set:()=>{}}})}},
     'node:crypto':crypto,'@/lib/store.mjs':{getConnection:()=>d},'@/lib/passwords.mjs':passwords,
-    '@/lib/auth':{sessionCookie:()=>({})},'@/lib/activity-server':activityAuditMock,'@/lib/http-security.mjs':activityHttpSecurity,'node:stream':activityNodeStream,'@/lib/server':server
+    '@/lib/auth':{sessionCookie:()=>({})},'@/lib/activity-server':activityAuditMock,'@/lib/http-security.mjs':activityHttpSecurity,'node:stream':activityNodeStream,'@/lib/realtime-access.mjs':realtimeAccess,'@/lib/server':server
   });
   const oldOrigin=process.env.APP_ORIGIN;process.env.APP_ORIGIN='http://localhost:3001';
   const input={name:'Login applicant',nickname:'login-applicant',email:'login-applicant@example.test',password:'Login-Applicant-2026',confirm_password:'Login-Applicant-2026',country:'US',institution:'Institute',project_name:'Project',project_summary:'Research project.'};

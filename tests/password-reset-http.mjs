@@ -55,7 +55,7 @@ try{
   const upload=await fetch(origin+'/api/files',{method:'POST',headers:{Cookie:adminHeaders.Cookie,Origin:origin},body:form});assert.equal(upload.status,200);
   const fileId=(await upload.json()).fileId,storedFile=d.prepare('SELECT storage_path FROM files WHERE id=?').get(fileId);
   try{
-    const response=await fetch(origin+'/api/files?id='+fileId,{headers:adminHeaders});assert.equal(response.status,200);assert.match(response.headers.get('content-disposition'),/^attachment/);assert.match(response.headers.get('content-security-policy'),/sandbox/);assert.equal(response.headers.get('content-type'),'application/octet-stream');await response.text();
+    const response=await fetch(origin+'/api/files?id='+fileId+'&download=1',{headers:adminHeaders});assert.equal(response.status,200);assert.match(response.headers.get('content-disposition'),/^attachment/);assert.match(response.headers.get('content-security-policy'),/sandbox/);assert.equal(response.headers.get('content-type'),'application/octet-stream');await response.text();
     assert.equal((await fetch(origin+'/api/files?id='+fileId,{headers:memberHeaders})).status,403);
   }finally{rmSync(storedFile.storage_path,{force:true});}
   const audit=await fetch(origin+'/api/activity',{headers:adminHeaders});assert.match(audit.headers.get('cache-control'),/no-store/);const auditText=await audit.text();

@@ -1,3 +1,4 @@
+import {grantOnlyRealtime,currentRealtimeGrants,canReadRealtime} from "@/lib/realtime-access.mjs";
 import {identity, fail, db} from "@/lib/server";
 import {normalizeRealtimeCacheSeconds} from "@/lib/realtime-settings.mjs";
 import {getPool} from "@/lib/data";
@@ -7,6 +8,10 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 async function authorizedDevices(store:ReturnType<typeof db>,m:any,extraIds:string[]){
+ if(grantOnlyRealtime(m)){
+   const grants=await currentRealtimeGrants(async(sql:string,args:any[])=>{const result=await store.prepare(sql).bind(...args).all();return result.results;},m);
+   return {deviceIds:[...grants.keys()] as string[],registeredIds:new Set<string>(),grants};
+ }
  const now=new Date().toISOString();
         let deviceIds: string[] = [];
         const registeredIds = new Set<string>();
@@ -64,7 +69,7 @@ async function authorizedDevices(store:ReturnType<typeof db>,m:any,extraIds:stri
             deviceIds = Array.from(new Set([...grantedIds, ...labDevIds, ...maintainedIds]));
         }
 
- return {deviceIds,registeredIds};
+ return {deviceIds,registeredIds,grants:null};
 }
 
 export async function GET(r: Request) {
@@ -89,7 +94,9 @@ export async function GET(r: Request) {
         for(const row of rows){
           if(!allowed.has(String(row._realtime_id??row.aslung_id)))continue;
           try{
-            const time=row.time instanceof Date?row.time:new Date(row.time+'Z');
+            const text=String(row.time||'').replace(' ','T');
+            const time=row.time instanceof Date?row.time:new Date(/(?:Z|[+-]\d{2}:\d{2})$/.test(text)?text:text+'Z');
+            if(access.grants&&!canReadRealtime(access.grants,String(row._realtime_id??row.aslung_id),time.getTime()))continue;
             const {time:rawTime,_realtime_id:requestedId,...values}=row;
             results.push({...values,timestamp:time.toISOString(),battery:row.battery??null,
               ...(current.role==='admin'&&!access.registeredIds.has(String(row.aslung_id))?{unregistered:true}:{})});

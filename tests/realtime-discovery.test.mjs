@@ -1,3 +1,4 @@
+import * as realtimeAccess from '../lib/realtime-access.mjs';
 import * as activityAuditMock from './helpers/activity-audit.mjs';
 import * as activityHttpSecurity from '../lib/http-security.mjs';
 import * as activityNodeStream from 'node:stream';
@@ -92,7 +93,7 @@ test('discovery endpoint rejects members and invalid periods before touching MyS
   let role='member',queries=0;
   class AppError extends Error{constructor(status,message){super(message);this.status=status;}}
   const deps={
-    '@/lib/activity-server':activityAuditMock,'@/lib/http-security.mjs':activityHttpSecurity,'node:stream':activityNodeStream,'@/lib/server':{identity:async()=>({role}),AppError,fail:e=>Response.json({error:e.message},{status:e.status||500}),db:()=>({prepare:()=>({all:async()=>({results:[]})})})},
+    '@/lib/activity-server':activityAuditMock,'@/lib/http-security.mjs':activityHttpSecurity,'node:stream':activityNodeStream,'@/lib/realtime-access.mjs':realtimeAccess,'@/lib/server':{identity:async()=>({role}),AppError,fail:e=>Response.json({error:e.message},{status:e.status||500}),db:()=>({prepare:()=>({all:async()=>({results:[]})})})},
     '@/lib/data':{getPool:()=>({query:async()=>{queries++;return [[]];}})},
     '@/lib/realtime-discovery.mjs':{discoverRealtimeDevices}
   };
@@ -110,7 +111,7 @@ test('discovery endpoint rejects members and invalid periods before touching MyS
 test('discovered devices participate in regular refresh only for administrators',async()=>{
   let role='admin';const queried=[];
   const deps={
-    '@/lib/activity-server':activityAuditMock,'@/lib/http-security.mjs':activityHttpSecurity,'node:stream':activityNodeStream,'@/lib/server':{identity:async()=>({role}),fail:e=>Response.json({error:e.message},{status:500}),db:()=>({prepare:()=>({first:async()=>({realtime_cache_secs:120}),all:async()=>({results:[{id:'AL-1'}]})})})},
+    '@/lib/activity-server':activityAuditMock,'@/lib/http-security.mjs':activityHttpSecurity,'node:stream':activityNodeStream,'@/lib/realtime-access.mjs':realtimeAccess,'@/lib/server':{identity:async()=>({role}),fail:e=>Response.json({error:e.message},{status:500}),db:()=>({prepare:()=>({first:async()=>({realtime_cache_secs:120}),all:async()=>({results:[{id:'AL-1'}]})})})},
     '@/lib/realtime-readings.mjs':{latestRealtimeReadings},
     '@/lib/realtime-settings.mjs':realtimeSettings,
     '@/lib/data':{getPool:()=>({query:async({sql,values})=>{assert.match(sql,/ch7 AS battery/);const ids=values.filter((_,i)=>i%2===0);queried.push(...ids);return [ids.map(id=>({aslung_id:id,time:new Date('2026-10-15T12:00:00Z'),battery:id==='AL-1'?0:'3.87'}))];}})}

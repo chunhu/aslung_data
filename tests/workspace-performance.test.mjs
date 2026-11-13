@@ -1,3 +1,5 @@
+import * as fileAccess from '../lib/file-access.mjs';
+import * as realtimeAccess from '../lib/realtime-access.mjs';
 import * as activityAuditMock from './helpers/activity-audit.mjs';
 import * as activityHttpSecurity from '../lib/http-security.mjs';
 import * as activityNodeStream from 'node:stream';
@@ -79,7 +81,7 @@ const server={writeGuard:()=>{},identity:async()=>({...actor}),db:()=>store,AppE
     return buildDownloadSegments(me,d.prepare('SELECT * FROM devices').all(),d.prepare('SELECT * FROM device_locations').all(),d.prepare('SELECT * FROM grants WHERE email=?').all(me.email),d.prepare('SELECT name,email FROM maintainers WHERE email=?').all(me.email));
   }};
 const manage=load('../app/api/manage/route.ts',{
-  '@/lib/activity-server':activityAuditMock,'@/lib/http-security.mjs':activityHttpSecurity,'node:stream':activityNodeStream,'@/lib/server':server,'@/lib/store.mjs':{getConnection:()=>d},'@/lib/registration.mjs':{RegistrationError:class extends Error{}},'@/lib/registration-mail':{},
+  '@/lib/activity-server':activityAuditMock,'@/lib/http-security.mjs':activityHttpSecurity,'node:stream':activityNodeStream,'@/lib/realtime-access.mjs':realtimeAccess,'@/lib/file-access.mjs':fileAccess,'@/lib/server':server,'@/lib/store.mjs':{getConnection:()=>d},'@/lib/registration.mjs':{RegistrationError:class extends Error{}},'@/lib/registration-mail':{},
   '@/lib/realtime-settings.mjs':realtimeSettings,'@/lib/passwords.mjs':{},'node:crypto':{},
 });
 const get=async scope=>{
@@ -117,13 +119,13 @@ test('scoped reads preserve member filtering and maintainer navigation without e
 test('cached realtime readings reauthorize on each request and again after I/O',async()=>{
   let role='member',allow=true,queries=0,revokeDuringQuery=false;
   const realtimeStore={prepare(sql){return {bind(){return this;},async first(){return {realtime_cache_secs:120};},async all(){
-    if(sql.includes('SELECT id FROM devices'))return {results:[{id:'AL-0'},{id:'AL-1'}]};
-    if(sql.includes('SELECT device_id FROM grants'))return {results:allow?[{device_id:'AL-0'}]:[]};
+    if(sql.includes('FROM devices'))return {results:[{id:'AL-0'},{id:'AL-1'}]};
+    if(sql.includes('FROM grants'))return {results:allow?[{device_id:'AL-0',start:'2020-01-01T00:00:00Z',end:null}]:[]};
     return {results:[]};
   }}}};
   const pool={query:async({values})=>{queries++;if(revokeDuringQuery)allow=false;return [values.map(id=>({aslung_id:id,time:'2026-10-01 00:00:00',battery:0}))];}};
   const route=load('../app/api/realtime/route.ts',{
-    '@/lib/activity-server':activityAuditMock,'@/lib/http-security.mjs':activityHttpSecurity,'node:stream':activityNodeStream,'@/lib/server':{...server,identity:async()=>({role,email:'member@test'}),db:()=>realtimeStore},
+    '@/lib/activity-server':activityAuditMock,'@/lib/http-security.mjs':activityHttpSecurity,'node:stream':activityNodeStream,'@/lib/realtime-access.mjs':realtimeAccess,'@/lib/file-access.mjs':fileAccess,'@/lib/server':{...server,identity:async()=>({role,email:'member@test'}),db:()=>realtimeStore},
     '@/lib/realtime-settings.mjs':realtimeSettings,'@/lib/data':{getPool:()=>pool},'@/lib/realtime-readings.mjs':{latestRealtimeReadings},
   });
   const call=q=>route.GET(new Request('http://test/api/realtime'+(q||'')));
@@ -155,4 +157,15 @@ test('only admin can persist an integer cache duration and unrelated settings re
     assert.equal((await get('realtime')).alertSettings.realtime_cache_secs,value);
   }
   assert.equal(d.prepare('SELECT realtime_interval_secs FROM alert_settings WHERE id=1').get().realtime_interval_secs,60);
+});
+
+test('research realtime metadata excludes expired/future grants and implicit maintained devices',async()=>{
+  actor={role:'member',email:'member@test',name:'member',allowMaintainerNameMatch:false};
+  d.prepare("UPDATE device_locations SET maintainer='Member maintainer' WHERE aslung_id='AL-3'").run();
+  const insert=d.prepare("INSERT INTO grants(grant_type,device_id,email,start,end) VALUES('device',?,'member@test',?,?)");
+  insert.run('AL-1','2000-01-01T00:00:00Z','2001-01-01T00:00:00Z');insert.run('AL-2','2999-01-01T00:00:00Z',null);
+  try{
+    const data=await get('realtime');assert.deepEqual(data.realtimeDeviceIds,['AL-0']);assert.deepEqual(data.devices.map(row=>row.id),['AL-0']);
+    assert.ok(data.locations.every(row=>row.aslung_id==='AL-0'));assert.ok(data.downloadSegments.every(row=>row.id==='AL-0'));
+  }finally{d.prepare("DELETE FROM grants WHERE device_id IN ('AL-1','AL-2')").run();d.prepare("UPDATE device_locations SET maintainer=NULL WHERE aslung_id='AL-3'").run();actor={...actor,role:'admin',email:'admin@test'};}
 });

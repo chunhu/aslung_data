@@ -1,3 +1,4 @@
+import * as realtimeAccess from '../lib/realtime-access.mjs';
 import * as activityAuditMock from './helpers/activity-audit.mjs';
 import * as activityHttpSecurity from '../lib/http-security.mjs';
 import * as activityNodeStream from 'node:stream';
@@ -100,11 +101,11 @@ test('connection classification uses the configured threshold; no uploads, year-
 });
 function load(path,deps){const code=ts.transpileModule(readFileSync(new URL(path,import.meta.url),'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;const module={exports:{}};new Function('require','module','exports',code)(key=>{assert.ok(key in deps,key);return deps[key];},module,module.exports);return module.exports;}
 test('status API ignores arbitrary target accounts, returns no measurement values, and rechecks scope after remote reads',async()=>{
-  const d=fixture();let calls=0,revoke=false,mode='offline';
+  const d=fixture();d.prepare("INSERT INTO grants VALUES(2,'member@test','AL-1','2025-01-01',NULL)").run();let calls=0,revoke=false,mode='offline';
   try{
     bind(d,[identity(d,'Owner')]);
     const api=load('../app/api/my-maintained-devices/route.ts',{
-      '@/lib/activity-server':activityAuditMock,'@/lib/http-security.mjs':activityHttpSecurity,'node:stream':activityNodeStream,'@/lib/server':{identity:async()=>member,fail:e=>Response.json({error:e.message},{status:e.status||500})},'@/lib/store.mjs':{getConnection:()=>d},'@/lib/maintainer-links.mjs':links,
+      '@/lib/activity-server':activityAuditMock,'@/lib/http-security.mjs':activityHttpSecurity,'node:stream':activityNodeStream,'@/lib/realtime-access.mjs':realtimeAccess,'@/lib/server':{identity:async()=>member,fail:e=>Response.json({error:e.message},{status:e.status||500})},'@/lib/store.mjs':{getConnection:()=>d},'@/lib/maintainer-links.mjs':links,
       '@/lib/data':{getPool:()=>({query:async({sql,values})=>{calls++;assert.match(sql,/^SELECT time /);assert.deepEqual(values,['AL-1']);if(revoke)bind(d,[]);if(mode==='error')throw new Error('database details');return [mode==='empty'?[]:[{time:new Date(Date.now()-90*60000)}]];}})}
     });
     const call=()=>api.GET(new Request('http://localhost/api/my-maintained-devices?email=other@test'));
@@ -118,7 +119,7 @@ test('status API ignores arbitrary target accounts, returns no measurement value
 test('link API rejects non-admin reads/writes and foreign origins, while administrators can link themselves',async()=>{
   const d=fixture();let me=member,origin=true;
   class AppError extends Error{constructor(status,message){super(message);this.status=status;}}
-  const api=load('../app/api/maintainer-links/route.ts',{'@/lib/activity-server':activityAuditMock,'@/lib/http-security.mjs':activityHttpSecurity,'node:stream':activityNodeStream,'@/lib/server':{AppError,identity:async()=>me,writeGuard:()=>{if(!origin)throw new AppError(403,'origin');},fail:e=>Response.json({error:e.message},{status:e.status||500})},'@/lib/store.mjs':{getConnection:()=>d},'@/lib/maintainer-links.mjs':links});
+  const api=load('../app/api/maintainer-links/route.ts',{'@/lib/activity-server':activityAuditMock,'@/lib/http-security.mjs':activityHttpSecurity,'node:stream':activityNodeStream,'@/lib/realtime-access.mjs':realtimeAccess,'@/lib/server':{AppError,identity:async()=>me,writeGuard:()=>{if(!origin)throw new AppError(403,'origin');},fail:e=>Response.json({error:e.message},{status:e.status||500})},'@/lib/store.mjs':{getConnection:()=>d},'@/lib/maintainer-links.mjs':links});
   const get=()=>api.GET(new Request('http://localhost/api/maintainer-links?email=admin@test'));
   const post=body=>api.POST(new Request('http://localhost/api/maintainer-links',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}));
   try{
@@ -128,5 +129,21 @@ test('link API rejects non-admin reads/writes and foreign origins, while adminis
     assert.equal((await post({email:'admin@test',maintainer_ids:[identity(d,'Owner')],revision:detail.revision})).status,200);
     assert.equal((await (await get()).json()).linked_ids.length,1);
     assert.equal((await post({email:'admin@test',maintainer_ids:[],revision:detail.revision})).status,409);
+  }finally{d.close();}
+});
+
+test('linked research maintainers cannot obtain live status without a current explicit grant',async()=>{
+  const d=fixture();let calls=0,revoke=false;
+  try{
+    bind(d,[identity(d,'Owner')]);
+    const api=load('../app/api/my-maintained-devices/route.ts',{
+      '@/lib/realtime-access.mjs':realtimeAccess,'@/lib/server':{identity:async()=>member,fail:error=>Response.json({error:error.message},{status:error.status||500})},
+      '@/lib/store.mjs':{getConnection:()=>d},'@/lib/maintainer-links.mjs':links,
+      '@/lib/data':{getPool:()=>({query:async()=>{calls++;if(revoke)d.prepare('DELETE FROM grants').run();return [[{time:new Date()}]];}})},
+    });
+    const call=()=>api.GET(new Request('http://localhost/api/my-maintained-devices'));
+    assert.deepEqual((await (await call()).json()).devices,[]);assert.equal(calls,0);
+    d.prepare("UPDATE grants SET device_id='AL-1'").run();assert.equal((await (await call()).json()).devices.length,1);assert.equal(calls,1);
+    revoke=true;assert.deepEqual((await (await call()).json()).devices,[]);
   }finally{d.close();}
 });

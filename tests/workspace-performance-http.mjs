@@ -82,7 +82,14 @@ try{
   const allowed=await (await request('/api/manage?scope=data','member')).json();assert.equal(allowed.downloadSegments.length,1);
   d.prepare("DELETE FROM grants WHERE email='member@test.invalid'").run();
   const revoked=await (await request('/api/manage?scope=data','member')).json();assert.deepEqual(revoked.downloadSegments,[]);
-  assert.deepEqual(await (await request('/api/realtime','member')).json(),[]);
+  d.prepare("INSERT INTO maintainers(name,email,created_at) VALUES('Implicit owner','member@test.invalid','2020-01-01')").run();
+  d.prepare("UPDATE device_locations SET maintainer='Implicit owner' WHERE aslung_id='AL-1'").run();
+  d.prepare("INSERT INTO grants(grant_type,device_id,email,start,end) VALUES('device','AL-0','member@test.invalid','2000-01-01T00:00:00Z','2001-01-01T00:00:00Z')").run();
+  d.prepare("INSERT INTO grants(grant_type,device_id,email,start) VALUES('device','AL-2','member@test.invalid','2999-01-01T00:00:00Z')").run();
+  const liveScope=await (await request('/api/manage?scope=realtime','member')).json();
+  assert.deepEqual(liveScope.realtimeDeviceIds,[]);assert.deepEqual(liveScope.devices,[]);assert.deepEqual(liveScope.locations,[]);assert.deepEqual(liveScope.downloadSegments,[]);
+  const restrictedLive=await request('/api/realtime','member');assert.equal(restrictedLive.status,200);assert.deepEqual(await restrictedLive.json(),[]);
+
   d.prepare("UPDATE members SET active=0 WHERE email='member@test.invalid'").run();
   assert.equal((await request('/api/manage?scope=news','member')).status,401);
   console.log(`PASS: standalone page scopes, 5 roles, admin cache settings, HOBO cursor pagination, revocation, disabled sessions, read-only initialization; payload full=${fullBytes}, news=${newsBytes} bytes.`);
