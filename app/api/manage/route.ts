@@ -101,7 +101,7 @@ export async function GET(request:Request){try{
  const m=await identity(request);const isAdmin=m.role==="admin";
  // Keep legacy clients compatible; the workspace requests only its current page.
  const scope=request?new URL(request.url).searchParams.get('scope')||'full':'full';
- const scopes=['full','bootstrap','news','articles','realtime','data','devices','maintenance','calibration','personal','hobo','members','permissions','locations','labs','maintainers','alerts','files','connection','activity'];
+ const scopes=['full','bootstrap','news','articles','realtime','data','devices','maintenance','calibration','personal','hobo','members','permissions','locations','labs','maintainers','alerts','files','connection','activity','homepage'];
  if(!scopes.includes(scope))throw new AppError(400,'無效的工作空間頁面。');
  if(m.role==='basic'){
    if(!['full','bootstrap','news','articles','files'].includes(scope))throw new AppError(403,'一般會員僅可使用最新消息、文章專區與檔案專區。');

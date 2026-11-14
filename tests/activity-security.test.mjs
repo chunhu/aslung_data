@@ -91,3 +91,11 @@ test('real audit wrapper redacts tokens, ignores arbitrary query IDs and retains
     const last=d.prepare('SELECT * FROM activity_events ORDER BY id DESC LIMIT 1').get();assert.equal(last.actor,'');assert.equal(last.target,'');assert.equal(last.outcome,'failure');
   }finally{if(previous===undefined)delete process.env.APP_ORIGIN;else process.env.APP_ORIGIN=previous;d.close();}
 });
+
+test('public homepage, about and article paths count visits without logging query strings or arbitrary routes',()=>{
+ const d=database();try{
+  const visitor='public-browser',at=Date.now();
+  for(const [index,path] of ['/','/about','/articles','/articles/00000000-0000-4000-8000-000000000001'].entries())assert.equal(recordVisit(d,{path,visitor},at+index*5000).counted,true);
+  for(const path of ['/articles?token=secret','/articles/00000000-0000-4000-8000-000000000001?secret=abc','/arbitrary'])assert.throws(()=>recordVisit(d,{path,visitor},at+30000));
+ }finally{d.close();}
+});

@@ -98,3 +98,41 @@ test('reader hides publishing controls, admin editor supports preview, and post 
   const editor=component([true,'all','','',1,0,{rows:[],total:0,pages:0},false,false,'','',null,input(),false]);
   const editHtml=renderToStaticMarkup(React.createElement(editor.default,{...props,admin:true}));assert.ok(editHtml.includes('儲存草稿'));assert.ok(editHtml.includes('儲存並發布'));assert.ok(editHtml.includes('預覽文章'));
 });
+
+test('public visibility is opt-in; public lists/details expose published public posts only',()=>{
+ const d=db();try{
+  const memberOnly=posts.savePost(d,admin,input({kind:'article',title:'Private needle',status:'published'}));
+  assert.equal(memberOnly.visibility,'members');assert.equal(posts.listPublicPosts(d).total,0);
+  let draft=posts.savePost(d,admin,input({kind:'article',title:'Public needle',visibility:'public'}));
+  assert.equal(posts.listPublicPosts(d,{q:'needle'}).total,0);assert.throws(()=>posts.getPublicPost(d,draft.id),e=>e.status===404);assert.throws(()=>posts.getPublicPost(d,memberOnly.id),e=>e.status===404);
+  draft=posts.savePost(d,admin,{...draft,pinned:false,status:'published'});
+  const feed=posts.listPublicPosts(d,{type:'article',q:'needle',limit:6});assert.equal(feed.total,1);assert.equal(feed.rows[0].id,draft.id);assert.equal('body' in feed.rows[0],false);assert.equal('created_by' in feed.rows[0],false);
+  assert.equal(posts.getPublicPost(d,draft.id).visibility,'public');
+  // Old clients omitting visibility preserve the already reviewed audience.
+  const withoutVisibility={...draft,pinned:false};delete withoutVisibility.visibility;draft=posts.savePost(d,admin,withoutVisibility);assert.equal(draft.visibility,'public');
+  draft=posts.savePost(d,admin,{...draft,pinned:false,visibility:'members'});assert.equal(posts.listPublicPosts(d).total,0);assert.throws(()=>posts.getPublicPost(d,draft.id),e=>e.status===404);
+  assert.throws(()=>posts.savePost(d,admin,{...draft,pinned:false,visibility:'everyone'}),e=>e.status===400);
+  assert.equal(posts.getPost(d,member,draft.id).visibility,'members');
+  draft=posts.savePost(d,admin,{...draft,pinned:false,visibility:'public',status:'archived'});assert.throws(()=>posts.getPublicPost(d,draft.id),e=>e.status===404);
+ }finally{d.close();}
+});
+
+test('existing published articles migrate to members-only without publishing old content',()=>{
+ const d=db();try{
+  d.exec(`CREATE TABLE site_posts(id TEXT PRIMARY KEY,kind TEXT,title TEXT,summary TEXT,body TEXT,status TEXT,pinned INTEGER,author_name TEXT,created_by TEXT,updated_by TEXT,created_at TEXT,updated_at TEXT,published_at TEXT,version INTEGER);
+    INSERT INTO site_posts VALUES('00000000-0000-4000-8000-000000000001','article','Old private content','Private summary','Private body','published',0,'Admin','admin@test','admin@test','2026-01-01','2026-01-01','2026-01-01',1);`);
+  posts.ensurePostSchema(d);assert.equal(posts.listPublicPosts(d).total,0);
+  const row=posts.getPost(d,member,'00000000-0000-4000-8000-000000000001');assert.equal(row.visibility,'members');assert.equal(row.body,'Private body');assert.equal(row.body_json,null);
+ }finally{d.close();}
+});
+
+test('news uses the same opt-in audience controls as articles',()=>{
+ const d=db();try{
+  const privateNews=posts.savePost(d,admin,input({title:'Private news',status:'published'}));
+  let publicNews=posts.savePost(d,admin,input({title:'Public news',status:'published',visibility:'public'}));
+  assert.deepEqual(posts.listPublicPosts(d,{type:'news'}).rows.map(row=>row.id),[publicNews.id]);
+  assert.equal(posts.getPublicPost(d,publicNews.id).kind,'news');assert.throws(()=>posts.getPublicPost(d,privateNews.id),e=>e.status===404);
+  assert.equal(posts.listPosts(d,member,{type:'news'}).total,2);
+  publicNews=posts.savePost(d,admin,{...publicNews,pinned:false,visibility:'members'});assert.equal(posts.listPublicPosts(d,{type:'news'}).total,0);
+ }finally{d.close();}
+});

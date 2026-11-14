@@ -1,0 +1,21 @@
+"use client";
+import {useEffect,useRef,useState} from 'react';
+import {HOMEPAGE_OPTIONS,DEFAULT_HOMEPAGE_SETTINGS} from '@/lib/homepage-options.mjs';
+import {Button} from '@/components/ui/button';
+type Props={api:(url:string,options?:RequestInit)=>Promise<any>;isEnglish:boolean;formatTime:(value:string)=>string};
+export default function HomepageSettings({api,isEnglish:en,formatTime}:Props){
+  const [snapshot,setSnapshot]=useState<any>(null),[values,setValues]=useState<Record<string,boolean>>({...DEFAULT_HOMEPAGE_SETTINGS}),[busy,setBusy]=useState(false),[loading,setLoading]=useState(true),[error,setError]=useState(''),[notice,setNotice]=useState('');
+  const generation=useRef(0);
+  async function load(){const current=++generation.current;setLoading(true);setError('');try{const result=await api('/api/homepage-settings');if(current===generation.current){setSnapshot(result);setValues(result.settings);setNotice('');}}catch(e){if(current===generation.current)setError((e as Error).message);}finally{if(current===generation.current)setLoading(false);}}
+  useEffect(()=>{void load();return()=>{generation.current++;};},[api]);
+  const changed=!!snapshot&&JSON.stringify(values)!==JSON.stringify(snapshot.settings);
+  return <section className="panel p-5 sm:p-7 space-y-5"><div className="flex flex-wrap gap-3 justify-between"><div><h2 className="text-xl font-semibold">{en?'Homepage section visibility':'首頁區塊顯示設定'}</h2><p className="text-sm text-slate-500 mt-2">{en?'Choose which optional sections appear on the public homepage and About page.':'選擇公開首頁及「平台介紹」頁要顯示的區塊。'}</p></div><div className="flex flex-wrap gap-2"><Button variant="outline" disabled={busy||loading} onClick={()=>void load()}>{en?'Reload settings':'重新載入設定'}</Button><Button variant="outline" disabled={busy||loading} asChild><a href="/about" target="_blank" rel="noopener noreferrer">{en?'Preview introduction':'開啟介紹頁預覽'}</a></Button></div></div>
+    {error&&<p role="alert" className="rounded bg-red-50 p-3 text-sm text-red-700">{error}</p>}{notice&&<p role="status" className="rounded bg-teal-50 p-3 text-sm text-teal-800">{notice}</p>}
+    {loading?<p role="status">{en?'Loading…':'載入中…'}</p>:snapshot&&<form className="space-y-5" onSubmit={async event=>{event.preventDefault();if(busy)return;setBusy(true);setError('');setNotice('');try{const result=await api('/api/homepage-settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({settings:values,version:snapshot.version})});setSnapshot(result);setValues(result.settings);setNotice(en?'Saved. Refresh the public page to see the changes.':'已儲存，重新整理公開頁面即可看到變更。');}catch(e){setError((e as Error).message);}finally{setBusy(false);}}}>
+      <div className="divide-y rounded-lg border">{HOMEPAGE_OPTIONS.map(option=><label key={option.key} className="flex items-start gap-3 p-4 cursor-pointer"><input type="checkbox" className="mt-1 h-4 w-4" checked={values[option.key]} disabled={busy||option.key==='hero_device_label'&&!values.hero_visual} onChange={event=>setValues(previous=>({...previous,[option.key]:event.target.checked}))}/><span className="min-w-0"><strong className="block text-sm font-medium">{en?option.en:option.zh}</strong><span className="block mt-1 text-xs text-slate-500 leading-6">{en?option.descriptionEn:option.description}</span></span></label>)}</div>
+      <p className="text-xs leading-6 text-slate-500">{en?'The introduction text and sign-in links remain visible. Section visibility does not change account registration or post/data permissions. Changes apply to all visitors after saving.':'平台介紹文字及登入入口固定保留。顯示開關不會修改會員註冊、文章公開權限或資料授權；儲存後套用至所有訪客。'}</p>
+      <div className="flex flex-wrap gap-2"><Button type="submit" disabled={busy||!changed}>{busy?(en?'Saving…':'儲存中…'):(en?'Save homepage settings':'儲存首頁設定')}</Button><Button type="button" variant="outline" disabled={busy||!changed} onClick={()=>setValues(snapshot.settings)}>{en?'Discard changes':'取消變更'}</Button><Button type="button" variant="outline" disabled={busy} onClick={()=>setValues({...DEFAULT_HOMEPAGE_SETTINGS})}>{en?'Restore defaults':'還原預設（需儲存）'}</Button></div>
+      {snapshot.updated_at&&<p className="text-xs text-slate-400">{en?'Last saved':'最後儲存'}：{formatTime(snapshot.updated_at)}</p>}
+    </form>}
+  </section>;
+}
