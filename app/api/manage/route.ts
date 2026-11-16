@@ -101,13 +101,13 @@ export async function GET(request:Request){try{
  const m=await identity(request);const isAdmin=m.role==="admin";
  // Keep legacy clients compatible; the workspace requests only its current page.
  const scope=request?new URL(request.url).searchParams.get('scope')||'full':'full';
- const scopes=['full','bootstrap','news','articles','realtime','data','devices','maintenance','calibration','personal','hobo','members','permissions','locations','labs','maintainers','alerts','files','connection','activity','homepage'];
+ const scopes=['full','bootstrap','news','articles','realtime','data','devices','maintenance','calibration','personal','hobo','members','permissions','locations','labs','maintainers','alerts','files','connection','activity','homepage','feature-access'];
  if(!scopes.includes(scope))throw new AppError(400,'無效的工作空間頁面。');
  if(m.role==='basic'){
    if(!['full','bootstrap','news','articles','files'].includes(scope))throw new AppError(403,'一般會員僅可使用最新消息、文章專區與檔案專區。');
-   return Response.json({scope,me:{email:m.email,name:m.name,role:m.role,login_count:m.login_count||0,...(await db().prepare('SELECT * FROM member_profiles WHERE email=?').bind(m.email).first()||{})},isMaintainer:false,realtimeDeviceIds:[],summary:null,devices:[],downloadSegments:[],members:[],grants:[],locations:[],tokens:[],files:[],fileGrants:[],labs:[],maintainers:[],alertChecks:[],alertLogs:[],grantRequests:[],alertSettings:{},connected:false,siteStats:getSiteStats()},{headers:{'Cache-Control':'no-store'}});
+   return Response.json({scope,featureAccess:m.feature_access,me:{email:m.email,name:m.name,role:m.role,login_count:m.login_count||0,...(await db().prepare('SELECT * FROM member_profiles WHERE email=?').bind(m.email).first()||{})},isMaintainer:false,realtimeDeviceIds:[],summary:null,devices:[],downloadSegments:[],members:[],grants:[],locations:[],tokens:[],files:[],fileGrants:[],labs:[],maintainers:[],alertChecks:[],alertLogs:[],grantRequests:[],alertSettings:{},connected:false,siteStats:getSiteStats()},{headers:{'Cache-Control':'no-store'}});
  }
- const needs=(...pages:string[])=>scope==='full'||pages.includes(scope);
+ const needs=(...pages:string[])=>scope==='full'?pages.some(page=>isAdmin||m.feature_access?.[page]!==false):pages.includes(scope);
  const needDevices=needs('realtime','data','devices','permissions','locations','labs','maintainers','alerts','members');
  const needAlerts=needs('alerts');
  const needRequests=needs('permissions','data');
@@ -317,7 +317,7 @@ export async function GET(request:Request){try{
  const visibleNames=new Set(visibleLocations.map((location:any)=>String(location.maintainer||"").trim()).filter(Boolean));
  const visibleMaintainers=isAdmin?maintainers:maintainers.filter((person:any)=>String(person.email||"").toLowerCase()===m.email.toLowerCase()||visibleNames.has(String(person.name||"").trim())).map((person:any)=>({name:person.name,english_name:person.english_name||"",email:person.email}));
  return Response.json({
-   scope, realtimeDeviceIds, isMaintainer:navMaintainer,
+   scope, featureAccess:m.feature_access, realtimeDeviceIds, isMaintainer:navMaintainer,
    summary:isAdmin?{devices:(await db().prepare('SELECT COUNT(*) n FROM devices').first())?.n||0,members:(await db().prepare("SELECT COUNT(*) n FROM members WHERE active=1 AND role='member'").first())?.n||0,grants:(await db().prepare('SELECT COUNT(*) n FROM grants').first())?.n||0}:null,
    me:{alert_email_enabled:((await db().prepare("SELECT alert_email_enabled FROM members WHERE email=?").bind(m.email).first()) as any)?.alert_email_enabled ?? 1,email:m.email,name:m.name,role:m.role,allowMaintainerNameMatch:m.allowMaintainerNameMatch,login_count:m.login_count||0,last_login_at:m.last_login_at||null,...(await db().prepare("SELECT * FROM member_profiles WHERE email=?").bind(m.email).first()||{})},
    devices,downloadSegments:permittedSegments,members,grants,locations:visibleLocations,tokens,files,fileGrants,

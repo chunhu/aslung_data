@@ -17,6 +17,31 @@ const denied=work=>assert.throws(work,e=>e.status===403);
 const future=()=>new Date(Date.now()+3600000).toISOString();
 const past=()=>new Date(Date.now()-3600000).toISOString();
 
+test('all categories combine only authorized files, include category labels and retain search and per-file rights',()=>{
+ const d=fixture();try{
+  const category=act(d,admin,{action:'folderSave',name:'Project A'}).id;
+  act(d,admin,{action:'fileUpdate',id:'url',name:'Link',folder_id:category});
+  permission(d,admin,{resource_type:'folder',resource_id:category,subject_type:'user',subject_id:'alice@test',permissions:rights()});
+  const all=fileWorkspace(d,alice,{folder:'all'});assert.equal(all.total,2);
+  assert.deepEqual(new Set(all.files.map(f=>f.folder_id)),new Set(['root',category]));
+  assert.equal(all.files.find(f=>f.id==='url').folder_name,'Project A');assert.equal(all.files.find(f=>f.id==='url').permissions.download,false);
+  assert.equal(fileWorkspace(d,alice,{folder:'root'}).total,1);assert.equal(fileWorkspace(d,alice,{folder:category}).total,1);
+  assert.equal(fileWorkspace(d,alice,{folder:'all',q:'Link'}).total,1);
+  assert.equal(fileWorkspace(d,bob,{folder:'all'}).total,0);assert.throws(()=>fileWorkspace(d,bob,{folder:category}),e=>e.status===404);
+  assert.ok(!JSON.stringify(all.files).includes('/private/secret'));assert.ok(!JSON.stringify(all.files).includes('secret.invalid'));
+ }finally{d.close();}
+});
+
+test('all-category pagination spans categories without broadening access',()=>{
+ const d=fixture();try{
+  const category=act(d,admin,{action:'folderSave',name:'Bulk'}).id;
+  for(let i=0;i<55;i++)d.prepare('INSERT INTO files(id,name,size,mime_type,uploader_email,storage_path,created_at,folder_id) VALUES(?,?,?,?,?,?,?,?)').run('extra-'+String(i).padStart(2,'0'),'Extra '+i,1,'text/plain','admin@test','/private','2026-02-01',i%2?category:'root');
+  const first=fileWorkspace(d,admin,{folder:'all',page:1}),second=fileWorkspace(d,admin,{folder:'all',page:2});assert.equal(first.total,57);assert.equal(first.pages,2);assert.equal(first.files.length,50);assert.equal(second.files.length,7);
+  assert.equal(new Set([...first.files,...second.files].map(f=>f.id)).size,57);
+  assert.equal(fileWorkspace(d,alice,{folder:'all'}).total,1);
+ }finally{d.close();}
+});
+
 test('legacy migration preserves view/download and private storage is absent from all lists',()=>{const d=fixture();
 assert.deepEqual(allowed(d,alice),rights({download:true}));assert.deepEqual(allowed(d,bob),rights({view:false}));
 ensureFileAccessSchema(d);assert.equal(d.prepare('SELECT COUNT(*) n FROM file_permissions').get().n,1);

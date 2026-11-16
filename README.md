@@ -34,6 +34,22 @@ EC2 若已有獨立的 Nginx 設定，請在網站的 `server` 區塊設定 `cli
 
 ## 已包含功能
 
+### 功能存取設定與共用群組
+
+管理員在「會員與權限 → 功能存取設定」逐項選擇「沿用角色預設」或「限指定會員／群組」。指定名單採聯集：會員本人被選取，或屬於任一允許群組即可通過此層檢查；角色權限仍是上限，不會因加入名單取得原角色沒有的功能。空名單僅管理員可進入。未設定的功能保持角色預設，管理員永遠保留全部管理入口，避免誤設鎖住系統。支援搜尋、多選、全選、會員限制預覽、設定版本衝突檢查，以及最近 50 筆完整前後異動紀錄。
+
+群組與檔案專區共用既有 `file_groups`／`file_group_members`，不複製成員。兩處修改都會留下共用群組的前後紀錄；成員退出會在後續請求同時失去群組衍生的功能與檔案權限。刪除群組會撤銷其檔案授權；功能的「指定名單」模式保留，不會因最後一個群組被刪除而恢復全面開放。更新群組會先提示其跨功能影響。
+
+中央身分檢查依功能拒絕未授權的頁面資料/API，包括既有 API Token、私密文章與所屬圖片。工作空間只顯示允許的選單，切換到不可用頁面會改開第一個可用功能；全部關閉時顯示聯絡管理員的空白狀態，仍可登出與修改自身帳號資料。重新整理、切換頁面或視窗取得焦點時會重讀權限；伺服器於每次 API 請求重新驗證，不依瀏覽器的可見選單授權。已傳送到瀏覽器的內容無法收回。
+
+功能限制不取代設備、資料期間、檔案、維護負責人或案件權限；預覽顯示角色與功能名單的結果，維護／案件等動態條件仍依原有授權判斷。公開文章、公開文章圖片、公開檔案說明及已核准訪客分享使用獨立的公開／訪客規則，不會因會員選單被隱藏自動變為私密；敏感內容仍須取消公開或停用分享。HOBO、會員管理等原本僅限管理員的功能維持原角色限制。
+
+Feature access is an additional restriction within existing roles. Administrators may keep role defaults or select individual members and shared groups, with OR semantics. An empty allowlist excludes every non-admin; administrators always retain recovery access. The same member groups are used for file permissions. Server-side request checks protect API calls and private post images, including API tokens; individual data/file grants and public/guest sharing rules remain independent. Changes and shared-group edits are audited and version checked.
+
+### 檔案專區全部分類
+
+進入檔案專區預設顯示「全部分類」，合併所有有權限瀏覽的檔案，逐筆顯示所屬分類；可跨分類搜尋並依原規則分頁（每頁 50 筆）。下拉選單仍可切換「未分類」或單一分類，不會將其他分類的未授權檔案加入清單。「全部分類」下新增檔案或外部連結時，需明確選擇具管理權限的存放分類，檔案繼承該分類授權；彙總檢視本身不是可授權或刪除的資料夾。API 可使用 `/api/files?folder=all`；未帶 folder 的既有 API 呼叫仍保持未分類行為。
+
 ### 訪客檔案分享（免會員、雙軌）
 
 管理員進入「檔案專區」，按檔案旁的「訪客分享」：

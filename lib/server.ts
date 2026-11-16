@@ -1,6 +1,6 @@
 import {buildDownloadSegments, intersectRanges, rangeTime} from "./download-segments.mjs";
 import crypto from "node:crypto";
-import {getStore, recordSiteVisit, getSiteStats} from "./store.mjs";
+import {getStore, getConnection, recordSiteVisit, getSiteStats} from "./store.mjs";
 export {recordSiteVisit, getSiteStats};
 import {getSessionUser} from "./auth";
 export class AppError extends Error { constructor(public status:number,message:string){super(message)} }
@@ -37,7 +37,13 @@ export async function identity(r?: Request){
    if(!m.user_id)await db().prepare("UPDATE members SET user_id=? WHERE email=? AND user_id IS NULL").bind(userId,emailLower).run();
  }
  const profile:any=await db().prepare("SELECT registered_at FROM member_profiles WHERE email=?").bind(m.email).first();
- return {...m,user_id:userId || m.user_id,allowMaintainerNameMatch:!profile?.registered_at};
+ let feature_access:Record<string,boolean>|undefined;
+ if(r&&m.role!=='admin'){
+   const {assertFeatureRequest,FeatureAccessError,HttpSecurityError}=await import('./feature-access.mjs');
+   try{feature_access=await assertFeatureRequest(getConnection(),m,r);}
+   catch(e){if(e instanceof FeatureAccessError||e instanceof HttpSecurityError)throw new AppError(e.status,e.message);throw e;}
+ }
+ return {...m,user_id:userId || m.user_id,allowMaintainerNameMatch:!profile?.registered_at,feature_access};
 }
 export async function admin(){const m=await identity();if(m.role!=="admin")throw new AppError(403,"只有管理員可以操作。");return m;}
 export function fail(e:unknown){if(e instanceof Error&&e.name==="PasswordCapacityError")return Response.json({error:"密碼服務忙碌，請稍後重試。"},{status:429,headers:{"Cache-Control":"no-store","Retry-After":"5"}});if(e instanceof AppError)return Response.json({error:e.message},{status:e.status,headers:{"Cache-Control":"no-store"}});console.error("[API] Unexpected server error");return Response.json({error:"服務暫時無法使用，請稍後重試。"}, {status:500,headers:{"Cache-Control":"no-store"}});}
