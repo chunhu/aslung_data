@@ -34,6 +34,25 @@ EC2 若已有獨立的 Nginx 設定，請在網站的 `server` 區塊設定 `cli
 
 ## 已包含功能
 
+### 訪客檔案分享（免會員、雙軌）
+
+管理員進入「檔案專區」，按檔案旁的「訪客分享」：
+
+- **直接分享**：填寫收件人姓名、單位、Email、用途、到期時間與下載次數，建立後寄送指定收件人的連結。
+- **公開申請**：勾選「公開檔案說明，接受訪客申請下載」。公開網站的「公開檔案」入口為 `/file-catalog`，只提供檔名、說明與申請，不提供原始網址或檔案內容。訪客填寫姓名、單位、Email、用途，完成 Email 驗證後才進入待審核清單。管理員核准並指定期限／次數後寄送連結；不核准則保留審核紀錄、不產生連結。
+
+所有檔案預設不公開，設定不改動既有會員／資料夾授權。公開說明必須適合外部閱讀；關閉公開只停止新的公開申請，不撤銷已核准連結。已核准或直接建立的連結請另按「停用」。
+
+收件人從 Email 的 `/file-share#token=…` 開啟分享頁，另取 Email 驗證碼後下載，不建立會員。連結、驗證工作階段及驗證碼僅保存雜湊；連結密鑰不放在 URL 查詢參數或伺服器日誌。驗證碼有效 10 分鐘、最多嘗試 5 次、不可重複使用；下載驗證工作階段有效 30 分鐘且不超過連結期限。每個連結每小時最多寄送 5 次驗證碼，另有 Email、網站及來源 IP 的頻率限制。到期時間必填，最長一年，下載次數 1–10000，表單預設 7 天／3 次。重新寄送會更換連結，原連結、驗證碼與工作階段失效；停用後不可再取得新下載。已開始的傳送不會因停用而收回。
+
+在「檔案專區 → 訪客申請審核與下載紀錄（所有檔案）」集中處理，或逐檔查看：申請狀態、收件人、單位、用途、信件寄送狀態、期限、已用／上限次數、下載時間、IP（依既有可信代理設定）、瀏覽器、傳送位元組與結果。可依關鍵字、檔案、時間、申請／下載狀態搜尋，每頁 30 筆；CSV 使用同一篩選條件，單次最多 10000 筆，超過需縮小條件。申請與下載紀錄保存於 SQLite，隨既有備份保存；目前不自動刪除，請依機構個資保留政策管理資料庫備份與存取。
+
+次數在伺服器接受傳送時原子扣除，中斷也計入；缺少檔案實體不扣次數。紀錄區分「傳送中／結果未確認」「伺服器傳送完成」「中斷」「失敗」「外部轉址」。伺服器傳送完成無法保證使用者已另存或閱讀。伺服器意外停止時，未確認的傳送可能保留開始狀態。外部連結僅限制經本站取得網址的次數，取得原始網址後的直接存取不受本站控制；嚴格控管請使用上傳檔案。既有上傳檔案仍使用現有本機儲存路徑，本功能不會自動搬移到 S3。
+
+部署後需設定正確的 `APP_ORIGIN`，並使用「設備斷線通知 → 郵件設定」中的 SMTP。驗證碼與連結郵件為中英文；寄信失敗不顯示驗證碼或密鑰。核准／建立連結後寄送失敗會保留設定並標記失敗，可修正 SMTP 後重新寄送。此階段不主動寄送拒絕信或新申請通知，管理員從檔案專區待審核清單處理。測試皆使用假 SMTP、記憶體資料庫，不會寄送真實通知。
+
+Guest file access supports two paths without membership: an administrator sends a recipient-bound link directly, or publishes metadata for an email-verified application and approves it before issuing a link. Recipients verify their email again before downloading. Every link has a mandatory expiration and quota and can be revoked. Public metadata does not expose content or storage URLs. Download records are searchable, paginated and exportable to CSV; started, completed, interrupted, failed and external-redirect outcomes remain distinct. Accepted transfers consume quota even if interrupted. External URLs cannot be controlled after disclosure. Existing member permissions remain independent; all files stay private until explicitly published. Configure the existing SMTP settings and `APP_ORIGIN` before use.
+
 資料存取授權的「新增授權」支援按地點或設備多選，可搜尋編號／名稱、全選、選取搜尋結果及清除選取，並顯示已選數量。同一批使用相同會員與日期設定，儲存後每個標的各建立一筆授權；完全相同的既有授權會略過。若任一標的不存在或寫入失敗，整批不會新增。設備全選僅包含目前清單，未來新增設備須另行授權；地點授權仍依原有設備在站期間動態涵蓋未來進駐設備。既有授權維持單筆編輯。
 
 New data access grants support multiple locations or devices, search, select all, select matching results, and clear selection. Each selected target receives a separate grant with the same member and date settings. Exact duplicates are skipped, and a validation or write failure rolls back the entire batch. Selecting all devices covers the current list only; location grants retain their existing dynamic deployment rules. Existing grants are edited individually.

@@ -16,6 +16,17 @@ export function registrationMailer() {
     connectionTimeout:10000, greetingTimeout:10000, socketTimeout:15000
   });
   return {
+    async guestCode(email:string,code:string) {
+      await transport.sendMail({from:settings.smtp_from,to:email,
+        subject:'File access verification / 檔案存取驗證碼',
+        text:`Your verification code is ${code}. It expires in 10 minutes and allows at most 5 attempts. Do not forward this code.\n\n您的驗證碼為 ${code}，10 分鐘內有效，最多嘗試 5 次。請勿轉交他人。\n\nIf you did not request file access, ignore this email. 若非您本人申請，請忽略此信。`});
+    },
+    async guestShare(share:{email:string;token:string;file_name:string;expires_at:string;max_downloads:number}) {
+      const link=new URL('/file-share',origin);link.hash=new URLSearchParams({token:share.token}).toString();
+      await transport.sendMail({from:settings.smtp_from,to:share.email,
+        subject:'File download access / 檔案下載連結',
+        text:`File / 檔案：${share.file_name}\nExpires (UTC) / 到期時間：${share.expires_at}\nDownload allowance / 可用下載次數：${share.max_downloads}\n\n${link.href}\n\nNo registration is required. Open this link and request an email verification code before downloading. Each accepted download attempt consumes one allowance, including interrupted transfers and external redirects.\n無須註冊會員。開啟連結後，請取得 Email 驗證碼再下載。開始傳送即使用一次額度，中斷及外部轉址也計入次數。請勿轉交連結或驗證碼。`});
+    },
     async verify({email,language,token}:{email:string;name:string;language:string;token:string}) {
       const link=new URL('/verify-email',origin);link.hash=new URLSearchParams({token}).toString();link.searchParams.set('lang',language==='en'?'en':'zh-TW');
       try {

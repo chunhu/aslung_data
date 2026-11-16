@@ -3,10 +3,12 @@ import {useEffect,useRef,useState} from 'react';
 import {formatInTimeZone,fromZonedTime} from 'date-fns-tz';
 import {Button} from '@/components/ui/button';
 import {Input} from '@/components/ui/input';
+import GuestFilesAdmin from '@/components/GuestFilesAdmin';
 import {Dialog,DialogContent,DialogHeader,DialogTitle,DialogDescription} from '@/components/ui/dialog';
 type Props={api:(url:string,options?:RequestInit)=>Promise<any>;timezone:string;isEnglish:boolean};
 const rightNames=[['view','檢視','View'],['download','下載','Download'],['manage','管理','Manage'],['grant','授權','Share']];
 export default function FileManager({api,timezone,isEnglish:en}:Props){
+  const [guestFile,setGuestFile]=useState<any>(null);
   const [data,setData]=useState<any>(null),[folder,setFolder]=useState('root'),[page,setPage]=useState(1),[search,setSearch]=useState(''),[query,setQuery]=useState('');
   const [loading,setLoading]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');
   const [dialog,setDialog]=useState(''),[editing,setEditing]=useState<any>(null),[resource,setResource]=useState<any>(null),[permissionData,setPermissionData]=useState<any>(null),[permissionLoading,setPermissionLoading]=useState(false);
@@ -69,6 +71,7 @@ export default function FileManager({api,timezone,isEnglish:en}:Props){
           {file.permissions.download&&<Button size="sm" variant="outline" asChild><a href={'/api/files?id='+encodeURIComponent(file.id)+'&download=1'} target="_blank" rel="noopener noreferrer">{file.external?(en?'Open original link':'開啟原始連結'):(en?'Download original':'下載原檔')}</a></Button>}
           {file.permissions.manage&&<><Button size="sm" variant="outline" onClick={()=>open('file',file)}>{en?'Edit':'編輯'}</Button><Button size="sm" variant="outline" disabled={busy} onClick={()=>void remove({action:'fileDelete',id:file.id},en?'Permanently delete this file and its permissions?':'永久刪除此檔案及其授權？此階段尚無回收桶。')}>{en?'Delete':'刪除'}</Button></>}
           {file.permissions.grant&&<Button size="sm" variant="outline" onClick={()=>share({type:'file',id:file.id,name:file.name})}>{en?'Permissions':'授權'}</Button>}
+          {data?.isAdmin&&<Button size="sm" variant="outline" onClick={()=>setGuestFile(file)}>{en?'Guest sharing':'訪客分享'}</Button>}
         </div>{!file.previewable&&!file.permissions.download&&<p className="text-xs text-slate-500 mt-2">{en?'Metadata only; this format requires permission to download the original.':'目前僅可查看檔案資訊；此格式需下載權限才能取得原檔。'}</p>}</td>
       </tr>)}</tbody></table></div>{!data.files.length&&<p className="py-6 text-sm text-slate-500">{en?'No files match your current permissions and search.':'目前沒有符合授權與搜尋條件的檔案。'}</p>}
       <div className="flex gap-3 items-center mt-4"><Button variant="outline" disabled={loading||page<=1} onClick={()=>setPage(value=>value-1)}>{en?'Previous':'上一頁'}</Button><span className="text-sm">{page} / {Math.max(data.pages,1)}</span><Button variant="outline" disabled={loading||page>=data.pages} onClick={()=>setPage(value=>value+1)}>{en?'Next':'下一頁'}</Button></div></>}
@@ -76,6 +79,8 @@ export default function FileManager({api,timezone,isEnglish:en}:Props){
     {data?.isAdmin&&<section className="panel p-5 space-y-3"><div className="flex flex-wrap justify-between items-center gap-3"><h2 className="font-semibold">{en?'Member groups':'會員群組'}</h2><Button variant="outline" onClick={()=>open('group')}>{en?'New group':'新增群組'}</Button></div><p className="text-xs text-slate-500">{en?'Groups do not grant access automatically. Assign folder or file permissions to a group. Removing members immediately removes group-derived access and dependent shares.':'建立群組不會自動開通檔案權限，仍須將群組加入資料夾或檔案授權。移出群組後，群組取得的權限與依賴它的轉授會立即失效。'}</p>
       {data.groups.map((group:any)=><div className="flex flex-wrap justify-between gap-3 border-t py-3" key={group.id}><div><strong>{group.name}</strong><p className="text-xs text-slate-500">{group.emails.length} {en?'members':'位會員'}</p></div><div className="flex gap-2"><Button size="sm" variant="outline" onClick={()=>open('group',group)}>{en?'Edit members':'編輯成員'}</Button><Button size="sm" variant="outline" disabled={busy} onClick={()=>void remove({action:'groupDelete',id:group.id},en?'Delete this group? All its permissions and dependent shares will be revoked.':'刪除此群組？群組授權與依賴它的轉授都將撤銷。')}>{en?'Delete':'刪除'}</Button></div></div>)}
     </section>}
+    {data?.isAdmin&&<details className="panel p-5"><summary className="cursor-pointer font-semibold">訪客申請審核與下載紀錄（所有檔案）</summary><div className="mt-4"><GuestFilesAdmin api={api} timezone={timezone}/></div></details>}
+    {data?.isAdmin&&<Dialog open={!!guestFile} onOpenChange={open=>{if(!open)setGuestFile(null);}}><DialogContent className="max-h-[90vh] overflow-auto sm:max-w-5xl"><DialogHeader><DialogTitle>訪客分享</DialogTitle><DialogDescription>{guestFile?.name}</DialogDescription></DialogHeader>{guestFile&&<GuestFilesAdmin key={guestFile.id} api={api} timezone={timezone} file={guestFile}/>}</DialogContent></Dialog>}
     <Dialog open={!!dialog} onOpenChange={value=>{if(!value&&!busy)close();}}><DialogContent className="max-h-[90vh] overflow-auto min-w-0 sm:max-w-3xl [&>*]:min-w-0"><DialogHeader><DialogTitle>{titles[dialog]}</DialogTitle><DialogDescription>{dialog==='permission'?resource?.name:en?'Changes are checked against your current permissions.':'儲存時會重新確認您的目前權限。'}</DialogDescription></DialogHeader>
       {error&&<p role="alert" className="text-sm text-red-700">{error}</p>}
       <form className="space-y-4 min-w-0 [&_input]:min-w-0 [&_select]:min-w-0 [&_label]:min-w-0" onSubmit={async event=>{

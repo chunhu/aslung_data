@@ -12,6 +12,8 @@ const config:NextConfig={
   {source:"/:path*",headers:[{key:"X-Content-Type-Options",value:"nosniff"},{key:"X-Frame-Options",value:"DENY"},{key:"Referrer-Policy",value:"same-origin"},{key:"Content-Security-Policy",value:"object-src 'none'; base-uri 'self'; frame-ancestors 'self'"},{key:"Permissions-Policy",value:"geolocation=(), microphone=()"}]},
   // Static Next headers override route response headers; preserve the upload sandbox.
   {source:"/api/files",headers:[{key:"Content-Security-Policy",value:"sandbox; default-src 'none'; frame-ancestors 'self'"},{key:"Referrer-Policy",value:"no-referrer"}]},
+  {source:"/api/guest-files",headers:[{key:"Referrer-Policy",value:"no-referrer"},{key:"Cache-Control",value:"private, no-store"}]},
+  {source:"/file-share",headers:[{key:"Referrer-Policy",value:"no-referrer"},{key:"Cache-Control",value:"private, no-store"},{key:"X-Robots-Tag",value:"noindex, nofollow"}]},
   // Only documentation HTML may appear in the site's own documentation reader.
   {source:"/docs/:path*.html",headers:[{key:"X-Frame-Options",value:"SAMEORIGIN"}]}
  ];}
