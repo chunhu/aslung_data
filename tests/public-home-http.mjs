@@ -1,16 +1,18 @@
 // pnpm build first. Disposable local SQLite and synthetic public articles/images only.
 import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';
-import {mkdtempSync,rmSync,existsSync,symlinkSync} from 'node:fs';
+import {mkdirSync,mkdtempSync,rmSync,existsSync,symlinkSync} from 'node:fs';
 import {tmpdir} from 'node:os';
-import {join,resolve} from 'node:path';
+import {join,resolve,sep} from 'node:path';
 import {randomBytes,randomUUID} from 'node:crypto';
 import {createServer} from 'node:net';
 import {setTimeout as delay} from 'node:timers/promises';
 import sharp from 'sharp';
 import {hashPassword,tokenHash} from '../lib/passwords.mjs';
 import {ensurePostSchema,savePost} from '../lib/posts.mjs';
-const dir=mkdtempSync(join(tmpdir(),'aslung-public-home-http-'));
+import {cloneHomepageContent,DEFAULT_HOMEPAGE_CONTENT} from '../lib/homepage-content.mjs';
+const root=resolve(process.env.ASLUNG_TEST_ROOT||(process.platform==='win32'?'K:/CodexCache/aslung_data/homepage-tests':tmpdir()));mkdirSync(root,{recursive:true});
+const dir=mkdtempSync(join(root,'aslung-public-home-http-'));
 process.env.DATABASE_PATH=join(dir,'test.sqlite');
 const {getConnection}=await import('../lib/store.mjs');const d=getConnection(),cookies={};
 const password='Local-Homepage-Test-2026!',hash=await hashPassword(password),admin={email:'admin@test.invalid',name:'平台編輯團隊',role:'admin'};
@@ -29,7 +31,7 @@ let privateImagePost=make('NEVER_PRIVATE_IMAGE_POST',{body_json:{type:'doc',cont
 const probe=createServer();await new Promise(r=>probe.listen(0,'127.0.0.1',r));const port=probe.address().port;await new Promise(r=>probe.close(r));
 const origin=`http://127.0.0.1:${port}`,cwd=resolve('.next/standalone');
 for(const [target,source] of [['public','public'],['.next/static','.next/static']])if(!existsSync(join(cwd,target)))symlinkSync(resolve(source),join(cwd,target),'dir');
-const child=spawn(process.execPath,[join(cwd,'server.js')],{cwd,env:{...process.env,NODE_ENV:'production',HOSTNAME:'127.0.0.1',PORT:String(port),APP_ORIGIN:origin},stdio:['ignore','pipe','pipe']});let logs='';child.stdout.on('data',s=>logs+=s);child.stderr.on('data',s=>logs+=s);
+const child=spawn(process.execPath,[join(cwd,'server.js')],{cwd,windowsHide:true,env:{...process.env,NODE_ENV:'production',HOSTNAME:'127.0.0.1',PORT:String(port),APP_ORIGIN:origin},stdio:['ignore','pipe','pipe']});let logs='';child.stdout.on('data',s=>logs+=s);child.stderr.on('data',s=>logs+=s);
 const get=(path,role)=>fetch(origin+path,{headers:role?{Cookie:cookies[role]}:{},redirect:'manual'});
 const post=(body,role='admin')=>fetch(origin+'/api/posts',{method:'POST',headers:{Cookie:cookies[role],Origin:origin,'Content-Type':'application/json'},body:JSON.stringify(body)});
 try{
@@ -73,6 +75,14 @@ assert.equal((await get('/articles/'+featured.id)).status,200);assert.equal((awa
 config=await (await setDisplay({...defaults,hero_device_label:true})).json();assert.ok((await (await get('/')).text()).includes('ASLUNG · LI-COR / HOBO'));
 config=await (await setDisplay(defaults)).json();assert.ok(!(await (await get('/')).text()).includes('ASLUNG · LI-COR / HOBO'));
 assert.equal((await get('/api/manage?scope=homepage','admin')).status,200);assert.equal((await get('/api/manage?scope=homepage','basic')).status,403);
+// Persist custom text and verify both public routes render saved content, not defaults.
+const homepageDraft=cloneHomepageContent();homepageDraft.intro.zh.title='自訂首頁主標';homepageDraft.features.zh.label='重新命名區塊';homepageDraft.features.zh.title='自訂功能標題';homepageDraft.features.zh.card_0_body='自訂卡片說明';homepageDraft.features.en.title='Custom feature heading';homepageDraft.join.zh.step_0_body='自訂申請說明';
+const saveContent=(content,version=config.version)=>fetch(origin+'/api/homepage-settings',{method:'POST',headers:{Cookie:cookies.admin,Origin:origin,'Content-Type':'application/json'},body:JSON.stringify({settings:defaults,content,version})});
+let result=await saveContent(homepageDraft);assert.equal(result.status,200);config=await result.json();assert.equal(config.content.features.en.title,'Custom feature heading');
+for(const path of ['/','/about']){const html=await (await get(path)).text();for(const marker of ['自訂首頁主標','自訂功能標題','自訂卡片說明','自訂申請說明'])assert.ok(html.includes(marker),marker);assert.ok(!html.includes('讓研究工作，更有條理。'));}
+assert.equal((await saveContent(DEFAULT_HOMEPAGE_CONTENT,config.version-1)).status,409);
+result=await saveContent(DEFAULT_HOMEPAGE_CONTENT);assert.equal(result.status,200);config=await result.json();
+const resetHome=await (await get('/')).text();assert.ok(resetHome.includes('讓研究工作，更有條理。'));assert.ok(!resetHome.includes('自訂功能標題'));
 console.log('PASS: public homepage, authenticated workspace, login/QR links, opt-in migration, metadata-only public feed, pagination/search, private/draft/archive denial, anonymous public images immediate audience changes, admin homepage switches, stale write rejection and hidden markup.');
 if(process.argv.includes('--preview')){console.log('PREVIEW '+origin+' admin@test.invalid / '+password);await new Promise(resolve=>process.once('SIGTERM',resolve));}
-}catch(error){console.error(logs);throw error;}finally{child.kill('SIGTERM');if(child.exitCode===null)await new Promise(r=>child.once('exit',r));d.close();rmSync(dir,{recursive:true,force:true});}
+}catch(error){console.error(logs);throw error;}finally{child.kill('SIGTERM');if(child.exitCode===null)await new Promise(r=>child.once('exit',r));d.close();if(!resolve(dir).startsWith(root+sep))throw new Error('Unsafe test cleanup');rmSync(dir,{recursive:true,force:true});}

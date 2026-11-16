@@ -1,4 +1,4 @@
-import {publicHomepageSettings} from '@/lib/homepage-settings.mjs';
+import {publicHomepageSettings,publicHomepageContent} from '@/lib/homepage-settings.mjs';
 import {LandingPage} from '@/components/PublicSite';
 import {getConnection} from '@/lib/store.mjs';
 import {listPublicPosts} from '@/lib/posts.mjs';
@@ -13,7 +13,7 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
   if(!user) {
     if (sp?.id) redirect(`/login?id=${encodeURIComponent(sp.id)}`);
     const settings=publicHomepageSettings(getConnection());
-    return <LandingPage settings={settings} posts={settings.public_posts?listPublicPosts(getConnection(),{limit:6}).rows:[]}/>;
+    return <LandingPage content={publicHomepageContent(getConnection())} settings={settings} posts={settings.public_posts?listPublicPosts(getConnection(),{limit:6}).rows:[]}/>;
   }
 
   return <Workspace signedIn={true} signInUrl="/login"/>;

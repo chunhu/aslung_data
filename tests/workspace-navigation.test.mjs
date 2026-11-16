@@ -29,6 +29,8 @@ test('navigation groups cover every destination exactly once and hide empty unau
  const f=fixture(t);f.render(()=>f.views.default({items:items.filter(i=>['news','articles','files','data','realtime','connection'].includes(i.id)),section:'data',account:'member'}));f.flush();
  assert.ok(group(f.tree,'resources'));assert.ok(group(f.tree,'data'));assert.ok(!group(f.tree,'members'));assert.ok(!group(f.tree,'devices'));assert.ok(!group(f.tree,'calibration'));
  const ids=f.views.NAVIGATION_GROUPS.flatMap(g=>g.sections);assert.equal(new Set(ids).size,ids.length);assert.deepEqual([...ids].sort(),items.map(i=>i.id).sort());
+ assert.ok(f.views.NAVIGATION_GROUPS.find(g=>g.id==='website').sections.includes('feature-access'));
+ assert.ok(!f.views.NAVIGATION_GROUPS.find(g=>g.id==='members').sections.includes('feature-access'));
 });
 test('group toggle persists without changing the page and navigation automatically expands the current group',t=>{
  const f=fixture(t),selected=[];let section='data';
