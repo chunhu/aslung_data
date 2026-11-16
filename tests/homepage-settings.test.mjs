@@ -31,7 +31,7 @@ test('live administrator role and active state are required for reading and writ
 }finally{d.close();}});
 test('hidden sections do not render; the introduction and login remain available',()=>{
  const code=ts.transpileModule(readFileSync(new URL('../components/PublicSite.tsx',import.meta.url),'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX}}).outputText;
- const deps={'react/jsx-runtime':jsx,'@/components/LanguageSwitcher':{default:()=>null},'@/components/useAppLanguage':{default:()=> 'zh-TW'},'@/components/RichPostBody':{default:()=>null},'@/lib/homepage-options.mjs':options,'@/lib/homepage-content.mjs':homepageContent,'lucide-react':Object.fromEntries(['Activity','ArrowRight','Database','ShieldCheck','SlidersHorizontal','FileText','ArrowUpRight','Users','CheckCircle2'].map(key=>[key,()=>null]))};
+ const deps={'react/jsx-runtime':jsx,'@/components/LanguageSwitcher':{default:()=>null},'@/components/useAppLanguage':{default:()=> 'zh-TW'},'@/components/RichPostBody':{default:()=>null},'@/components/HomepageBody':{default:({body})=>React.createElement('p',null,body)},'@/lib/homepage-options.mjs':options,'@/lib/homepage-content.mjs':homepageContent,'lucide-react':Object.fromEntries(['Activity','ArrowRight','Database','ShieldCheck','SlidersHorizontal','FileText','ArrowUpRight','Users','CheckCircle2'].map(key=>[key,()=>null]))};
  const mod={exports:{}};new Function('require','module','exports',code)(name=>{assert.ok(name in deps,name);return deps[name];},mod,mod.exports);
  const allHidden=Object.fromEntries(Object.keys(options.DEFAULT_HOMEPAGE_SETTINGS).map(key=>[key,false]));
  const html=renderToStaticMarkup(React.createElement(mod.exports.LandingPage,{posts:[],settings:allHidden}));

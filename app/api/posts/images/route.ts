@@ -4,6 +4,7 @@ import {identity,writeGuard,AppError,fail} from '@/lib/server';
 import {limitedBody,HttpSecurityError} from '@/lib/http-security.mjs';
 import {getConnection} from '@/lib/store.mjs';
 import {ensurePostSchema} from '@/lib/posts.mjs';
+import {isPublicHomepageImage} from '@/lib/homepage-settings.mjs';
 import {auditOperation,setActivityAction} from '@/lib/activity-server';
 export const runtime='nodejs';export const dynamic='force-dynamic';
 const headers={'Cache-Control':'private, no-store','Vary':'Cookie, Authorization, X-API-Key','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer'};
@@ -11,7 +12,7 @@ export async function GET(req:Request){try{
   const id=new URL(req.url).searchParams.get('id');
   if(!id||!/^[a-f0-9-]{36}$/.test(id))throw new AppError(404,'找不到圖片。');
   const d=getConnection();ensurePostSchema(d);
-  const publicImage=!!d.prepare("SELECT 1 FROM site_post_image_refs r JOIN site_posts p ON p.id=r.post_id WHERE r.image_id=? AND p.status='published' AND p.visibility='public' LIMIT 1").get(id);
+  const publicImage=isPublicHomepageImage(d,id)||!!d.prepare("SELECT 1 FROM site_post_image_refs r JOIN site_posts p ON p.id=r.post_id WHERE r.image_id=? AND p.status='published' AND p.visibility='public' LIMIT 1").get(id);
   const me=publicImage?null:await identity(req);
   if(!publicImage&&me?.role!=='admin'&&!d.prepare("SELECT 1 FROM site_post_image_refs r JOIN site_posts p ON p.id=r.post_id WHERE r.image_id=? AND p.status='published' LIMIT 1").get(id))throw new AppError(404,'圖片不存在或所屬文章尚未發布。');
   const row=d.prepare('SELECT data,mime_type FROM site_post_images WHERE id=?').get(id) as any;if(!row)throw new AppError(404,'找不到圖片。');

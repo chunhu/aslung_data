@@ -1,3 +1,4 @@
+import * as postModel from '../lib/post-document.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
@@ -55,7 +56,8 @@ test('disabled sections and dependent device captions are excluded from public s
   assert.equal(getHomepageSettings(d,admin).content.features.zh.title,'HIDDEN_CUSTOM_HEADING');
  }finally{d.close();}
 });
-function publicView(lang){return load('../components/PublicSite.tsx',{'react/jsx-runtime':jsx,'@/components/LanguageSwitcher':{default:()=>null},'@/components/useAppLanguage':{default:()=>lang},'@/components/RichPostBody':{default:()=>null},'@/lib/homepage-options.mjs':options,'@/lib/homepage-content.mjs':content,'lucide-react':Object.fromEntries(['Activity','ArrowRight','Database','ShieldCheck','SlidersHorizontal','FileText','ArrowUpRight','Users','CheckCircle2'].map(key=>[key,()=>null]))}).LandingPage;}
+function homepageBody(){const reader=load('../components/RichPostBody.tsx',{'react':React,'react/jsx-runtime':jsx,'@/lib/post-document.mjs':postModel});return load('../components/HomepageBody.tsx',{'react/jsx-runtime':jsx,'@/lib/homepage-content.mjs':content,'@/components/RichPostBody':reader});}
+function publicView(lang){return load('../components/PublicSite.tsx',{'react/jsx-runtime':jsx,'@/components/LanguageSwitcher':{default:()=>null},'@/components/useAppLanguage':{default:()=>lang},'@/components/RichPostBody':{default:()=>null},'@/components/HomepageBody':homepageBody(),'@/lib/homepage-options.mjs':options,'@/lib/homepage-content.mjs':content,'lucide-react':Object.fromEntries(['Activity','ArrowRight','Database','ShieldCheck','SlidersHorizontal','FileText','ArrowUpRight','Users','CheckCircle2'].map(key=>[key,()=>null]))}).LandingPage;}
 test('public sections render edited headings, text, device names and steps in the selected language with HTML escaped',()=>{
  const draft=content.cloneHomepageContent();for(const section of content.HOMEPAGE_CONTENT_SECTIONS)for(const field of section.fields){draft[section.key].zh[field.key]='ZH_'+section.key+'_'+field.key;draft[section.key].en[field.key]='EN_'+section.key+'_'+field.key;}
  draft.intro.zh.description='<script>alert(1)</script>';
@@ -64,14 +66,23 @@ test('public sections render edited headings, text, device names and steps in th
  assert.match(zh,/&lt;script&gt;/);assert.ok(!zh.includes('<script>'));assert.ok(!en.includes('ZH_'));assert.match(zh,/href="\/login"/);assert.match(zh,/href="\/register"/);
 });
 function find(node,predicate){if(!React.isValidElement(node))return null;if(predicate(node))return node;for(const child of React.Children.toArray(node.props.children)){const found=find(child,predicate);if(found)return found;}return null;}
+test('homepage rich editor mounts on demand and updates only the selected language field',()=>{
+ const draft=content.cloneHomepageContent(),snapshot={version:1,settings:options.DEFAULT_HOMEPAGE_SETTINGS,content:draft},slots=[snapshot,snapshot.settings,draft,false,false,'','',null,0,false];let i=0;
+ function Editor(){return null;}
+ const deps={'react':{useState:initial=>{const n=i++;if(!(n in slots))slots[n]=typeof initial==='function'?initial():initial;return [slots[n],v=>{slots[n]=typeof v==='function'?v(slots[n]):v;}];},useRef:()=>({current:0}),useEffect:()=>{}},'react/jsx-runtime':jsx,'@/lib/homepage-options.mjs':options,'@/lib/homepage-content.mjs':content,'@/components/PostEditor':{default:Editor},'@/components/HomepageBody':homepageBody(),'@/components/ui/button':{Button:'button'},'@/components/ui/input':{Input:'input'}};
+ const View=load('../components/HomepageSettings.tsx',deps).default,props={api:async()=>{},isEnglish:false,formatTime:v=>v},render=()=>{i=0;return View(props);};
+ let tree=render();assert.equal(find(tree,n=>n.type===Editor),null);
+ find(tree,n=>n.type==='button'&&n.props.children==='可視化編輯').props.onClick();tree=render();const editor=find(tree,n=>n.type===Editor);assert.ok(editor);assert.equal(editor.props.context,'homepage');assert.equal(editor.props.isEnglish,false);
+ const document=JSON.stringify(postModel.plainPostDocument('Chinese rich text'));editor.props.onChange({body:'Chinese rich text',body_json:document});assert.equal(slots[2].intro.zh.rich.description,document);assert.equal(slots[2].intro.en.description,draft.intro.en.description);assert.deepEqual(slots[2].intro.en.rich,{});
+});
 test('editor resets a single section or all sections in the draft, then sends both languages only on Save',async()=>{
- const draft=content.cloneHomepageContent();draft.hero_visual.zh.title='Custom illustration';draft.features.zh.title='Custom features';
+ const draft=content.cloneHomepageContent();draft.hero_visual.zh.title='Custom illustration';draft.features.zh.title='Custom features';draft.features.zh.rich.description=JSON.stringify(postModel.plainPostDocument('Formatted draft'));
  const snapshot={version:4,settings:{...options.DEFAULT_HOMEPAGE_SETTINGS,hero_visual:false},content:draft},slots=[snapshot,snapshot.settings,content.cloneHomepageContent(draft),false,false,'',''],calls=[];let i=0;
- const deps={'react':{useState:()=>{const n=i++;return [slots[n],v=>{slots[n]=typeof v==='function'?v(slots[n]):v;}];},useRef:()=>({current:0}),useEffect:()=>{}},'react/jsx-runtime':jsx,'@/lib/homepage-options.mjs':options,'@/lib/homepage-content.mjs':content,'@/components/ui/button':{Button:'button'},'@/components/ui/input':{Input:'input'}};
+ const deps={'react':{useState:initial=>{const n=i++;if(!(n in slots))slots[n]=typeof initial==='function'?initial():initial;return [slots[n],v=>{slots[n]=typeof v==='function'?v(slots[n]):v;}];},useRef:()=>({current:0}),useEffect:()=>{}},'react/jsx-runtime':jsx,'@/lib/homepage-options.mjs':options,'@/lib/homepage-content.mjs':content,'@/components/PostEditor':{default:()=>null},'@/components/HomepageBody':homepageBody(),'@/components/ui/button':{Button:'button'},'@/components/ui/input':{Input:'input'}};
  const View=load('../components/HomepageSettings.tsx',deps).default,props={api:async(url,init)=>{const p=JSON.parse(init.body);calls.push(p);return {...p,version:5};},isEnglish:false,formatTime:v=>v},render=()=>{i=0;return View(props);},old=globalThis.window;globalThis.window={confirm:()=>true};
  try{
   let tree=render();const section=find(tree,n=>n.type==='details'&&React.Children.toArray(n.props.children)[0]?.props.children[0]==='首頁主視覺示意圖');assert.ok(section);
-  find(section,n=>n.type==='button').props.onClick();assert.equal(slots[2].hero_visual.zh.title,content.DEFAULT_HOMEPAGE_CONTENT.hero_visual.zh.title);assert.equal(slots[2].features.zh.title,'Custom features');assert.equal(slots[1].hero_visual,true);assert.equal(calls.length,0);
+  find(section,n=>n.type==='button').props.onClick();assert.equal(slots[2].hero_visual.zh.title,content.DEFAULT_HOMEPAGE_CONTENT.hero_visual.zh.title);assert.equal(slots[2].features.zh.title,'Custom features');assert.ok(slots[2].features.zh.rich.description.includes('Formatted draft'));assert.equal(slots[1].hero_visual,true);assert.equal(calls.length,0);
   tree=render();find(tree,n=>n.type==='button'&&n.props.children==='全部恢復預設（需儲存）').props.onClick();assert.deepEqual(slots[2],content.DEFAULT_HOMEPAGE_CONTENT);assert.equal(calls.length,0);
   tree=render();await find(tree,n=>n.type==='form').props.onSubmit({preventDefault:()=>{}});assert.equal(calls.length,1);assert.deepEqual(calls[0].content,content.DEFAULT_HOMEPAGE_CONTENT);assert.equal(calls[0].version,4);
  }finally{globalThis.window=old;}

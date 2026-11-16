@@ -83,6 +83,16 @@ for(const path of ['/','/about']){const html=await (await get(path)).text();for(
 assert.equal((await saveContent(DEFAULT_HOMEPAGE_CONTENT,config.version-1)).status,409);
 result=await saveContent(DEFAULT_HOMEPAGE_CONTENT);assert.equal(result.status,200);config=await result.json();
 const resetHome=await (await get('/')).text();assert.ok(resetHome.includes('讓研究工作，更有條理。'));assert.ok(!resetHome.includes('自訂功能標題'));
+// Homepage-only images are private drafts until saved into a visible rich field.
+const homeImage=randomUUID();d.prepare('INSERT INTO site_post_images VALUES(?,?,?,?,?)').run(homeImage,image,'image/webp',admin.email,new Date().toISOString());
+assert.equal((await get('/api/posts/images?id='+homeImage)).status,401);
+const richDraft=cloneHomepageContent();richDraft.features.zh.rich.description=JSON.stringify({type:'doc',content:[{type:'paragraph',content:[{type:'text',text:'RICH_HOME_MARKER',marks:[{type:'bold'}]}]},{type:'image',attrs:{src:'/api/posts/images?id='+homeImage,alt:'Homepage instrument',width:200}}]});richDraft.features.en.rich.description=JSON.stringify({type:'doc',content:[{type:'paragraph',content:[{type:'text',text:'Independent English formatting',marks:[{type:'italic'}]}]}]});
+result=await saveContent(richDraft);assert.equal(result.status,200);config=await result.json();assert.ok(config.content.features.en.rich.description.includes('italic'));
+for(const path of ['/','/about']){const html=await (await get(path)).text();assert.ok(html.includes('<strong>RICH_HOME_MARKER</strong>'));assert.ok(html.includes(homeImage));}
+assert.equal((await get('/api/posts/images?id='+homeImage)).status,200);
+config=await (await setDisplay({...defaults,features:false})).json();assert.equal((await get('/api/posts/images?id='+homeImage)).status,401);assert.ok(!(await (await get('/')).text()).includes('RICH_HOME_MARKER'));
+result=await saveContent(DEFAULT_HOMEPAGE_CONTENT);assert.equal(result.status,200);config=await result.json();assert.deepEqual(config.content.features.zh.rich,{});assert.equal((await get('/api/posts/images?id='+homeImage)).status,401);
+
 console.log('PASS: public homepage, authenticated workspace, login/QR links, opt-in migration, metadata-only public feed, pagination/search, private/draft/archive denial, anonymous public images immediate audience changes, admin homepage switches, stale write rejection and hidden markup.');
 if(process.argv.includes('--preview')){console.log('PREVIEW '+origin+' admin@test.invalid / '+password);await new Promise(resolve=>process.once('SIGTERM',resolve));}
 }catch(error){console.error(logs);throw error;}finally{child.kill('SIGTERM');if(child.exitCode===null)await new Promise(r=>child.once('exit',r));d.close();if(!resolve(dir).startsWith(root+sep))throw new Error('Unsafe test cleanup');rmSync(dir,{recursive:true,force:true});}

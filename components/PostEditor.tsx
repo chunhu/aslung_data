@@ -10,9 +10,9 @@ import Subscript from '@tiptap/extension-subscript';
 import Superscript from '@tiptap/extension-superscript';
 import {POST_FONTS,POST_SIZES,plainPostDocument,safePostLink,postImageId} from '@/lib/post-document.mjs';
 import {Button} from '@/components/ui/button';
-type Props={body:string;document?:string|null;disabled:boolean;isEnglish:boolean;api:(url:string,options?:RequestInit)=>Promise<any>;onChange:(value:{body:string;body_json:string})=>void;onBusy:(busy:boolean)=>void};
+type Props={context?:"post"|"homepage";label?:string;body:string;document?:string|null;disabled:boolean;isEnglish:boolean;api:(url:string,options?:RequestInit)=>Promise<any>;onChange:(value:{body:string;body_json:string})=>void;onBusy:(busy:boolean)=>void};
 const LocalImage=Image.extend({parseHTML(){return [{tag:'img[src]',getAttrs:(element:HTMLElement)=>{try{postImageId(element.getAttribute('src'));return null;}catch{return false;}}}];}});
-export default function PostEditor({body,document,disabled,isEnglish:en,api,onChange,onBusy}:Props){
+export default function PostEditor({body,document,disabled,isEnglish:en,api,onChange,onBusy,context="post",label}:Props){
   const [uploading,setUploading]=useState(false),[error,setError]=useState(''),[imageAlt,setImageAlt]=useState(''),[caption,setCaption]=useState('');
   const input=useRef<HTMLInputElement>(null),uploadLock=useRef(false),alive=useRef(true);
   useEffect(()=>{alive.current=true;return()=>{alive.current=false;};},[]);
@@ -20,7 +20,7 @@ export default function PostEditor({body,document,disabled,isEnglish:en,api,onCh
   const editor=useEditor({
     extensions:[StarterKit.configure({heading:{levels:[1,2,3,4]},link:{openOnClick:false,isAllowedUri:value=>{try{safePostLink(value);return true;}catch{return false;}}}}),TextStyleKit.configure({lineHeight:false}),TextAlign.configure({types:['heading','paragraph']}),LocalImage.configure({allowBase64:false,resize:{enabled:true,alwaysPreserveAspectRatio:true,minWidth:32,minHeight:32}}),TableKit.configure({table:{resizable:false}}),Subscript,Superscript],
     content:initial,immediatelyRender:false,shouldRerenderOnTransaction:true,
-    editorProps:{attributes:{class:'post-rich-content min-h-80 p-4 outline-none',role:'textbox','aria-label':en?'Post body':'文章內文','aria-multiline':'true'},
+    editorProps:{attributes:{class:context==='homepage'?'post-rich-content min-h-40 p-4 outline-none':'post-rich-content min-h-80 p-4 outline-none',role:'textbox','aria-label':label||(en?'Post body':'文章內文'),'aria-multiline':'true'},
       handlePaste:(_view,event)=>{const files=Array.from(event.clipboardData?.files||[]);if(!files.length)return false;event.preventDefault();void upload(files);return true;},
       handleDrop:(_view,event,_slice,moved)=>{if(moved)return false;const files=Array.from(event.dataTransfer?.files||[]);if(!files.length)return false;event.preventDefault();void upload(files);return true;},
     },
@@ -47,7 +47,7 @@ export default function PostEditor({body,document,disabled,isEnglish:en,api,onCh
   const locked=disabled||uploading;
   const tool=(zh:string,english:string,action:()=>void,active=false)=> <Button key={english} type="button" size="sm" variant={active?'default':'outline'} disabled={locked} aria-label={en?english:zh} aria-pressed={active} onMouseDown={event=>event.preventDefault()} onClick={action}>{en?english:zh}</Button>;
   return <div className="rounded-lg border bg-white overflow-hidden">
-    <div className="flex flex-wrap items-center gap-2 border-b bg-slate-50 p-3" role="toolbar" aria-label={en?'Post formatting':'文章格式工具'}>
+    <div className="flex flex-wrap items-center gap-2 border-b bg-slate-50 p-3" role="toolbar" aria-label={context==='homepage'?(en?'Homepage formatting':'首頁區塊格式工具'):(en?'Post formatting':'文章格式工具')}>
       <select aria-label={en?'Paragraph style':'段落樣式'} disabled={locked} className="h-9 border rounded px-2 max-w-full" value={editor.isActive('heading')?'h'+editor.getAttributes('heading').level:'paragraph'} onChange={event=>{const v=event.target.value;if(v==='paragraph')editor.chain().focus().setParagraph().run();else editor.chain().focus().toggleHeading({level:Number(v.slice(1)) as 1|2|3|4}).run();}}><option value="paragraph">{en?'Paragraph':'一般段落'}</option>{[1,2,3,4].map(level=><option key={level} value={'h'+level}>{en?'Heading':'標題'} {level}</option>)}</select>
       <select aria-label={en?'Font family':'字型'} disabled={locked} className="h-9 border rounded px-2 max-w-44" value={editor.getAttributes('textStyle').fontFamily||''} onChange={event=>{const chain=editor.chain().focus();if(event.target.value)chain.setFontFamily(event.target.value).run();else chain.unsetFontFamily().run();}}><option value="">{en?'Default font':'預設字型'}</option>{POST_FONTS.map(font=><option key={font} value={font}>{font}</option>)}</select>
       <select aria-label={en?'Font size':'字級'} disabled={locked} className="h-9 border rounded px-2" value={editor.getAttributes('textStyle').fontSize||''} onChange={event=>{const chain=editor.chain().focus();if(event.target.value)chain.setFontSize(event.target.value).run();else chain.unsetFontSize().run();}}><option value="">{en?'Default size':'預設字級'}</option>{POST_SIZES.map(size=><option key={size}>{size}</option>)}</select>
@@ -67,6 +67,6 @@ export default function PostEditor({body,document,disabled,isEnglish:en,api,onCh
     {error&&<p role="alert" className="m-3 rounded bg-red-50 p-2 text-sm text-red-700">{error}</p>}
     {uploading&&<p role="status" className="px-4 py-2 text-sm">{en?'Processing images…':'正在處理圖片…'}</p>}
     <EditorContent editor={editor}/>
-    <p className="border-t p-3 text-xs leading-6 text-slate-500">{en?'Paste or drop images, or upload PNG/JPEG/WebP up to 5 MB (16 MP). Select an image to resize. Up to 30 images per post. Fonts use those available on the reader’s device.':'可貼上、拖曳或上傳 PNG／JPEG／WebP 圖片，每張上限 5 MB、1600 萬像素，每篇最多 30 張；點選圖片可拖曳調整大小。字型依讀者裝置可用字型呈現。'}</p>
+    <p className="border-t p-3 text-xs leading-6 text-slate-500">{context==='homepage'?(en?'Images become public only after saving in a visible homepage section. Up to 10 images per field and 30 unique images across both homepage languages. Maximum 2,000 text characters per field.':'圖片只會在儲存且區塊啟用後公開。每欄最多 10 張、全首頁中英文合計最多 30 張不同圖片，文字上限 2000 字。圖片可拖曳調整大小。'):(en?'Paste or drop images, or upload PNG/JPEG/WebP up to 5 MB (16 MP). Select an image to resize. Up to 30 images per post. Fonts use those available on the reader’s device.':'可貼上、拖曳或上傳 PNG／JPEG／WebP 圖片，每張上限 5 MB、1600 萬像素，每篇最多 30 張；點選圖片可拖曳調整大小。字型依讀者裝置可用字型呈現。')}</p>
   </div>;
 }
