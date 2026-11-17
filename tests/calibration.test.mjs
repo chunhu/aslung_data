@@ -157,7 +157,7 @@ test('only Google sheet URLs with explicit tabs are accepted',()=>{
   for(const url of ['http://127.0.0.1/x','https://evil.test/spreadsheets/d/id/edit?gid=0','https://docs.google.com/spreadsheets/d/id/edit'])assert.throws(()=>c.googleCalibrationUrl(url));
   assert.equal(c.googleCalibrationUrl('https://docs.google.com/spreadsheets/d/id/edit#gid=123').gid,'123');
 });
-test('calibration API protects admin writes and list access, bounds pagination, and lists all devices including unregistered IDs',async()=>{
+test('calibration API protects admin writes and list access, bounds pagination, requires a keyword and can find unregistered IDs',async()=>{
   const {d,id}=fixture();let actor={email:'admin@test',role:'admin'};
   class AppError extends Error{constructor(status,message){super(message);this.status=status;}}
   const api=load('../app/api/calibration/route.ts',{
@@ -170,7 +170,10 @@ test('calibration API protects admin writes and list access, bounds pagination, 
     actor.role='calibration_manager';assert.equal((await api.GET(new Request('http://test/api/calibration'))).status,200);
     actor.role='admin';assert.equal((await post({action:'sync',id},'http://evil')).status,403);
     assert.equal((await post({action:'sync',id})).status,200);
+    const initial=await (await api.GET(new Request('http://test/api/calibration'))).json();assert.deepEqual(initial.records,[]);assert.equal(initial.total,0);assert.deepEqual(initial.devices,[]);
     const data=await (await api.GET(new Request('http://test/api/calibration?device=AL-9999'))).json();
+    for(const keyword of ['al-999','PM1_G3']){const match=await (await api.GET(new Request('http://test/api/calibration?q='+keyword))).json();assert.equal(match.records.length,1);}
+    assert.equal((await api.GET(new Request('http://test/api/calibration?q='+ 'x'.repeat(161)))).status,400);
     assert.deepEqual(data.devices,['AL-9999']);assert.equal(data.records.length,1);assert.equal(data.logs.length,1);
     assert.equal((await api.GET(new Request('http://test/api/calibration?offset=-1'))).status,400);
     assert.equal((await post({action:'enabled',id,enabled:'false'})).status,400);
@@ -179,7 +182,7 @@ test('calibration API protects admin writes and list access, bounds pagination, 
     actor.role='member';assert.equal((await post(edit)).status,403);
     actor.role='calibration_manager';assert.equal((await post(edit,'http://evil')).status,403);
     assert.equal((await post(edit)).status,200);
-    const current=await (await api.GET(new Request('http://test/api/calibration'))).json();
+    const current=await (await api.GET(new Request('http://test/api/calibration?q=al-999'))).json();
     assert.equal(current.records[0].a1,4);assert.equal(current.sources[0].manual_edit,1);
     assert.equal(current.sources[0].allow_manual_overwrite,0);
     assert.equal(current.records[0].manual_edited_by,'admin@test');
@@ -190,7 +193,7 @@ test('calibration API protects admin writes and list access, bounds pagination, 
     assert.equal((await post({...overwrite,version:record.version_id})).status,409);
     assert.equal((await post(overwrite)).status,200);
     assert.equal((await (await api.GET(new Request('http://test/api/calibration'))).json()).sources[0].allow_manual_overwrite,1);
-    const old=await (await api.GET(new Request('http://test/api/calibration?version='+record.version_id))).json();
+    const old=await (await api.GET(new Request('http://test/api/calibration?q=9999&version='+record.version_id))).json();
     assert.equal(old.records[0].is_current,0);assert.equal(old.records[0].a1,2);
     assert.equal((await post(edit)).status,409);
     const deletion={action:'records',operation:'delete',ids:[current.records[0].id]};

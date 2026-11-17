@@ -12,9 +12,11 @@ export async function GET(req:Request){try{
   const me=await identity(req);if(!canManageCalibration(me))throw new AppError(403,'只有系統管理員或校正管理員可以查詢全部設備校正參數。');
   const d=getConnection();ensureCalibrationSchema(d);const q=new URL(req.url).searchParams;
   const device=(q.get('device')||'').trim(),source=q.get('source')||'',version=q.get('version')||'';
-  if(device.length>80||source.length>80||version&&!/^\d+$/.test(version))throw new AppError(400,'查詢參數不正確。');
+  const keyword=(q.get('q')||'').trim();
+  if(keyword.length>160||device.length>80||source.length>80||version&&!/^\d+$/.test(version))throw new AppError(400,'查詢參數不正確。');
   const offset=Number(q.get('offset')||0);if(!Number.isSafeInteger(offset)||offset<0)throw new AppError(400,'分頁不正確。');
-  const clauses=['1=1'],args:(string|number)[]=[];
+  const clauses=[keyword||device?'1=1':'0=1'],args:(string|number)[]=[];
+  if(keyword){clauses.push('(instr(lower(r.aslung_id),lower(?))>0 OR instr(lower(r.channel),lower(?))>0 OR instr(lower(s.name),lower(?))>0)');args.push(keyword,keyword,keyword);}
   if(device){clauses.push('r.aslung_id=?');args.push(device);}
   if(source){clauses.push('s.id=?');args.push(source);}
   if(version){clauses.push('r.version_id=?');args.push(Number(version));}
@@ -26,7 +28,7 @@ export async function GET(req:Request){try{
     records,total,offset,hasMore:offset+records.length<Number(total),authentication:calibrationAuthentication(),
     versions:d.prepare('SELECT * FROM calibration_versions WHERE (?=\'\' OR source_id=?) ORDER BY id DESC LIMIT 200').all(source,source),
     logs:d.prepare('SELECT l.*,s.name AS source_name FROM calibration_sync_logs l JOIN calibration_sources s ON s.id=l.source_id WHERE (?=\'\' OR l.source_id=?) ORDER BY l.id DESC LIMIT 50').all(source,source),
-    devices:d.prepare('SELECT DISTINCT r.aslung_id FROM calibration_records r JOIN calibration_sources s ON s.current_version=r.version_id ORDER BY r.aslung_id LIMIT 10000').all().map((r:any)=>r.aslung_id)
+    devices:[...new Set(records.map((r:any)=>r.aslung_id))]
   },{headers:{'Cache-Control':'no-store'}});
 }catch(e){return failure(e);}}
 async function handlePOST(req: Request){try{
