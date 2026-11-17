@@ -9,7 +9,7 @@ import ProcessingJobDetails,{storageLabel} from '@/components/ProcessingJobDetai
 import ProcessingHistoryImport from '@/components/ProcessingHistoryImport';
 import ProcessingCleanup from '@/components/ProcessingCleanup';
 type Props={api:(path:string,options?:RequestInit)=>Promise<any>;isEnglish:boolean;formatTime:(s:string)=>string};
-const labels:Record<string,string>={QUEUED:'排隊中',RUNNING:'處理中',COMPLETED:'已完成',FAILED:'失敗',DELETING:'清除中'};
+const labels:Record<string,string>={QUEUED:'排隊中',RUNNING:'處理中',COMPLETED:'已完成',FAILED:'失敗',DELETING:'清除中',CANCELLED:'已取消'};
 export default function ProcessingJobs({api,isEnglish:en,formatTime}:Props){
   const [data,setData]=useState<any>(null),[error,setError]=useState(''),[busy,setBusy]=useState(false);
   const [device,setDevice]=useState(''),[start,setStart]=useState(''),[end,setEnd]=useState(''),[limit,setLimit]=useState(String(DEFAULT_UP_LIMIT));
@@ -51,7 +51,7 @@ export default function ProcessingJobs({api,isEnglish:en,formatTime}:Props){
     </div>
     <p className="text-xs leading-6 text-slate-500">{en?'Up to 31 days per request, split into daily jobs. Daily schedules run after 03:00 Taipei, refreshing the last three completed days; older corrections require an explicit new revision. Missing future context is flagged.':'每次最多 31 天，自動拆成每日工作。每日排程於臺灣時間 03:00 後更新最近三個完整日；更早的補傳資料或歷史係數修正，請使用「重新計算新版本」。未取得完整前後背景資料會留下標記。'}</p>
     <div className="flex flex-wrap gap-2">{data?.schedules.map((s:any)=><div key={s.device} className="rounded border p-2 text-xs">{s.device} · up_limit={s.up_limit} · {s.enabled?(en?'Daily enabled':'每日排程啟用'):(en?'Disabled':'已停用')}{s.last_error&&<p className="text-rose-700">{s.last_error}</p>} <Button size="sm" variant="ghost" disabled={busy} onClick={()=>void post({action:'schedule',device:s.device,upLimit:s.up_limit,enabled:!s.enabled})}>{s.enabled?(en?'Disable':'停用'):(en?'Enable':'啟用')}</Button></div>)}</div>
-    <ProcessingHistoryImport api={api} isEnglish={en} s3={data?.storage?.mode==='s3'} devices={data?.devices||[]} onChange={kind=>{setFilters(old=>({...old,kind}));setDraft(old=>({...old,kind}));setPage(1);}}/>
+    <ProcessingHistoryImport api={api} isEnglish={en} s3={data?.storage?.mode==='s3'} batches={data?.historical||[]} devices={data?.devices||[]} onChange={kind=>{setFilters(old=>({...old,kind}));setDraft(old=>({...old,kind}));setPage(1);}}/>
     <section className="space-y-3 border-t pt-4">
       <div><h3 className="font-semibold">{en?'Processing history':'校正工作記錄'}</h3><p className="mt-1 text-xs text-slate-500">{en?'Inspect status and versions here. Use Data Query for period queries and bulk downloads.':'此處供管理員追蹤工作、品質與版本；期間查詢及批量下載請至「資料查詢」。'}</p></div>
       <form className="grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-6" onSubmit={event=>{event.preventDefault();setFilters({...draft,device:draft.device.trim()});setPage(1);}}>

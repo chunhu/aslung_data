@@ -17,6 +17,7 @@ import * as zipExports from '../lib/csv-zip.mjs';
 import JSZip from 'jszip';
 import {processMeasurements,processingRecipe} from '../lib/measurement-processing.mjs';
 import * as jobs from '../lib/processing-jobs.mjs';
+import * as historicalBatches from '../lib/historical-batches.mjs';
 import * as history from '../lib/processing-history.mjs';
 import * as storage from '../lib/s3-storage.mjs';
 import * as cal from '../lib/calibration.mjs';
@@ -164,7 +165,7 @@ test('processing API protects writes, enforces result data permission and viewer
   const server={AppError,identity:async()=>member,writeGuard:()=>{if(!guard)throw new AppError(403,'origin');},
     fail:e=>Response.json({error:e.message},{status:e.status||500}),required:(v)=>{if(!v||typeof v!=='string')throw new AppError(400,'required');return v;},
     instant:v=>new Date(v).toISOString(),permitted:async()=>{checked++;if(!allow)throw new AppError(403,'denied');}};
-  const deps={'@/lib/export-name.mjs':exportNames,'@/lib/activity-server':activityAuditMock,'@/lib/http-security.mjs':activityHttpSecurity,'node:stream':activityNodeStream,'@/lib/server':server,'@/lib/permissions.mjs':permissions,'@/lib/store.mjs':{getConnection:()=>d},'@/lib/processing-jobs.mjs':jobs,'@/lib/global-processing.mjs':globalProcessing,'@/lib/s3-storage.mjs':storage,'@/lib/processing-history.mjs':history,'@/lib/csv-zip.mjs':zipExports};
+  const deps={'@/lib/export-name.mjs':exportNames,'@/lib/activity-server':activityAuditMock,'@/lib/http-security.mjs':activityHttpSecurity,'node:stream':activityNodeStream,'@/lib/server':server,'@/lib/permissions.mjs':permissions,'@/lib/store.mjs':{getConnection:()=>d},'@/lib/processing-jobs.mjs':jobs,'@/lib/global-processing.mjs':globalProcessing,'@/lib/s3-storage.mjs':storage,'@/lib/processing-history.mjs':history,'@/lib/historical-batches.mjs':historicalBatches,'@/lib/csv-zip.mjs':zipExports};
   const code=ts.transpileModule(readFileSync(new URL('../app/api/processing/route.ts',import.meta.url),'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;
   const module={exports:{}};new Function('require','module','exports',code)(key=>{assert.ok(key in deps);return deps[key];},module,module.exports);
   const api=module.exports,get=q=>api.GET(new Request('http://localhost/api/processing'+q)),post=p=>api.POST(new Request('http://localhost/api/processing',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)}));
@@ -194,7 +195,7 @@ test('history filters and pagination expose older jobs and metadata details with
   class AppError extends Error{constructor(status,message){super(message);this.status=status;}}
   const deps={'@/lib/activity-server':activityAuditMock,'@/lib/http-security.mjs':activityHttpSecurity,'node:stream':activityNodeStream,'@/lib/server':{AppError,identity:async()=>({role}),permitted:async()=>{},required:v=>v,fail:e=>Response.json({error:e.message},{status:e.status||500})},
     '@/lib/permissions.mjs':permissions,'@/lib/store.mjs':{getConnection:()=>d},'@/lib/processing-jobs.mjs':jobs,
-    '@/lib/global-processing.mjs':globalProcessing,'@/lib/s3-storage.mjs':storage,'@/lib/processing-history.mjs':history,'@/lib/csv-zip.mjs':zipExports,'@/lib/export-name.mjs':exportNames};
+    '@/lib/global-processing.mjs':globalProcessing,'@/lib/s3-storage.mjs':storage,'@/lib/processing-history.mjs':history,'@/lib/historical-batches.mjs':historicalBatches,'@/lib/csv-zip.mjs':zipExports,'@/lib/export-name.mjs':exportNames};
   const code=ts.transpileModule(readFileSync(new URL('../app/api/processing/route.ts',import.meta.url),'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;
   const module={exports:{}};new Function('require','module','exports',code)(key=>{assert.ok(key in deps,key);return deps[key];},module,module.exports);
   const get=q=>module.exports.GET(new Request('http://test/api/processing?'+q));

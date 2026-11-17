@@ -1,6 +1,7 @@
 import {getConnection} from '../lib/store.mjs';
 import {claimProcessing,runProcessing,scheduleProcessing} from '../lib/processing-jobs.mjs';
 import {processingPool,rawProcessingRows,discoverProcessingData} from '../lib/processing-raw.mjs';
+import {advanceHistoricalBatch} from '../lib/historical-batches.mjs';
 import {scheduleGlobalProcessing} from '../lib/global-processing.mjs';
 import {syncCalibrationSource,ensureCalibrationSchema} from '../lib/calibration.mjs';
 import {fetchCalibrationCsv} from '../lib/calibration-google.mjs';
@@ -37,6 +38,7 @@ try{
       for(const source of sources){if(shutdown.signal.aborted)break;await syncCalibrationSource(d,source.id,'processing-worker',fetchCalibrationCsv);}
     },
     schedule:async()=>{
+      advanceHistoricalBatch(d);
       scheduleProcessing(d);
       await scheduleGlobalProcessing(d,(devices,start,end,heartbeat)=>discoverProcessingData(pool,devices,start,end,heartbeat,{batchPauseMs:options.batchPauseMs}));
     },

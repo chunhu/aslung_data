@@ -44,7 +44,7 @@ async function handleGET(req:Request){try{
   const clauses:string[]=['j.data_kind=?'],values:string[]=[dataKind];
   const device=q.get('device')?.trim(),status=q.get('status');
   if(device){if(!/^[A-Za-z0-9_-]{1,80}$/.test(device))throw new AppError(400,'設備 ID 不正確。');clauses.push('j.device=? COLLATE NOCASE');values.push(device);}
-  if(status){if(!['QUEUED','RUNNING','COMPLETED','FAILED','DELETING'].includes(status))throw new AppError(400,'工作狀態不正確。');clauses.push('j.status=?');values.push(status);}
+  if(status){if(!['QUEUED','RUNNING','COMPLETED','FAILED','DELETING','CANCELLED'].includes(status))throw new AppError(400,'工作狀態不正確。');clauses.push('j.status=?');values.push(status);}
   const day=(value:string)=>{
     if(!/^\d{4}-\d{2}-\d{2}$/.test(value))throw new AppError(400,'日期格式不正確。');
     const time=Date.parse(value+'T00:00:00+08:00');
@@ -60,7 +60,8 @@ async function handleGET(req:Request){try{
   const total=Number(d.prepare('SELECT COUNT(*) AS n FROM processing_jobs j'+where).get(...values).n);
   const pages=Math.max(1,Math.ceil(total/pageSize)),currentPage=Math.min(page,pages);
   const {storageConfiguration}=await import('@/lib/s3-storage.mjs');
-  return Response.json({devices:d.prepare('SELECT id FROM devices ORDER BY id').all().map((r:any)=>r.id),storage:storageConfiguration(),global:globalProcessingSettings(d),pagination:{page:currentPage,pageSize,total,pages},jobs:d.prepare(`SELECT j.id,j.device,j.start,j.end,j.recipe,j.data_kind,j.status,j.rows_done,j.error,j.attempts,j.created_at,j.finished_at,
+  const {historicalBatchStatus}=await import('@/lib/historical-batches.mjs');
+  return Response.json({historical:historicalBatchStatus(d),devices:d.prepare('SELECT id FROM devices ORDER BY id').all().map((r:any)=>r.id),storage:storageConfiguration(),global:globalProcessingSettings(d),pagination:{page:currentPage,pageSize,total,pages},jobs:d.prepare(`SELECT j.id,j.device,j.start,j.end,j.recipe,j.data_kind,j.status,j.rows_done,j.error,j.attempts,j.created_at,j.finished_at,
     u.status AS upload_status,u.last_error AS upload_error,u.attempts AS upload_attempts,u.retry_at AS upload_retry_at
     FROM processing_jobs j LEFT JOIN processing_uploads u ON u.job_id=j.id${where} ORDER BY j.created_at DESC,j.id DESC LIMIT ? OFFSET ?`).all(...values,pageSize,(currentPage-1)*pageSize),schedules:d.prepare('SELECT * FROM processing_schedules ORDER BY device').all()},{headers:noStore});
 }catch(e){return fail(e);}}
@@ -69,7 +70,8 @@ async function handlePOST(req: Request){try{
   const p=await req.json();if(!p||typeof p!=='object'||Array.isArray(p))throw new AppError(400,'表單內容不正確。');
   const d=getConnection();ensureProcessingSchema(d);
   try{
-    if(p.action==='historical'){const {enqueueHistorical}=await import('@/lib/processing-history.mjs');return Response.json(enqueueHistorical(d,p,me.email));}
+    if(p.action==='historical'){const {createHistoricalBatch}=await import('@/lib/historical-batches.mjs');return Response.json(createHistoricalBatch(d,p,me.email));}
+    if(p.action==='historicalControl'){const {controlHistoricalBatch}=await import('@/lib/historical-batches.mjs');return Response.json(controlHistoricalBatch(d,p,me.email));}
     if(p.action==='global'){saveGlobalProcessing(d,{enabled:p.enabled,upLimit:p.upLimit,actor:me.email});return Response.json({ok:true});}
     if(p.action==='retry'){retryProcessing(d,required(p.id,80));return Response.json({ok:true});}
     const device=required(p.device,80);
