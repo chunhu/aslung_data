@@ -7,7 +7,7 @@ export const dynamic='force-dynamic';
 const headers={'Cache-Control':'no-store'};
 function failure(e:unknown){
   if(e instanceof AppError)return fail(e);
-  if((e as any).$metadata?.httpStatusCode===403||(e as Error).name==='AccessDenied')return fail(new AppError(403,'S3 清除權限不足，請先在 EC2 Role 新增 scripts/iam-calibration-cleanup.json 的補充政策，再重新預覽。'));
+  if((e as any).$metadata?.httpStatusCode===403||(e as Error).name==='AccessDenied')return fail(new AppError(403,'S3 清除權限不足，請先在 EC2 Role 新增 scripts/iam-calibration-cleanup.json（校正成果）或 scripts/iam-aslung-history.json（原始封存）的補充政策，再重新預覽。'));
   return fail(new AppError((e as any).status||500,(e as Error).message));
 }
 export async function GET(req:Request){try{

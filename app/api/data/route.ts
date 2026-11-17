@@ -25,14 +25,14 @@ async function handleGET(r: Request) {
           : fetchPage(id, start, end, cursor, limit);
 
         const calibrationMode=url.searchParams.get("calibration")||"raw";
-        if(!["raw","both","processed","personal"].includes(calibrationMode))throw new AppError(400,"校正模式僅支援 raw、both、personal 或 processed。");
-        if(calibrationMode==='processed'){
+        if(!["raw","both","processed","personal","archived"].includes(calibrationMode))throw new AppError(400,"資料模式僅支援 raw、both、personal、processed 或 archived。");
+        if(calibrationMode==='processed'||calibrationMode==='archived'){
             if(m.role!=='admin'&&Date.parse(end)-Date.parse(start)>31*86400000)throw new AppError(400,'一般會員查詢與下載不可超過 31 天。');
             if(url.searchParams.get('download')==='1'&&!canExportData(m))throw new AppError(403,'檢視會員沒有下載權限。');
             const {processedDataResponse}=await import('@/lib/processed-query.mjs');
             const {getConnection}=await import('@/lib/store.mjs');
-            try{return await processedDataResponse(getConnection(),{url,id,start,end,ranges,segmentId,authorize:async(job:any)=>{
-                if(m.role!=='admin')await permitted(m,id,job.context_start||job.start,job.context_end||job.end);
+            try{return await processedDataResponse(getConnection(),{url,id,start,end,ranges,segmentId,dataKind:calibrationMode==='archived'?'raw':'processed',authorize:async(job:any)=>{
+                if(m.role!=='admin'&&calibrationMode==='processed')await permitted(m,id,job.context_start||job.start,job.context_end||job.end);
             }});}catch(e){if(e instanceof AppError)throw e;throw new AppError((e as any).status||500,(e as Error).message);}
         }
         let calibrationSnapshot="";

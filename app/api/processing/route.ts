@@ -18,7 +18,7 @@ async function handleGET(req:Request){try{
     if(q.get('detail')==='1'){
       if(me.role!=='admin')throw new AppError(403,'工作詳細資料僅供系統管理員使用。');
       const upload=d.prepare('SELECT status,last_error,attempts,retry_at FROM processing_uploads WHERE job_id=?').get(job.id);
-      return Response.json({job:{id:job.id,device:job.device,start:job.start,end:job.end,status:job.status,rows_done:job.rows_done,
+      return Response.json({job:{id:job.id,device:job.device,start:job.start,end:job.end,data_kind:job.data_kind,status:job.status,rows_done:job.rows_done,
         recipe:JSON.parse(job.recipe),summary:JSON.parse(job.summary),error:job.error,attempts:job.attempts,
         actor:job.actor,created_at:job.created_at,finished_at:job.finished_at,context_start:job.context_start,context_end:job.context_end,
         upload_status:upload?.status||null,upload_error:upload?.last_error||'',upload_attempts:upload?.attempts||0,upload_retry_at:upload?.retry_at||null}},{headers:noStore});
@@ -40,7 +40,8 @@ async function handleGET(req:Request){try{
   if(me.role!=='admin')throw new AppError(403,'背景工作總覽僅供系統管理員使用。');
   const page=Number(q.get('page')||1),pageSize=Number(q.get('page_size')||20);
   if(!Number.isSafeInteger(page)||page<1||page>100000000||!Number.isSafeInteger(pageSize)||pageSize<1||pageSize>100)throw new AppError(400,'分頁參數不正確。');
-  const clauses:string[]=[],values:string[]=[];
+  const dataKind=q.get('kind')||'processed';if(!['raw','processed'].includes(dataKind))throw new AppError(400,'資料類型不正確。');
+  const clauses:string[]=['j.data_kind=?'],values:string[]=[dataKind];
   const device=q.get('device')?.trim(),status=q.get('status');
   if(device){if(!/^[A-Za-z0-9_-]{1,80}$/.test(device))throw new AppError(400,'設備 ID 不正確。');clauses.push('j.device=? COLLATE NOCASE');values.push(device);}
   if(status){if(!['QUEUED','RUNNING','COMPLETED','FAILED','DELETING'].includes(status))throw new AppError(400,'工作狀態不正確。');clauses.push('j.status=?');values.push(status);}
@@ -58,7 +59,8 @@ async function handleGET(req:Request){try{
   const where=clauses.length?' WHERE '+clauses.join(' AND '):'';
   const total=Number(d.prepare('SELECT COUNT(*) AS n FROM processing_jobs j'+where).get(...values).n);
   const pages=Math.max(1,Math.ceil(total/pageSize)),currentPage=Math.min(page,pages);
-  return Response.json({global:globalProcessingSettings(d),pagination:{page:currentPage,pageSize,total,pages},jobs:d.prepare(`SELECT j.id,j.device,j.start,j.end,j.recipe,j.status,j.rows_done,j.error,j.attempts,j.created_at,j.finished_at,
+  const {storageConfiguration}=await import('@/lib/s3-storage.mjs');
+  return Response.json({devices:d.prepare('SELECT id FROM devices ORDER BY id').all().map((r:any)=>r.id),storage:storageConfiguration(),global:globalProcessingSettings(d),pagination:{page:currentPage,pageSize,total,pages},jobs:d.prepare(`SELECT j.id,j.device,j.start,j.end,j.recipe,j.data_kind,j.status,j.rows_done,j.error,j.attempts,j.created_at,j.finished_at,
     u.status AS upload_status,u.last_error AS upload_error,u.attempts AS upload_attempts,u.retry_at AS upload_retry_at
     FROM processing_jobs j LEFT JOIN processing_uploads u ON u.job_id=j.id${where} ORDER BY j.created_at DESC,j.id DESC LIMIT ? OFFSET ?`).all(...values,pageSize,(currentPage-1)*pageSize),schedules:d.prepare('SELECT * FROM processing_schedules ORDER BY device').all()},{headers:noStore});
 }catch(e){return fail(e);}}
@@ -67,6 +69,7 @@ async function handlePOST(req: Request){try{
   const p=await req.json();if(!p||typeof p!=='object'||Array.isArray(p))throw new AppError(400,'表單內容不正確。');
   const d=getConnection();ensureProcessingSchema(d);
   try{
+    if(p.action==='historical'){const {enqueueHistorical}=await import('@/lib/processing-history.mjs');return Response.json(enqueueHistorical(d,p,me.email));}
     if(p.action==='global'){saveGlobalProcessing(d,{enabled:p.enabled,upLimit:p.upLimit,actor:me.email});return Response.json({ok:true});}
     if(p.action==='retry'){retryProcessing(d,required(p.id,80));return Response.json({ok:true});}
     const device=required(p.device,80);
@@ -81,7 +84,7 @@ async function handlePOST(req: Request){try{
       d.exec('COMMIT');
     }catch(e){d.exec('ROLLBACK');throw e;}
     return Response.json({ok:true,ids});
-  }catch(e){if(e instanceof AppError)throw e;throw new AppError(400,(e as Error).message);}
+  }catch(e){if(e instanceof AppError)throw e;throw new AppError((e as any).status||400,(e as Error).message);}
 }catch(e){return fail(e);}}
 
 export async function POST(request:Request){return auditOperation(request,()=>handlePOST(request as any));}

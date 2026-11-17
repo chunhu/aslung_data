@@ -26,10 +26,11 @@ export default function ProcessingJobDetails({id,api,isEnglish:en,formatTime,onC
     catch(e){setPreviewError((e as Error).name==='TimeoutError'?(en?'Preview timed out. Please retry.':'預覽讀取逾時，請重試。'):(e as Error).message);}
     finally{setLoading(false);}
   },[id,api,en]);
-  const columns=['timestamp',...['PM1','PM2.5','PM10'].flatMap(pm=>[pm+'_'+sensor,pm+'_'+sensor+'_clean',pm+'_'+sensor+'_calibrated',pm+'_'+sensor+'_final']),'temperature_clean','rh_clean','co2_clean','_background_status','_quality'];
+  const raw=job?.data_kind==='raw';
+  const columns=raw?['timestamp',...new Set<string>((preview?.data||[]).flatMap((r:any)=>Object.keys(r)).filter((k:string)=>k!=='timestamp'))]:['timestamp',...['PM1','PM2.5','PM10'].flatMap(pm=>[pm+'_'+sensor,pm+'_'+sensor+'_clean',pm+'_'+sensor+'_calibrated',pm+'_'+sensor+'_final']),'temperature_clean','rh_clean','co2_clean','_background_status','_quality'];
   const time=(value:string)=>value?formatTime(value):'—';
   return <Dialog open onOpenChange={open=>{if(!open)onClose();}}><DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-6xl">
-    <DialogHeader><DialogTitle>{en?'Processing job details':'校正工作詳細資料'}{job?' · '+job.device:''}</DialogTitle><DialogDescription>{en?'Inspect processing status and quality here. Use Data Query for date-range queries and bulk downloads.':'此處檢查工作狀態與資料品質；期間查詢及批量下載請至「資料查詢」。'}</DialogDescription></DialogHeader>
+    <DialogHeader><DialogTitle>{raw?(en?'Original archive details':'原始封存詳細資料'):(en?'Processing job details':'校正工作詳細資料')}{job?' · '+job.device:''}</DialogTitle><DialogDescription>{en?'Inspect processing status and quality here. Use Data Query for date-range queries and bulk downloads.':'此處檢查工作狀態與資料品質；期間查詢及批量下載請至「資料查詢」。'}</DialogDescription></DialogHeader>
     {error&&<p role="alert" className="text-sm text-rose-700">{error}</p>}
     {!job&&!error&&<p role="status">{en?'Loading details…':'正在載入詳細資料…'}</p>}
     {job&&<>
@@ -48,11 +49,11 @@ export default function ProcessingJobDetails({id,api,isEnglish:en,formatTime,onC
       {job.error&&<p role="alert" className="whitespace-pre-wrap break-words rounded-lg bg-rose-50 p-3 text-sm text-rose-800">{job.error}</p>}
       {job.upload_error&&<p role="alert" className="whitespace-pre-wrap break-words rounded-lg bg-amber-50 p-3 text-sm text-amber-900">{job.upload_error}</p>}
       {job.status==='COMPLETED'&&<>
-        <section className="space-y-2"><h3 className="font-semibold">{en?'Quality summary':'品質摘要'}</h3><p className="text-xs text-slate-500">{en?'Counts are per-field flags; they are not deleted row counts.':'旗標依欄位累計，同筆可能出現多個原因，不代表刪除筆數。'}</p>
+        {!raw&&<section className="space-y-2"><h3 className="font-semibold">{en?'Quality summary':'品質摘要'}</h3><p className="text-xs text-slate-500">{en?'Counts are per-field flags; they are not deleted row counts.':'旗標依欄位累計，同筆可能出現多個原因，不代表刪除筆數。'}</p>
           <dl className="grid gap-2 text-sm sm:grid-cols-3">{Object.entries(job.summary.flags||{}).map(([flag,count])=><div className="rounded border p-2" key={flag}><dt className="break-all text-xs text-slate-500">{flag}</dt><dd>{String(count)}</dd></div>)}</dl>
           {!Object.keys(job.summary.flags||{}).length&&<p className="text-sm">{en?'No quality flags.':'沒有品質旗標。'}</p>}
           <p className="text-sm">{en?'Rows with insufficient context':'背景樣本不足筆數'}：{job.summary.incompleteContext??0}</p>
-        </section>
+        </section>}
         <div className="flex flex-wrap items-center gap-2 border-t pt-3"><Button variant="outline" disabled={loading} onClick={()=>void show(0)}>{loading?(en?'Loading…':'讀取中…'):(en?'Load sample preview':'載入結果預覽')}</Button><a className="rounded border px-3 py-2 text-sm" href={'/api/processing?'+new URLSearchParams({id,download:'1'})}>{en?'Download this job (CSV ZIP)':'下載此工作（CSV ZIP）'}</a><span className="text-xs text-slate-500">{en?'Up to 200 rows per preview page.':'預覽每頁最多 200 筆。'}</span></div>
         {previewError&&<p role="alert" className="text-sm text-rose-700">{previewError}</p>}
         {preview&&<section className="min-w-0 space-y-2"><div className="flex flex-wrap items-center gap-2"><h3 className="font-semibold">{en?'Result preview':'結果預覽'}</h3><select aria-label={en?'Sensor':'感測器'} className="rounded border p-2 text-xs" value={sensor} onChange={e=>setSensor(e.target.value)}><option>G3</option><option>GSA</option></select><Button size="sm" variant="outline" disabled={loading||!offset} onClick={()=>void show(Math.max(0,offset-200))}>{en?'Previous':'上一頁'}</Button><Button size="sm" variant="outline" disabled={loading||!preview.hasMore} onClick={()=>void show(offset+200)}>{en?'Next':'下一頁'}</Button><span className="text-xs">{offset+1}–{offset+preview.data.length}</span></div><div className="max-h-80 overflow-auto"><table className="whitespace-nowrap text-left text-xs"><thead><tr>{columns.map(k=><th key={k} className="p-2">{k}</th>)}</tr></thead><tbody>{preview.data.map((row:any,i:number)=><tr key={i} className="border-t">{columns.map(k=><td key={k} className="p-2">{row[k]==null?'—':typeof row[k]==='object'?JSON.stringify(row[k]):String(row[k])}</td>)}</tr>)}</tbody></table></div>{!preview.data.length&&<p>{en?'No measurements in this job.':'此工作沒有量測資料。'}</p>}</section>}

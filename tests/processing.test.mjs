@@ -17,6 +17,8 @@ import * as zipExports from '../lib/csv-zip.mjs';
 import JSZip from 'jszip';
 import {processMeasurements,processingRecipe} from '../lib/measurement-processing.mjs';
 import * as jobs from '../lib/processing-jobs.mjs';
+import * as history from '../lib/processing-history.mjs';
+import * as storage from '../lib/s3-storage.mjs';
 import * as cal from '../lib/calibration.mjs';
 const recipe=processingRecipe(0);
 const sample=(i,extra={})=>({id:i,aslung_id:'AL-1',timestamp:new Date(Date.UTC(2024,0,1,0,0,i)).toISOString(),PM1_G3:8,'PM2.5_G3':10,PM10_G3:15,PM1_GSA:9,'PM2.5_GSA':11,PM10_GSA:16,temperature:23,rh:55,co2:400,...extra});
@@ -162,7 +164,7 @@ test('processing API protects writes, enforces result data permission and viewer
   const server={AppError,identity:async()=>member,writeGuard:()=>{if(!guard)throw new AppError(403,'origin');},
     fail:e=>Response.json({error:e.message},{status:e.status||500}),required:(v)=>{if(!v||typeof v!=='string')throw new AppError(400,'required');return v;},
     instant:v=>new Date(v).toISOString(),permitted:async()=>{checked++;if(!allow)throw new AppError(403,'denied');}};
-  const deps={'@/lib/export-name.mjs':exportNames,'@/lib/activity-server':activityAuditMock,'@/lib/http-security.mjs':activityHttpSecurity,'node:stream':activityNodeStream,'@/lib/server':server,'@/lib/permissions.mjs':permissions,'@/lib/store.mjs':{getConnection:()=>d},'@/lib/processing-jobs.mjs':jobs,'@/lib/global-processing.mjs':globalProcessing,'@/lib/csv-zip.mjs':zipExports};
+  const deps={'@/lib/export-name.mjs':exportNames,'@/lib/activity-server':activityAuditMock,'@/lib/http-security.mjs':activityHttpSecurity,'node:stream':activityNodeStream,'@/lib/server':server,'@/lib/permissions.mjs':permissions,'@/lib/store.mjs':{getConnection:()=>d},'@/lib/processing-jobs.mjs':jobs,'@/lib/global-processing.mjs':globalProcessing,'@/lib/s3-storage.mjs':storage,'@/lib/processing-history.mjs':history,'@/lib/csv-zip.mjs':zipExports};
   const code=ts.transpileModule(readFileSync(new URL('../app/api/processing/route.ts',import.meta.url),'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;
   const module={exports:{}};new Function('require','module','exports',code)(key=>{assert.ok(key in deps);return deps[key];},module,module.exports);
   const api=module.exports,get=q=>api.GET(new Request('http://localhost/api/processing'+q)),post=p=>api.POST(new Request('http://localhost/api/processing',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)}));
@@ -192,7 +194,7 @@ test('history filters and pagination expose older jobs and metadata details with
   class AppError extends Error{constructor(status,message){super(message);this.status=status;}}
   const deps={'@/lib/activity-server':activityAuditMock,'@/lib/http-security.mjs':activityHttpSecurity,'node:stream':activityNodeStream,'@/lib/server':{AppError,identity:async()=>({role}),permitted:async()=>{},required:v=>v,fail:e=>Response.json({error:e.message},{status:e.status||500})},
     '@/lib/permissions.mjs':permissions,'@/lib/store.mjs':{getConnection:()=>d},'@/lib/processing-jobs.mjs':jobs,
-    '@/lib/global-processing.mjs':globalProcessing,'@/lib/csv-zip.mjs':zipExports,'@/lib/export-name.mjs':exportNames};
+    '@/lib/global-processing.mjs':globalProcessing,'@/lib/s3-storage.mjs':storage,'@/lib/processing-history.mjs':history,'@/lib/csv-zip.mjs':zipExports,'@/lib/export-name.mjs':exportNames};
   const code=ts.transpileModule(readFileSync(new URL('../app/api/processing/route.ts',import.meta.url),'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;
   const module={exports:{}};new Function('require','module','exports',code)(key=>{assert.ok(key in deps,key);return deps[key];},module,module.exports);
   const get=q=>module.exports.GET(new Request('http://test/api/processing?'+q));
@@ -210,6 +212,7 @@ test('history filters and pagination expose older jobs and metadata details with
     assert.deepEqual(new Set(days.jobs.map(j=>j.id)),new Set([ids[2],ids[3]]));
     const completed=await (await get('from=2024-01-04&to=2024-01-05&status=COMPLETED')).json();assert.equal(completed.jobs[0].id,ids[2]);assert.equal(completed.pagination.total,1);
     assert.equal((await (await get('device=AL-OTHER')).json()).pagination.total,0);
+    const rawId=jobs.enqueueProcessing(d,{...request,dataKind:'raw'});const rawList=await (await get('kind=raw')).json();assert.equal(rawList.jobs[0].id,rawId);assert.equal(rawList.pagination.total,1);assert.equal((await (await get('')).json()).pagination.total,105);
     // These completed fixtures have no physical file: details must stay metadata-only.
     const details=await get('id='+ids[2]+'&detail=1');assert.equal(details.status,200);
     const body=await details.json();assert.equal(body.job.status,'COMPLETED');assert.equal(body.job.recipe.rawSchema,'all-fields-1');assert.equal(body.data,undefined);assert.equal(body.job.result_bucket,undefined);

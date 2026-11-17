@@ -6,6 +6,7 @@ import {Label} from '@/components/ui/label';
 import {toast} from 'sonner';
 import {DEFAULT_UP_LIMIT} from '@/lib/measurement-processing.mjs';
 import ProcessingJobDetails,{storageLabel} from '@/components/ProcessingJobDetails';
+import ProcessingHistoryImport from '@/components/ProcessingHistoryImport';
 import ProcessingCleanup from '@/components/ProcessingCleanup';
 type Props={api:(path:string,options?:RequestInit)=>Promise<any>;isEnglish:boolean;formatTime:(s:string)=>string};
 const labels:Record<string,string>={QUEUED:'排隊中',RUNNING:'處理中',COMPLETED:'已完成',FAILED:'失敗',DELETING:'清除中'};
@@ -13,7 +14,7 @@ export default function ProcessingJobs({api,isEnglish:en,formatTime}:Props){
   const [data,setData]=useState<any>(null),[error,setError]=useState(''),[busy,setBusy]=useState(false);
   const [device,setDevice]=useState(''),[start,setStart]=useState(''),[end,setEnd]=useState(''),[limit,setLimit]=useState(String(DEFAULT_UP_LIMIT));
   const [selected,setSelected]=useState('');
-  const [filters,setFilters]=useState({device:'',from:'',to:'',status:''}),[draft,setDraft]=useState({device:'',from:'',to:'',status:''});
+  const [filters,setFilters]=useState({device:'',from:'',to:'',status:'',kind:'processed'}),[draft,setDraft]=useState({device:'',from:'',to:'',status:'',kind:'processed'});
   const [page,setPage]=useState(1),[listLoading,setListLoading]=useState(false);
   const requestId=useRef(0);
   const [globalLimit,setGlobalLimit]=useState(String(DEFAULT_UP_LIMIT)),[globalEdited,setGlobalEdited]=useState(false);
@@ -50,17 +51,19 @@ export default function ProcessingJobs({api,isEnglish:en,formatTime}:Props){
     </div>
     <p className="text-xs leading-6 text-slate-500">{en?'Up to 31 days per request, split into daily jobs. Daily schedules run after 03:00 Taipei, refreshing the last three completed days; older corrections require an explicit new revision. Missing future context is flagged.':'每次最多 31 天，自動拆成每日工作。每日排程於臺灣時間 03:00 後更新最近三個完整日；更早的補傳資料或歷史係數修正，請使用「重新計算新版本」。未取得完整前後背景資料會留下標記。'}</p>
     <div className="flex flex-wrap gap-2">{data?.schedules.map((s:any)=><div key={s.device} className="rounded border p-2 text-xs">{s.device} · up_limit={s.up_limit} · {s.enabled?(en?'Daily enabled':'每日排程啟用'):(en?'Disabled':'已停用')}{s.last_error&&<p className="text-rose-700">{s.last_error}</p>} <Button size="sm" variant="ghost" disabled={busy} onClick={()=>void post({action:'schedule',device:s.device,upLimit:s.up_limit,enabled:!s.enabled})}>{s.enabled?(en?'Disable':'停用'):(en?'Enable':'啟用')}</Button></div>)}</div>
+    <ProcessingHistoryImport api={api} isEnglish={en} s3={data?.storage?.mode==='s3'} devices={data?.devices||[]} onChange={kind=>{setFilters(old=>({...old,kind}));setDraft(old=>({...old,kind}));setPage(1);}}/>
     <section className="space-y-3 border-t pt-4">
       <div><h3 className="font-semibold">{en?'Processing history':'校正工作記錄'}</h3><p className="mt-1 text-xs text-slate-500">{en?'Inspect status and versions here. Use Data Query for period queries and bulk downloads.':'此處供管理員追蹤工作、品質與版本；期間查詢及批量下載請至「資料查詢」。'}</p></div>
-      <form className="grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-5" onSubmit={event=>{event.preventDefault();setFilters({...draft,device:draft.device.trim()});setPage(1);}}>
+      <form className="grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-6" onSubmit={event=>{event.preventDefault();setFilters({...draft,device:draft.device.trim()});setPage(1);}}>
+        <div><Label htmlFor="history-kind">{en?'Data type':'資料類型'}</Label><select id="history-kind" className="h-10 w-full rounded border bg-white px-2" value={draft.kind} onChange={e=>setDraft({...draft,kind:e.target.value})}><option value="processed">{en?'Calibrated results':'校正成果'}</option><option value="raw">{en?'Original archives':'原始量測封存'}</option></select></div>
         <div><Label htmlFor="history-device">ASLUNG ID</Label><Input id="history-device" placeholder={en?'All devices':'全部設備'} value={draft.device} onChange={e=>setDraft({...draft,device:e.target.value})}/></div>
         <div><Label htmlFor="history-from">{en?'From (Taipei)':'開始日期（臺灣）'}</Label><Input id="history-from" type="date" value={draft.from} onChange={e=>setDraft({...draft,from:e.target.value})}/></div>
         <div><Label htmlFor="history-to">{en?'Through (Taipei)':'結束日期（含當日）'}</Label><Input id="history-to" type="date" value={draft.to} onChange={e=>setDraft({...draft,to:e.target.value})}/></div>
         <div><Label htmlFor="history-status">{en?'Status':'工作狀態'}</Label><select id="history-status" className="h-10 w-full rounded-md border bg-white px-3 text-sm" value={draft.status} onChange={e=>setDraft({...draft,status:e.target.value})}><option value="">{en?'All statuses':'全部狀態'}</option>{Object.entries(labels).map(([key,label])=><option key={key} value={key}>{en?key:label}</option>)}</select></div>
-        <div className="flex gap-2"><Button type="submit" disabled={listLoading}>{en?'Filter':'篩選'}</Button><Button type="button" variant="outline" disabled={listLoading} onClick={()=>{const empty={device:'',from:'',to:'',status:''};setDraft(empty);setFilters(empty);setPage(1);}}>{en?'Reset':'重設'}</Button></div>
+        <div className="flex gap-2"><Button type="submit" disabled={listLoading}>{en?'Filter':'篩選'}</Button><Button type="button" variant="outline" disabled={listLoading} onClick={()=>{const empty={device:'',from:'',to:'',status:'',kind:'processed'};setDraft(empty);setFilters(empty);setPage(1);}}>{en?'Reset':'重設'}</Button></div>
       </form>
       <p className="text-xs text-slate-500">{en?'Dates filter the processing period, not the creation time.':'日期依工作處理期間篩選，非建立時間。'}</p>
-      <ProcessingCleanup api={api} filters={filters} isEnglish={en} formatTime={formatTime} onChange={()=>void load()}/>
+      <ProcessingCleanup api={api} devices={data?.devices||[]} filters={filters} isEnglish={en} formatTime={formatTime} onChange={()=>void load()}/>
       {listLoading&&<p role="status" className="text-sm">{en?'Loading history…':'正在載入工作記錄…'}</p>}
       <div className="max-h-[32rem] overflow-auto" aria-busy={listLoading}><table className="w-full text-left text-sm"><thead className="sticky top-0 bg-white"><tr>{(en?['Device / period','Status','Rows','Actions']:['設備／期間','狀態','筆數','操作']).map(h=><th className="p-3" key={h}>{h}</th>)}</tr></thead><tbody>{data?.jobs.map((job:any)=><tr key={job.id} className="border-t"><td className="p-3">{job.device}<span className="block text-xs text-slate-500">{formatTime(job.start)} → {formatTime(job.end)}</span></td><td className="p-3">{en?job.status:labels[job.status]}{job.status==='COMPLETED'&&<span className={'mt-1 block text-xs '+(job.upload_status==='RETRY'?'text-amber-700':'text-slate-500')}>{storageLabel(job.upload_status,en)}</span>}</td><td className="p-3">{job.rows_done}</td><td className="p-3"><div className="flex flex-wrap gap-2"><Button variant="outline" size="sm" onClick={()=>setSelected(job.id)}>{en?'Details':'詳細資料'}</Button>{job.status==='FAILED'&&<Button size="sm" variant="outline" disabled={busy} onClick={()=>void post({action:'retry',id:job.id})}>{en?'Retry':'重試'}</Button>}</div></td></tr>)}</tbody></table>{!listLoading&&!data?.jobs.length&&<p className="py-4 text-sm text-slate-500">{en?'No matching processing jobs.':'沒有符合條件的校正工作。'}</p>}</div>
       <div className="flex flex-wrap items-center justify-between gap-2 text-sm"><span>{en?`${data?.pagination?.total??0} jobs · Page ${data?.pagination?.page??1} / ${data?.pagination?.pages??1}`:`共 ${data?.pagination?.total??0} 筆工作 · 第 ${data?.pagination?.page??1}／${data?.pagination?.pages??1} 頁`}</span><div className="flex gap-2"><Button size="sm" variant="outline" disabled={listLoading||!data||data.pagination.page<=1} onClick={()=>setPage(data.pagination.page-1)}>{en?'Previous':'上一頁'}</Button><Button size="sm" variant="outline" disabled={listLoading||!data||data.pagination.page>=data.pagination.pages} onClick={()=>setPage(data.pagination.page+1)}>{en?'Next':'下一頁'}</Button></div></div>
