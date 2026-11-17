@@ -42,7 +42,8 @@ async function handleGET(req:Request){try{
   if(!Number.isSafeInteger(page)||page<1||page>100000000||!Number.isSafeInteger(pageSize)||pageSize<1||pageSize>100)throw new AppError(400,'分頁參數不正確。');
   const dataKind=q.get('kind')||'processed';if(!['raw','processed'].includes(dataKind))throw new AppError(400,'資料類型不正確。');
   const clauses:string[]=['j.data_kind=?'],values:string[]=[dataKind];
-  const device=q.get('device')?.trim(),status=q.get('status');
+  const device=q.get('device')?.trim(),status=q.get('status'),keyword=q.get('q')?.trim();
+  if(keyword){if(keyword.length>80||/[\u0000-\u001f]/.test(keyword))throw new AppError(400,'設備關鍵字過長或含無效字元。');clauses.push('instr(lower(j.device),lower(?))>0');values.push(keyword);}
   if(device){if(!/^[A-Za-z0-9_-]{1,80}$/.test(device))throw new AppError(400,'設備 ID 不正確。');clauses.push('j.device=? COLLATE NOCASE');values.push(device);}
   if(status){if(!['QUEUED','RUNNING','COMPLETED','FAILED','DELETING','CANCELLED'].includes(status))throw new AppError(400,'工作狀態不正確。');clauses.push('j.status=?');values.push(status);}
   const day=(value:string)=>{

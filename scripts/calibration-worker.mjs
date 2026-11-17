@@ -1,8 +1,8 @@
 import {getConnection} from '../lib/store.mjs';
 import {claimProcessing,runProcessing,scheduleProcessing} from '../lib/processing-jobs.mjs';
-import {processingPool,rawProcessingRows,discoverProcessingData} from '../lib/processing-raw.mjs';
+import {processingPool,rawProcessingRows,discoverProcessingData,observeProcessingDay,discoverNewProcessingRows} from '../lib/processing-raw.mjs';
 import {advanceHistoricalBatch} from '../lib/historical-batches.mjs';
-import {scheduleGlobalProcessing} from '../lib/global-processing.mjs';
+import {runArchiveAutomation} from '../lib/archive-automation.mjs';
 import {syncCalibrationSource,ensureCalibrationSchema} from '../lib/calibration.mjs';
 import {fetchCalibrationCsv} from '../lib/calibration-google.mjs';
 import {uploadNextProcessingResult} from '../lib/processing-storage.mjs';
@@ -38,9 +38,9 @@ try{
       for(const source of sources){if(shutdown.signal.aborted)break;await syncCalibrationSource(d,source.id,'processing-worker',fetchCalibrationCsv);}
     },
     schedule:async()=>{
+      if(storageConfiguration().mode==='s3')await runArchiveAutomation(d,{observe:(device,start,end)=>observeProcessingDay(pool,device,start,end),arrivals:cursor=>discoverNewProcessingRows(pool,cursor)});
+      else {scheduleProcessing(d);const {scheduleGlobalProcessing}=await import('../lib/global-processing.mjs');await scheduleGlobalProcessing(d,(devices,start,end,heartbeat)=>discoverProcessingData(pool,devices,start,end,heartbeat,{batchPauseMs:options.batchPauseMs}));}
       advanceHistoricalBatch(d);
-      scheduleProcessing(d);
-      await scheduleGlobalProcessing(d,(devices,start,end,heartbeat)=>discoverProcessingData(pool,devices,start,end,heartbeat,{batchPauseMs:options.batchPauseMs}));
     },
     upload:async()=>{
       const uploaded=await uploadNextProcessingResult(d);

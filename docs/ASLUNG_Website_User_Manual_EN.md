@@ -75,7 +75,7 @@ Source dates use Taiwan time and are stored as inclusive-start, exclusive-end in
 
 Enabled sources are checked daily at 02:00 Taiwan time, with catch-up after downtime. Private spreadsheets require a server-side read-only service account and viewer access. Never commit its credentials. Disabling a source preserves its history but removes its current coefficients from normal application.
 
-Admin creates daily background jobs for a device and up_limit, default 3, for up to 31 days per request; recalculation creates a new version. Global scheduling must be enabled explicitly. After 03:00 it checks the latest three complete days; older history requires a manual job. Jobs remain queued without the worker. History provides device/date/status filters and 20 records per page. Open details for rules and quality, then explicitly load a preview or download a daily result.
+Admin creates daily background jobs for a device and up_limit, default 3, for up to 31 days per request; recalculation creates a new version. Global scheduling must be enabled explicitly. After 03:00 it checks the latest three complete days; S3 mode also supports monthly previous-month reconciliation and new-ID late-arrival detection. Older gaps before activation and in-place edits require manual backfill or recalculation. Jobs remain queued without the worker. History and manual backfill now live under Calibration and notifications → Archived data management, with case-insensitive partial device keywords, date/status filters and 20 records per page. Open details for rules and quality, then explicitly load a preview or download a daily result.
 
 ## 8 Device inventory deployments and maintainers
 
@@ -132,7 +132,7 @@ For permanent cleanup, choose devices and whole Taiwan dates, preview and type D
 
 ## 13 Clearing ASLUNG processed results
 
-Admin applies device/date/status filters to processing history and previews cleanup. It covers all pages, up to 500 jobs, excluding running or uploading jobs. Confirmation requires DELETE; disabling global and selected per-device schedules is selected by default.
+Admin opens Archived data management, applies device-keyword/date/type/status filters, expands cleanup, selects one or multiple devices and previews the exact scope. It covers all pages, up to 500 jobs, excluding running or uploading jobs. Confirmation requires DELETE; disabling global and selected per-device schedules is selected by default.
 
 After SQLite backup, the worker removes local results, corresponding S3 versions, related job and query snapshot records, retaining retry state on failure. Original MySQL measurements, members, devices and coefficients remain. Backups, downloaded ZIPs, orphan files without job records and processed/_checks are outside this cleanup. SQLite backup alone cannot restore permanently deleted S3 results.
 
@@ -195,3 +195,6 @@ Back up SQLite, ordinary uploaded files, processed results, S3 observations and 
 | S3 cleanup keeps retrying | Delete/version-list permissions, bucket and Object Lock restrictions; do not delete indexes to fake success |
 
 A health response of ok only shows that the application responds; it does not validate MySQL, SMTP, LI-COR or S3. Validate one device-day through query, export and permissions before a large history import. No real passwords, tokens or member records are included in this manual.
+
+
+Updated 2026-11-18: Archived data management → Automatic archive schedule and progress offers previous-month reconciliation (default day 5, configurable 1–28) and late-arrival detection, initially disabled. Enable after confirming S3, original-archive IAM permissions and the worker. Existing daily global/device switches remain authoritative. Matching source counts, maximum IDs, context and recipe/coefficient versions reuse jobs; completion requires verified S3 upload. The first arrival scan establishes the current maximum ID; subsequent new IDs can identify any older measurement date. In-place edits without new IDs require Manual backfill / recalculate with an explicit new revision. Monthly checks cover only the previous month; longer outage gaps need a manual range. Permanently cleared periods remain suppressed from automatic regeneration; an explicit manual revision restores the exact day and type.

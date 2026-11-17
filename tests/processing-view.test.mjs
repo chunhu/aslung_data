@@ -9,11 +9,11 @@ import {renderToStaticMarkup} from 'react-dom/server';
 function render(file,states,extra={}){
   let index=0;
   const tag=name=>({children,disabled,role})=>React.createElement(name,{disabled,role},children);
-  const deps={react:{...React,useState:value=>[index<states.length?states[index++]:value,()=>{}],useEffect:()=>{},useCallback:fn=>fn,useRef:value=>({current:value})},
+  const deps={react:{...React,useState:value=>[index<states.length?states[index++]:value,()=>{}],useEffect:()=>{},useCallback:fn=>fn,useMemo:fn=>fn(),useRef:value=>({current:value})},
     'react/jsx-runtime':jsx,'@/components/ui/button':{Button:tag('button')},'@/components/ui/input':{Input:tag('input')},'@/components/ui/label':{Label:tag('label')},
     '@/components/ui/dialog':Object.fromEntries(['Dialog','DialogContent','DialogHeader','DialogTitle','DialogDescription'].map(name=>[name,tag('div')])),
     '@/lib/measurement-processing.mjs':{DEFAULT_UP_LIMIT:3},sonner:{toast:{}},
-    '@/components/ProcessingJobDetails':{default:()=>null,storageLabel:()=> 'S3 已驗證'},'@/components/ProcessingHistoryImport':{default:()=>null},'@/components/AslungDeviceSelector':{default:()=>null},'@/components/ProcessingCleanup':{default:()=>null}};
+    '@/components/ArchiveAutomationSettings':{default:()=>null},'@/components/ProcessingJobDetails':{default:()=>null,storageLabel:()=> 'S3 已驗證'},'@/components/ProcessingHistoryImport':{default:()=>null},'@/components/AslungDeviceSelector':{default:()=>null},'@/components/ProcessingCleanup':{default:()=>null}};
   const code=ts.transpileModule(readFileSync(new URL('../components/'+file,import.meta.url),'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX}}).outputText;
   const module={exports:{}};new Function('require','module','exports',code)(name=>{assert.ok(name in deps,name);return deps[name];},module,module.exports);
   return renderToStaticMarkup(React.createElement(module.exports.default,{api:()=>assert.fail('render must not read results'),isEnglish:false,formatTime:value=>value,onClose:()=>{},...extra}));
@@ -23,8 +23,8 @@ const job={id:'job-1',device:'AL-1143',start:'2026-10-01T00:00:00Z',end:'2026-10
 test('history renders filters, page totals and details actions without duplicate previews or downloads',()=>{
   const filters={device:'',from:'',to:'',status:''};
   const data={jobs:[job],schedules:[],global:{enabled:0,up_limit:3},pagination:{total:105,page:2,pages:6}};
-  const html=render('ProcessingJobs.tsx',[data,'',false,'','','','3','',filters,filters,2,false,'3',false]);
-  for(const text of ['校正工作記錄','結束日期（含當日）','工作狀態','詳細資料','共 105 筆工作','第 2／6 頁','AL-1143'])assert.ok(html.includes(text),text);
+  const html=render('ArchiveManagement.tsx',[data,'',false,'',filters,filters,2,false]);
+  for(const text of ['封存資料清單','結束日期（含當日）','工作狀態','詳細資料','共 105 筆工作','第 2／6 頁','AL-1143'])assert.ok(html.includes(text),text);
   assert.ok(!html.includes('CSV ZIP'));assert.ok(!html.includes('品質摘要'));assert.ok(!html.includes('結果查詢'));
 });
 test('details consolidate versions, quality, storage and job download without automatically reading preview rows',()=>{
