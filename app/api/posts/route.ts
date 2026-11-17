@@ -25,7 +25,7 @@ export async function GET(req:Request){try{
 async function handlePOST(req: Request){try{
   writeGuard(req);const me=await identity(req);
   if(me.role!=='admin')throw new AppError(403,'只有系統管理員可以發布或管理內容。');
-  const body=await limitedJson(req,1500000);
+  const body=await limitedJson(req,2500000);
   const current=await identity(req);if(current.role!=='admin')throw new AppError(403,'管理權限已變更，請重新登入。');
   return Response.json(savePost(getConnection(),current,body),{headers});
 }catch(e){return failure(e);}}

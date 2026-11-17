@@ -1,3 +1,4 @@
+import * as postLanguage from '../lib/post-language.mjs';
 import * as postModel from '../lib/post-document.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
@@ -56,8 +57,8 @@ test('disabled sections and dependent device captions are excluded from public s
   assert.equal(getHomepageSettings(d,admin).content.features.zh.title,'HIDDEN_CUSTOM_HEADING');
  }finally{d.close();}
 });
-function homepageBody(){const reader=load('../components/RichPostBody.tsx',{'react':React,'react/jsx-runtime':jsx,'@/lib/post-document.mjs':postModel});return load('../components/HomepageBody.tsx',{'react/jsx-runtime':jsx,'@/lib/homepage-content.mjs':content,'@/components/RichPostBody':reader});}
-function publicView(lang){return load('../components/PublicSite.tsx',{'react/jsx-runtime':jsx,'@/components/LanguageSwitcher':{default:()=>null},'@/components/useAppLanguage':{default:()=>lang},'@/components/RichPostBody':{default:()=>null},'@/components/HomepageBody':homepageBody(),'@/lib/homepage-options.mjs':options,'@/lib/homepage-content.mjs':content,'lucide-react':Object.fromEntries(['Activity','ArrowRight','Database','ShieldCheck','SlidersHorizontal','FileText','ArrowUpRight','Users','CheckCircle2'].map(key=>[key,()=>null]))}).LandingPage;}
+function homepageBody(){const reader=load('../components/RichPostBody.tsx',{'react':React,'react/jsx-runtime':jsx,'@/lib/post-document.mjs':postModel});return load('../components/HomepageBody.tsx',{'react/jsx-runtime':jsx,'@/lib/homepage-content.mjs':content,'@/lib/post-language.mjs':postLanguage,'@/components/RichPostBody':reader});}
+function publicView(lang){return load('../components/PublicSite.tsx',{'react/jsx-runtime':jsx,'@/components/LanguageSwitcher':{default:()=>null},'@/components/useAppLanguage':{default:()=>lang},'@/lib/post-language.mjs':postLanguage,'@/components/RichPostBody':{default:()=>null},'@/components/HomepageBody':homepageBody(),'@/lib/homepage-options.mjs':options,'@/lib/homepage-content.mjs':content,'lucide-react':Object.fromEntries(['Activity','ArrowRight','Database','ShieldCheck','SlidersHorizontal','FileText','ArrowUpRight','Users','CheckCircle2'].map(key=>[key,()=>null]))}).LandingPage;}
 test('public sections render edited headings, text, device names and steps in the selected language with HTML escaped',()=>{
  const draft=content.cloneHomepageContent();for(const section of content.HOMEPAGE_CONTENT_SECTIONS)for(const field of section.fields){draft[section.key].zh[field.key]='ZH_'+section.key+'_'+field.key;draft[section.key].en[field.key]='EN_'+section.key+'_'+field.key;}
  draft.intro.zh.description='<script>alert(1)</script>';

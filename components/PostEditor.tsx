@@ -8,7 +8,7 @@ import Image from '@tiptap/extension-image';
 import {TableKit} from '@tiptap/extension-table';
 import Subscript from '@tiptap/extension-subscript';
 import Superscript from '@tiptap/extension-superscript';
-import {POST_FONTS,POST_SIZES,plainPostDocument,safePostLink,postImageId} from '@/lib/post-document.mjs';
+import {POST_FONTS,POST_SIZES,plainPostDocument,safePostLink,postImageId,fileCatalogueDocument} from '@/lib/post-document.mjs';
 import {Button} from '@/components/ui/button';
 type Props={context?:"post"|"homepage";label?:string;body:string;document?:string|null;disabled:boolean;isEnglish:boolean;api:(url:string,options?:RequestInit)=>Promise<any>;onChange:(value:{body:string;body_json:string})=>void;onBusy:(busy:boolean)=>void};
 const LocalImage=Image.extend({parseHTML(){return [{tag:'img[src]',getAttrs:(element:HTMLElement)=>{try{postImageId(element.getAttribute('src'));return null;}catch{return false;}}}];}});
@@ -58,6 +58,7 @@ export default function PostEditor({body,document,disabled,isEnglish:en,api,onCh
       {tool('項目符號','Bullet list',()=>editor.chain().focus().toggleBulletList().run(),editor.isActive('bulletList'))}{tool('編號清單','Numbered list',()=>editor.chain().focus().toggleOrderedList().run(),editor.isActive('orderedList'))}{tool('引用','Quote',()=>editor.chain().focus().toggleBlockquote().run(),editor.isActive('blockquote'))}
       {(['left','center','right','justify'] as const).map((align,index)=>tool(['靠左','置中','靠右','左右對齊'][index],align,()=>editor.chain().focus().setTextAlign(align).run(),editor.isActive({textAlign:align})))}
       {tool('連結','Link',()=>{const href=window.prompt(en?'HTTP(S) URL (blank removes link)':'HTTP(S) 網址（留白移除連結）',editor.getAttributes('link').href||'');if(href===null)return;try{if(href)editor.chain().focus().extendMarkRange('link').setLink({href:safePostLink(href)}).run();else editor.chain().focus().unsetLink().run();setError('');}catch(e){setError((e as Error).message);}},editor.isActive('link'))}
+      {context==='post'&&tool('插入下載／申請區連結','Insert download / request link',()=>editor.chain().focus().insertContent(fileCatalogueDocument(en)).run())}
       {tool('插入表格','Insert table',()=>editor.chain().focus().insertTable({rows:3,cols:3,withHeaderRow:true}).run())}
       {editor.isActive('table')&&<>{tool('加列','Add row',()=>editor.chain().focus().addRowAfter().run())}{tool('加欄','Add column',()=>editor.chain().focus().addColumnAfter().run())}{tool('刪列','Delete row',()=>editor.chain().focus().deleteRow().run())}{tool('刪欄','Delete column',()=>editor.chain().focus().deleteColumn().run())}{tool('刪表格','Delete table',()=>editor.chain().focus().deleteTable().run())}</>}
       <select aria-label={en?'Insert symbol':'插入符號'} value="" disabled={locked} className="h-9 border rounded px-2" onChange={event=>editor.chain().focus().insertContent(event.target.value).run()}><option value="">{en?'Symbols':'常用符號'}</option>{['μg/m³','°C','±','×','÷','≤','≥','→','α','β','CO₂','PM₂.₅','✓','★','●'].map(symbol=><option key={symbol}>{symbol}</option>)}</select>

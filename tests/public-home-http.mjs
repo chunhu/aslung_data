@@ -93,6 +93,16 @@ assert.equal((await get('/api/posts/images?id='+homeImage)).status,200);
 config=await (await setDisplay({...defaults,features:false})).json();assert.equal((await get('/api/posts/images?id='+homeImage)).status,401);assert.ok(!(await (await get('/')).text()).includes('RICH_HOME_MARKER'));
 result=await saveContent(DEFAULT_HOMEPAGE_CONTENT);assert.equal(result.status,200);config=await result.json();assert.deepEqual(config.content.features.zh.rich,{});assert.equal((await get('/api/posts/images?id='+homeImage)).status,401);
 
+// Bilingual edits use the deployed API, preserve both documents and protect private translations.
+const bilingualDoc={type:'doc',content:[{type:'paragraph',content:[{type:'text',text:'English WBGT body',marks:[{type:'bold'}]}]},{type:'paragraph',content:[{type:'text',text:'Request download',marks:[{type:'link',attrs:{href:'/file-catalog?lang=en'}}]}]}]};
+let bilingualResponse=await post({kind:'news',title:'中文測試消息',summary:'中文摘要',body:'中文內文',display_author:'對外研究團隊',display_author_en:'Public research team',title_en:'English WBGT news',summary_en:'English WBGT summary',body_en:'English WBGT body',body_json_en:JSON.stringify(bilingualDoc),status:'published',visibility:'public',pinned:false});
+assert.equal(bilingualResponse.status,200);let bilingual=await bilingualResponse.json();assert.match(bilingual.body_json_en,/file-catalog/);
+let translated=await (await get('/api/posts?public=1&id='+bilingual.id)).json();assert.equal(translated.title_en,'English WBGT news');assert.match(translated.body_en,/English WBGT body/);assert.equal(translated.body,'中文內文');assert.equal(translated.author_name,'對外研究團隊');assert.doesNotMatch(JSON.stringify(translated),/平台編輯團隊|admin@test.invalid|created_by|updated_by|published_by/);
+const publicArticleHtml=await (await get('/articles/'+bilingual.id)).text();assert.doesNotMatch(publicArticleHtml,/admin@test.invalid|平台編輯團隊/);const managedBilingual=await (await get('/api/posts?manage=1&id='+bilingual.id,'admin')).json();assert.equal(managedBilingual.published_by,'admin@test.invalid');
+const translatedFeed=await (await get('/api/posts?public=1&q=English%20WBGT')).json();assert.equal(translatedFeed.total,1);assert.equal('body_en' in translatedFeed.rows[0],false);
+assert.equal((await post({...bilingual,pinned:false,body_json_en:null,body_en:''})).status,400);
+bilingual=await (await post({...bilingual,pinned:false,status:'draft'})).json();assert.equal((await get('/api/posts?public=1&id='+bilingual.id)).status,404);assert.equal((await (await get('/api/posts?public=1&q=English%20WBGT')).json()).total,0);
+
 console.log('PASS: public homepage, authenticated workspace, login/QR links, opt-in migration, metadata-only public feed, pagination/search, private/draft/archive denial, anonymous public images immediate audience changes, admin homepage switches, stale write rejection and hidden markup.');
 if(process.argv.includes('--preview')){console.log('PREVIEW '+origin+' admin@test.invalid / '+password);await new Promise(resolve=>process.once('SIGTERM',resolve));}
 }catch(error){console.error(logs);throw error;}finally{child.kill('SIGTERM');if(child.exitCode===null)await new Promise(r=>child.once('exit',r));d.close();if(!resolve(dir).startsWith(root+sep))throw new Error('Unsafe test cleanup');rmSync(dir,{recursive:true,force:true});}
