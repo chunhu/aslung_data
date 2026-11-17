@@ -13,6 +13,7 @@ import React from 'react';
 import * as jsx from 'react/jsx-runtime';
 import {renderToStaticMarkup} from 'react-dom/server';
 import * as names from '../lib/maintainer-names.mjs';
+import * as maintainerImport from '../lib/maintainer-import.mjs';
 function load(file,deps){const code=ts.transpileModule(readFileSync(new URL(file,import.meta.url),'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX}}).outputText;const module={exports:{}};new Function('require','module','exports',code)(name=>{assert.ok(name in deps,name);return deps[name];},module,module.exports);return module.exports;}
 
 test('explicit English names are displayed in full while missing translations retain the canonical name',()=>{
@@ -46,14 +47,23 @@ test('maintainer API saves English names and sheet sync without the column prese
  let role='admin',csv='maintainer,mail,mail_test\n維護甲,new@example.test,';
  const store={prepare(sql){let args=[];return {bind(...v){args=v;return this;},async run(){return d.prepare(sql).run(...args);},async all(){return {results:d.prepare(sql).all(...args)};}};}};
  const module=load('../app/api/manage/route.ts',{
-   '@/lib/store.mjs':{getConnection:()=>d},'@/lib/registration.mjs':{RegistrationError:class extends Error{}},'@/lib/registration-mail':{},'node:crypto':{},'@/lib/realtime-settings.mjs':realtimeSettings,'@/lib/passwords.mjs':{},
+   '@/lib/maintainer-import.mjs':maintainerImport,'@/lib/store.mjs':{getConnection:()=>d},'@/lib/registration.mjs':{RegistrationError:class extends Error{}},'@/lib/registration-mail':{},'node:crypto':{},'@/lib/realtime-settings.mjs':realtimeSettings,'@/lib/passwords.mjs':{},
    '@/lib/activity-server':activityAuditMock,'@/lib/http-security.mjs':activityHttpSecurity,'node:stream':activityNodeStream,'@/lib/realtime-access.mjs':realtimeAccess,'@/lib/server':{db:()=>store,identity:async()=>({role,email:'admin@test'}),writeGuard:req=>{if(req.headers.get('origin')!=='http://test')throw new AppError(403,'origin');},AppError,required:(v,max=160)=>{if(typeof v!=='string'||!v.trim()||v.length>max)throw new AppError(400,'required');return v.trim();},fail:e=>Response.json({error:e.message},{status:e.status||500})}
  });
  const post=p=>module.POST(new Request('http://test/api/manage',{method:'POST',headers:{origin:'http://test','Content-Type':'application/json'},body:JSON.stringify(p)}));
+ const sync=async()=>{
+   const source=await post({action:'maintainerImportSource'});if(!source.ok)return source;
+   const {text,mapping}=await source.json();
+   const response=await post({action:'maintainerImportPreview',text,mapping});if(!response.ok)return response;
+   const preview=await response.json();
+   return post({action:'maintainerImportApply',text,mapping,fingerprint:preview.fingerprint});
+ };
  const oldFetch=globalThis.fetch;globalThis.fetch=async()=>new Response(csv);
  try{
    const input={action:'maintainer',name:'維護甲',email:'old@example.test',english_name:'Complete English Name'};
-   role='member';assert.equal((await post(input)).status,403);role='admin';
+   role='member';assert.equal((await post(input)).status,403);
+   for(const action of ['maintainerSyncGoogle','maintainerImportSource','maintainerImportPreview','maintainerImportApply'])assert.equal((await post({action})).status,403);
+   role='admin';
    assert.equal((await post(input)).status,200);
    assert.equal(d.prepare('SELECT offline_email_enabled FROM maintainers').get().offline_email_enabled,1);
    assert.equal((await post({...input,offline_email_enabled:'false'})).status,400);
@@ -64,32 +74,33 @@ test('maintainer API saves English names and sheet sync without the column prese
    assert.equal((await post(input)).status,200);
    assert.equal(d.prepare('SELECT offline_email_enabled FROM maintainers').get().offline_email_enabled,0);
    assert.equal((await post({...input,english_name:'X'.repeat(161)})).status,400);
-   assert.equal((await post({action:'maintainerSyncGoogle'})).status,200);
+   const readOnly=await post({action:'maintainerSyncGoogle'});assert.equal(readOnly.status,200);assert.equal(d.prepare('SELECT email FROM maintainers').get().email,'old@example.test');
+   assert.equal((await sync()).status,200);
    assert.equal(d.prepare('SELECT english_name FROM maintainers').get().english_name,'Complete English Name');
    assert.equal(d.prepare('SELECT email FROM maintainers').get().email,'new@example.test');
    assert.equal(d.prepare('SELECT offline_email_enabled FROM maintainers').get().offline_email_enabled,0);
    csv='maintainer,mail,english_name\n維護甲,new@example.test,Updated Full Name';
-   assert.equal((await post({action:'maintainerSyncGoogle'})).status,200);
+   assert.equal((await sync()).status,200);
    assert.equal(d.prepare('SELECT english_name FROM maintainers').get().english_name,'Updated Full Name');
    for(const header of ['英文名','英文名稱','英文稱呼','英文姓名','name_en']){
      csv=`maintainer,mail,${header}\n維護甲,new@example.test,Updated Full Name`;
-     assert.equal((await post({action:'maintainerSyncGoogle'})).status,200,header);
+     assert.equal((await sync()).status,200,header);
      assert.equal(d.prepare('SELECT english_name FROM maintainers').get().english_name,'Updated Full Name',header);
    }
    csv='maintainer,英文名,mail,mail_test\n維護甲,Updated Full Name,new@example.test,test@example.test';
-   assert.equal((await post({action:'maintainerSyncGoogle'})).status,200);
+   assert.equal((await sync()).status,200);
    assert.equal(d.prepare('SELECT english_name FROM maintainers').get().english_name,'Updated Full Name');
    assert.equal(d.prepare('SELECT email_test FROM maintainers').get().email_test,'test@example.test');
    csv=' Cht_name , Eng_name ,mail,mail_test\n維護甲,New Schema Full Name,new-schema@example.test,test-schema@example.test';
-   assert.equal((await post({action:'maintainerSyncGoogle'})).status,200);
+   assert.equal((await sync()).status,200);
    assert.deepEqual({...d.prepare('SELECT name,english_name,email,email_test FROM maintainers').get()},
      {name:'維護甲',english_name:'New Schema Full Name',email:'new-schema@example.test',email_test:'test-schema@example.test'});
    csv='mail_test,MAIL,ENG_NAME,CHT_NAME,maintainer,english_name\ntest@example.test,new@example.test,Updated Full Name,維護甲,錯誤舊姓名,Wrong old name';
-   assert.equal((await post({action:'maintainerSyncGoogle'})).status,200);
+   assert.equal((await sync()).status,200);
    assert.equal(d.prepare('SELECT count(*) AS n FROM maintainers').get().n,1);
    assert.equal(d.prepare('SELECT english_name FROM maintainers').get().english_name,'Updated Full Name');
    csv='maintainer,mail,english_name\n維護甲,new@example.test,Changed\n維護乙,b@example.test,'+'X'.repeat(161);
-   assert.equal((await post({action:'maintainerSyncGoogle'})).status,400);
+   assert.equal((await sync()).status,400);
    assert.equal(d.prepare('SELECT english_name FROM maintainers').get().english_name,'Updated Full Name');
    assert.equal((await post({...input,english_name:''})).status,200);
    assert.equal(d.prepare('SELECT english_name FROM maintainers').get().english_name,'');

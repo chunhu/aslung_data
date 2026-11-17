@@ -712,42 +712,19 @@ async function handlePOST(r: Request){try{
     }
     await db().prepare("COMMIT").run();
   }catch(e){await db().prepare("ROLLBACK").run();throw e;}
-} else if(p.action==="maintainerSyncGoogle"){
+ } else if(['maintainerSyncGoogle','maintainerImportSource','maintainerImportPreview','maintainerImportApply'].includes(String(p.action))){
   requireAdmin();
-  let url=typeof p.url==="string"&&p.url.trim()?p.url.trim():"https://docs.google.com/spreadsheets/d/1Vzaz14hHco2u8nmjoKBqDC12k-OX6lMjyrP_UhAhZrI/export?format=csv&gid=603688252#gid=603688252";
-  const {fetchGoogleCsv}=await import("@/lib/http-security.mjs");
-  let csvText;try{csvText=await fetchGoogleCsv(url);}catch(e){throw new AppError((e as any).status||502,(e as Error).message);}
-  const rows=parseCsvRows(csvText);
-  if(rows.length<=1)throw new AppError(400,"試算表內容為空。");
-  const headers=rows[0].map(h=>h.trim().toLowerCase());
-  const mainIdx=headers.includes("cht_name")?headers.indexOf("cht_name"):headers.indexOf("maintainer"), mailIdx=headers.indexOf("mail"), testIdx=headers.indexOf("mail_test");
-  const englishIdx=headers.includes("eng_name")?headers.indexOf("eng_name"):headers.findIndex(h=>["english_name","name_en","英文名","英文名稱","英文稱呼","英文姓名"].includes(h));
-  if(mainIdx===-1||mailIdx===-1)throw new AppError(400,"試算表需包含 Cht_name（或舊版 maintainer）與 mail 欄位；英文稱呼請填 Eng_name。");
-  const now=new Date().toISOString();
-  await db().prepare("BEGIN").run();
-  let syncedCount=0;
+  const {maintainerTable,previewMaintainers,applyMaintainers,MaintainerImportError}=await import('@/lib/maintainer-import.mjs');
   try{
-    const upsert=db().prepare(`
-      INSERT INTO maintainers(name,email,email_test,phone,notes,created_at,english_name)
-      VALUES(?,?,?,'','',?,?)
-      ON CONFLICT(name) DO UPDATE SET
-        email=excluded.email, email_test=excluded.email_test,
-        english_name=CASE WHEN ? THEN excluded.english_name ELSE maintainers.english_name END
-    `);
-    for(let i=1;i<rows.length;i++){
-      const cols=rows[i];
-      const name=mainIdx!==-1&&cols[mainIdx]?cols[mainIdx].trim():"";
-      const mail=mailIdx!==-1&&cols[mailIdx]?cols[mailIdx].trim():"";
-      if(!name||!mail)continue;
-      const mailTest=(testIdx!==-1&&cols[testIdx]?cols[testIdx].trim():"")||"";
-      const englishName=englishIdx===-1?"":(cols[englishIdx]||"").trim();
-      if(englishName.length>160)throw new AppError(400,`第 ${i+1} 列英文稱呼超過 160 字。`);
-      await upsert.bind(name,mail,mailTest,now,englishName,englishIdx===-1?0:1).run();
-      syncedCount++;
+    if(p.action==='maintainerSyncGoogle'||p.action==='maintainerImportSource'){
+      const {fetchGoogleCsv}=await import('@/lib/http-security.mjs');
+      const url=typeof p.url==='string'&&p.url.trim()?p.url.trim():'https://docs.google.com/spreadsheets/d/1Vzaz14hHco2u8nmjoKBqDC12k-OX6lMjyrP_UhAhZrI/export?format=csv&gid=603688252';
+      const text=await fetchGoogleCsv(url);return Response.json({text,...maintainerTable(text)});
     }
-    await db().prepare("COMMIT").run();
-  }catch(e){await db().prepare("ROLLBACK").run();throw e;}
-  return Response.json({ok:true,synced:syncedCount});
+    const d=getConnection();
+    if(p.action==='maintainerImportPreview')return Response.json(previewMaintainers(d,p.text,p.mapping));
+    return Response.json(applyMaintainers(d,p as any));
+  }catch(e){if(e instanceof MaintainerImportError||e instanceof HttpSecurityError)throw new AppError(e.status,e.message);throw e;}
 } else if(p.action==="alertCheckNow"){
   requireAdmin();
   const { checkAndSendOfflineAlerts } = await import("@/lib/alerts");

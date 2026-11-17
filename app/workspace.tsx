@@ -22,6 +22,7 @@ import CalibrationView from "@/components/CalibrationView";
 import HoboView from "@/components/HoboView";
 import MaintenanceView from "@/components/MaintenanceView";
 import DeviceImportWizard from "@/components/DeviceImportWizard";
+import MaintainerImportWizard from "@/components/MaintainerImportWizard";
 import RealtimeDiscovery from "@/components/RealtimeDiscovery";
 import {currentDeploymentMap} from "@/lib/device-deployments.mjs";
 import {visibleRealtimeRows,mergeRealtimeRows} from "@/lib/realtime-discovery.mjs";
@@ -1106,9 +1107,10 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
  </>}
  <footer className="workspace-footer"><span>ASLUNG · 資料管理平台</span><span className="flex items-center gap-1.5"><Eye size={12} className="text-teal-600"/> 網站造訪次數：<strong>{(state?.siteStats?.totalVisits ?? 0).toLocaleString()}</strong> 次<span className="text-slate-400 font-normal">（今日 <strong>{state?.siteStats?.todayVisits ?? 0}</strong> 次）</span></span><span><ShieldCheck size={13}/> 伺服器端權限驗證</span></footer></div></main>
  {(modal==="locationSync"||modal==="locationImport")&&<DeviceImportWizard key={modal} mode={modal==="locationSync"?"google":"paste"} initialText={fleetImportText} api={request} onReload={load} onClose={()=>{setModal("");setFleetImportText("");}}/>}
+ {modal==="maintainerSync"&&<MaintainerImportWizard api={request} onReload={load} onClose={()=>setModal("")} isEnglish={isEn}/>}
  {linkMember&&admin&&<MaintainerLinkDialog member={linkMember} api={request} onClose={()=>setLinkMember(null)} onSaved={load} isEnglish={isEn}/>}
  {accessMember&&admin&&<MemberAccessDialog member={accessMember} devices={devices} api={request} onClose={()=>setAccessMember(null)} onSaved={load} isEnglish={isEn}/>}
- <Dialog open={!!modal&&modal!=="locationSync"&&modal!=="locationImport"} onOpenChange={v=>{if(!busy&&!v)setModal("")}}>
+ <Dialog open={!!modal&&modal!=="locationSync"&&modal!=="locationImport"&&modal!=="maintainerSync"} onOpenChange={v=>{if(!busy&&!v)setModal("")}}>
   {modal&&<DialogContent className="bg-white sm:max-w-lg max-h-[88vh] overflow-y-auto">
     <DialogHeader>
       <DialogTitle>
@@ -1162,9 +1164,6 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
         }else if(modal==="labSync"){
           setBusy(true);
           void request("/api/manage",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"labSyncGoogle",url:p.url})}).then(async res=>{await load();setModal("");toast.success(`同步成功！共更新 ${res.synced||0} 筆地點資料`);}).catch(e=>toast.error((e as Error).message)).finally(()=>setBusy(false));
-        }else if(modal==="maintainerSync"){
-          setBusy(true);
-          void request("/api/manage",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"maintainerSyncGoogle",url:p.url})}).then(async res=>{await load();setModal("");toast.success(`同步成功！共更新 ${res.synced||0} 位維護人員資料`);}).catch(e=>toast.error((e as Error).message)).finally(()=>setBusy(false));
         }else if(modal==="lab"){
           void mutate({action:"lab",...p});
         }else if(modal==="maintainer"){
@@ -1493,14 +1492,6 @@ export default function Workspace({signedIn,signInUrl}:{signedIn:boolean;signInU
         <Input id="m-phone" name="phone" maxLength={50} placeholder="例如：0912-345-678" defaultValue={editMaintainer?.phone||""}/>
         <Label htmlFor="m-notes" className="mt-2">備註 (選填)</Label>
         <Textarea id="m-notes" name="notes" placeholder="負責區域或備註事項..." rows={2} defaultValue={editMaintainer?.notes||""}/>
-      </> : modal==="maintainerSync"?<>
-        <div className="bg-emerald-50/80 p-3.5 rounded-lg border border-emerald-200 mb-4 text-xs text-emerald-800 space-y-1.5">
-          <p className="font-semibold text-emerald-900 flex items-center gap-1.5"><CloudDownload size={14}/> Google 試算表維護人員同步：</p>
-          <p>• 系統依 Cht_name（中文姓名）、Eng_name（英文稱呼）、mail（主要信箱）、mail_test（測試信箱）同步。舊版 maintainer 與 english_name 表頭仍相容；未提供英文欄位時保留系統原有英文稱呼。</p>
-          <p>• 姓名將自動與設備追蹤之「負責人 / 維護者」欄位產生關聯，斷線時自動寄送告警通知信。</p>
-        </div>
-        <Label htmlFor="m-sync-url">Google 試算表網址 (gid=603688252)</Label>
-        <Input id="m-sync-url" name="url" required defaultValue="https://docs.google.com/spreadsheets/d/1Vzaz14hHco2u8nmjoKBqDC12k-OX6lMjyrP_UhAhZrI/edit?gid=603688252#gid=603688252"/>
       </> : modal==="alertSettings"?<>
         <div className="space-y-4">
           <label className="flex items-center gap-2 text-sm font-semibold text-slate-800 cursor-pointer">
