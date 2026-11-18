@@ -1,7 +1,8 @@
+import {limitedJson} from '@/lib/http-security.mjs';
 import {auditOperation,setActivityAction} from "@/lib/activity-server";
 import {identity,writeGuard,AppError,fail} from '@/lib/server';
 import {getConnection} from '@/lib/store.mjs';
-import {cleanupStatus,previewCleanup,confirmCleanup,retryCleanup} from '@/lib/processing-cleanup.mjs';
+import {cleanupStatus,previewCleanup,confirmCleanup,retryCleanup,controlCleanup} from '@/lib/processing-cleanup.mjs';
 export const runtime='nodejs';
 export const dynamic='force-dynamic';
 const headers={'Cache-Control':'no-store'};
@@ -16,14 +17,16 @@ export async function GET(req:Request){try{
 }catch(e){return failure(e);}}
 async function handlePOST(req: Request){try{
   writeGuard(req);const me=await identity(req);if(me.role!=='admin')throw new AppError(403,'僅系統管理員可清除校正成果。');
-  const body=await req.json();if(!body||typeof body!=='object'||Array.isArray(body))throw new AppError(400,'表單內容不正確。');
+  const body=await limitedJson(req,128000);if(!body||typeof body!=='object'||Array.isArray(body))throw new AppError(400,'表單內容不正確。');
+  if(body.batchMode!==undefined&&typeof body.batchMode!=='boolean')throw new AppError(400,'批次模式不正確。');
   const d=getConnection();
   if(body.action==='preview'){
     if(body.filters!==undefined&&(!body.filters||typeof body.filters!=='object'||Array.isArray(body.filters)))throw new AppError(400,'篩選條件不正確。');
-    return Response.json(await previewCleanup(d,{filters:body.filters,actor:me.email}),{headers});
+    return Response.json(await previewCleanup(d,{filters:body.filters,actor:me.email,...(body.batchMode===true?{batchMode:true}:{})}),{headers});
   }
   if(body.action==='confirm')return Response.json(await confirmCleanup(d,{id:body.id,actor:me.email,confirmation:body.confirmation,pauseSchedules:body.pauseSchedules}),{headers});
-  if(body.action==='retry'){retryCleanup(d,body.id);return Response.json({ok:true},{headers});}
+  if(body.action==='control')return Response.json(controlCleanup(d,{id:body.id,operation:body.operation},me.email),{headers});
+  if(body.action==='retry'){retryCleanup(d,body.id,me.email);return Response.json({ok:true},{headers});}
   throw new AppError(400,'不支援的操作。');
 }catch(e){return failure(e);}}
 

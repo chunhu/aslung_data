@@ -13,7 +13,7 @@ function render(file,states,extra={}){
     'react/jsx-runtime':jsx,'@/components/ui/button':{Button:tag('button')},'@/components/ui/input':{Input:tag('input')},'@/components/ui/label':{Label:tag('label')},
     '@/components/ui/dialog':Object.fromEntries(['Dialog','DialogContent','DialogHeader','DialogTitle','DialogDescription'].map(name=>[name,tag('div')])),
     '@/lib/measurement-processing.mjs':{DEFAULT_UP_LIMIT:3},sonner:{toast:{}},
-    '@/components/ArchiveAutomationSettings':{default:()=>null},'@/components/ProcessingJobDetails':{default:()=>null,storageLabel:()=> 'S3 已驗證'},'@/components/ProcessingHistoryImport':{default:()=>null},'@/components/AslungDeviceSelector':{default:()=>null},'@/components/ProcessingCleanup':{default:()=>null}};
+    '@/components/ArchiveAutomationSettings':{default:()=>null},'@/components/ProcessingJobDetails':{default:()=>null,storageLabel:()=> 'S3 已驗證'},'@/components/ProcessingHistoryImport':{default:()=>null},'@/components/CleanupBatchProgress':{default:()=>null},'@/components/AslungDeviceSelector':{default:()=>null},'@/components/ProcessingCleanup':{default:()=>null}};
   const code=ts.transpileModule(readFileSync(new URL('../components/'+file,import.meta.url),'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX}}).outputText;
   const module={exports:{}};new Function('require','module','exports',code)(name=>{assert.ok(name in deps,name);return deps[name];},module,module.exports);
   return renderToStaticMarkup(React.createElement(module.exports.default,{api:()=>assert.fail('render must not read results'),isEnglish:false,formatTime:value=>value,onClose:()=>{},...extra}));
